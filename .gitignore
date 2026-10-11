@@ -16,4 +16,5 @@ Thumbs.db
 # Local artifacts
 *.log
 test_history.json
+email_preview*.html
 .pytest_cache/
