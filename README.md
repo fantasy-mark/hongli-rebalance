@@ -21,13 +21,15 @@ hongli-rebalance/
 ├── data/
 │   ├── holdings.xlsx             # ← 用户维护 (持仓/现金)
 │   └── history.json              # ← Action 自动追加
-├── site/                         # GitHub Pages 根
-│   ├── index.html
-│   ├── app.js                    # ECharts 曲线 + 表格
-│   └── style.css
+├── index.html / app.js / style.css  # GitHub Pages (Pages Source: / (root))
 ├── tests/test_record.py          # 纯函数单测
 └── requirements.txt
 ```
+
+> **Pages 布局说明** — GitHub Pages UI 只支持 `/ (root)` 和 `/docs/`，没有 `/site` 选项。
+> 所以站点文件 (index.html / app.js / style.css) 直接放在仓库根目录，
+> 访问 `https://<user>.github.io/hongli-rebalance/` 就是首页。
+> 源代码 (src/、tests/) 也会被 Pages 暴露，这是项目仓库的常见做法 (无安全风险)。
 
 每个交易日的流程：
 
@@ -86,7 +88,7 @@ gh repo create hongli-rebalance --public --source=. --remote=origin --push
 ### 3. 启用 GitHub Pages
 
 仓库 → **Settings** → **Pages** → **Source**: `Deploy from a branch` →
-Branch: `main`、Folder: `/site` → Save。
+Branch: `main`、Folder: **`/ (root)`** → Save。
 
 几分钟后访问 `https://<your-username>.github.io/hongli-rebalance/`。
 
