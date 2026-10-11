@@ -33,7 +33,7 @@ jobs:
         run: python -m src.record
 
       - name: Send email digest
-        # 即使 record 失败也尝试发邮件 (说明性); 如果不想发可改为: if: success()
+        # 即使 record 失败也尝试发邮件 (说明性)
         if: always()
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -46,24 +46,7 @@ jobs:
             python -m src.notify
           else
             echo "::warning::record step failed; sending failure notice"
-            SUBJECT="[⚠ FAIL] 稳健再平衡 任务失败 - $(date +%Y-%m-%d)"
-            python -c "
-import os, smtplib, ssl
-from email.mime.text import MIMEText
-import sys
-host, port = os.environ['SMTP_HOST'], int(os.environ.get('SMTP_PORT', '465'))
-user, pwd = os.environ['SMTP_USER'], os.environ['SMTP_PASS']
-to = [a.strip() for a in os.environ['MAIL_TO'].split(',') if a.strip()]
-body = 'record step failed. Check Actions log:\n' + os.environ.get('GITHUB_SERVER_URL', '') + '/' + os.environ.get('GITHUB_REPOSITORY', '') + '/actions/runs/' + os.environ.get('GITHUB_RUN_ID', '')
-msg = MIMEText(body, 'plain', 'utf-8')
-msg['Subject'] = '[⚠ FAIL] 稳健再平衡 任务失败'
-msg['From'] = user
-msg['To'] = ', '.join(to)
-with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=20) as s:
-    s.login(user, pwd)
-    s.sendmail(user, to, msg.as_string())
-print('failure notice sent')
-"
+            python -m src.notify_failure
           fi
 
       - name: Commit history.json
