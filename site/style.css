@@ -1,0 +1,44 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  margin: 2em auto;
+  max-width: 960px;
+  padding: 0 1em;
+  color: #222;
+  background: #fafafa;
+  line-height: 1.5;
+}
+
+header h1 { margin-bottom: 0.2em; }
+header p { margin-top: 0; }
+
+main section { background: #fff; border-radius: 8px; padding: 1em 1.2em; margin: 1.5em 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+
+h2 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 0.4em; }
+
+.muted { color: #888; font-size: 0.9em; }
+code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.95em; }
+
+#status-badge { font-size: 1.05em; padding: 1em; }
+#status-badge.loading { color: #888; }
+
+.badge {
+  display: inline-block;
+  padding: 0.25em 0.7em;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 0.95em;
+}
+.badge-ok    { background: #d4edda; color: #155724; }
+.badge-warn  { background: #f8d7da; color: #721c24; }
+.badge-info  { background: #d1ecf1; color: #0c5460; }
+.badge-err   { background: #fff3cd; color: #856404; }
+
+table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.95em; }
+th, td { border: 1px solid #e0e0e0; padding: 0.5em 0.7em; }
+th { background: #f5f5f5; text-align: center; font-weight: 600; }
+td { text-align: right; }
+td:first-child { text-align: left; }
+td.warn { color: #c00; font-weight: bold; }
+td.ok { color: #2c7a2c; }
+
+footer { text-align: center; padding: 1em; }

@@ -1,0 +1,74 @@
+name: Daily Rebalance Check
+
+on:
+  schedule:
+    # 1:00 UTC = 9:00 北京时间, 周一到周五 (A 股交易日大致覆盖)
+    # 注意: A 股节假日 Action 也会跑; akshare 会返回上一个交易日的数据
+    - cron: '0 1 * * 1-5'
+  # 手动触发 (用于测试)
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 提交 data/history.json 回仓库
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Record today's snapshot
+        id: record
+        run: python -m src.record
+
+      - name: Send email digest
+        # 即使 record 失败也尝试发邮件 (说明性); 如果不想发可改为: if: success()
+        if: always()
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_TO:   ${{ secrets.MAIL_TO }}
+        run: |
+          if [ "${{ steps.record.outcome }}" = "success" ]; then
+            python -m src.notify
+          else
+            echo "::warning::record step failed; sending failure notice"
+            SUBJECT="[⚠ FAIL] 稳健再平衡 任务失败 - $(date +%Y-%m-%d)"
+            python -c "
+import os, smtplib, ssl
+from email.mime.text import MIMEText
+import sys
+host, port = os.environ['SMTP_HOST'], int(os.environ.get('SMTP_PORT', '465'))
+user, pwd = os.environ['SMTP_USER'], os.environ['SMTP_PASS']
+to = [a.strip() for a in os.environ['MAIL_TO'].split(',') if a.strip()]
+body = 'record step failed. Check Actions log:\n' + os.environ.get('GITHUB_SERVER_URL', '') + '/' + os.environ.get('GITHUB_REPOSITORY', '') + '/actions/runs/' + os.environ.get('GITHUB_RUN_ID', '')
+msg = MIMEText(body, 'plain', 'utf-8')
+msg['Subject'] = '[⚠ FAIL] 稳健再平衡 任务失败'
+msg['From'] = user
+msg['To'] = ', '.join(to)
+with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=20) as s:
+    s.login(user, pwd)
+    s.sendmail(user, to, msg.as_string())
+print('failure notice sent')
+"
+          fi
+
+      - name: Commit history.json
+        if: success()
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'auto: snapshot ${{ steps.record.outputs.date }}'
+          file_pattern: 'data/history.json'
