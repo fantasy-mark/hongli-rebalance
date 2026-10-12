@@ -2,9 +2,9 @@ name: Daily Rebalance Check
 
 on:
   schedule:
-    # 1:00 UTC = 9:00 北京时间, 周一到周五 (A 股交易日大致覆盖)
+    # 1:00 UTC = 8:17 北京时间, 周一到周五 (A 股交易日大致覆盖)
     # 注意: A 股节假日 Action 也会跑; akshare 会返回上一个交易日的数据
-    - cron: '0 1 * * 1-5'
+    - cron: '17 0 * * 1-5'
   # 手动触发 (用于测试)
   workflow_dispatch:
 
