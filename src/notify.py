@@ -57,7 +57,7 @@ def build_text(r: dict) -> str:
         f"现金:      {fmt_money(r['cash']):>16}",
         f"目标权重:  {fmt_pct(r['target_w'])}    阈值: ±{r['threshold_pp']:.1f}pp",
         "",
-        f"{'名称':<14}{'权重':>8}{'偏离':>10}{'当前价':>10}{'市值':>14}{'触发':>6}",
+        f"{'名称':<14}{'权重':>8}{'偏离':>10}{'当前价':>10}{'数量':>14}{'触发':>6}",
         "-" * 62,
     ]
     for p, w in zip(r["positions"], r["weights"]):
@@ -66,7 +66,7 @@ def build_text(r: dict) -> str:
         flag = " ⚠" if over else "  "
         lines.append(
             f"{p['name']:<14}{fmt_pct(w):>7}{fmt_delta_pp(delta):>9}"
-            f"{p['price']:>10.3f}{fmt_money(p['value']):>14}{flag}"
+            f"{p['price']:>10.3f}{int(p['shares']):>14,}{flag}"
         )
     lines += [
         "-" * 62,
@@ -85,13 +85,14 @@ def _position_row(p: dict, w: float, target_w: float, threshold_pp: float) -> st
     over = abs(delta) > threshold_pp
     delta_color = COLOR_WARN if over else "#222"
     delta_str = fmt_delta_pp(delta)
+    shares_int = int(p["shares"])
     return (
         f'<tr>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};font-weight:600;">{p["name"]}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{fmt_pct(w)}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{delta_color};font-weight:{700 if over else 400};">{delta_str}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{p["price"]:.3f}</td>'
-        f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{fmt_money(p["value"])}</td>'
+        f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{shares_int:,}</td>'
         f'</tr>'
     )
 
@@ -152,7 +153,7 @@ def build_html(r: dict, pages_url: str = "") -> str:
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">权重</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">偏离</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">价格</th>
-            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">市值</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">数量</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
