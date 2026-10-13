@@ -66,12 +66,15 @@ def _eastmoney(eastmoney: str) -> Optional[pd.DataFrame]:
     return None
 
 
-def fetch_one(sina: str, eastmoney: str = "") -> pd.DataFrame:
+def fetch_one(sina: str, eastmoney: str = "",
+              start: str = "", end: str = "") -> pd.DataFrame:
     """Daily close series. Sina first, Eastmoney fallback.
 
     Args:
         sina: e.g. "sh515180"
         eastmoney: e.g. "515180" (optional, for fallback)
+        start: optional ISO date filter (e.g. "2020-11-05"); inclusive
+        end: optional ISO date filter (e.g. "2026-10-13"); inclusive
 
     Returns:
         DataFrame indexed by date with single 'close' column.
@@ -81,6 +84,10 @@ def fetch_one(sina: str, eastmoney: str = "") -> pd.DataFrame:
         df = _eastmoney(eastmoney)
     if df is None:
         raise RuntimeError(f"no price data for {sina}")
+    if start:
+        df = df[df.index >= pd.Timestamp(start)]
+    if end:
+        df = df[df.index <= pd.Timestamp(end)]
     return df
 
 

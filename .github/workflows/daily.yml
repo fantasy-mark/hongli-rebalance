@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # 提交 data/history.json 回仓库
+  contents: write   # 提交 data/* 回仓库
 
 jobs:
   daily:
@@ -25,11 +25,17 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: Install CJK font (Linux runner)
+        # matplotlib 在 GitHub Ubuntu runner 上没有 CJK 字体,
+        # 需要 fonts-noto-cjk 才能让中文字段正常显示在 PNG 中。
+        run: sudo apt-get install -y fonts-noto-cjk
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Record today's snapshot
         id: record
+        # record.py 同时跑 3pp + 网格, 并在末尾调用 chart.render_chart
         run: python -m src.record
 
       - name: Send email digest
@@ -49,9 +55,12 @@ jobs:
             python -m src.notify_failure
           fi
 
-      - name: Commit history.json
+      - name: Commit data files
         if: success()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: 'auto: snapshot ${{ steps.record.outputs.date }}'
-          file_pattern: 'data/history.json'
+          file_pattern: |
+            data/history.json
+            data/grid_state.json
+            data/grid_chart.png

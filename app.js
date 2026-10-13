@@ -27,13 +27,25 @@ async function main() {
 
   renderStatus(latest);
   renderCurve(history);
+  renderChart();   // 缓存破坏: 给 grid_chart.png 加时间戳
   renderLatest(latest);
   renderTable(history);
 }
 
+function renderChart() {
+  // 加 ?t=Date.now() 让浏览器每次访问都重新拉图, 不会用旧缓存
+  const img = document.getElementById('grid-chart');
+  if (img) img.src = `data/grid_chart.png?t=${Date.now()}`;
+}
+
 function renderStatus(rec) {
-  const cls = rec.triggered ? 'badge-warn' : 'badge-ok';
-  const txt = rec.triggered ? '⚠ 需要调仓' : '✓ 未触发';
+  const grid = rec.grid_signals || [];
+  const anyBuy = grid.some(s => s.signal === 'buy');
+  const anySell = grid.some(s => s.signal === 'sell');
+  const anyAction = rec.triggered || anyBuy || anySell;
+
+  const cls = anyAction ? 'badge-warn' : 'badge-ok';
+  const txt = anyAction ? '⚠ 有操作' : '✓ 未触发';
   document.getElementById('status-badge').innerHTML =
     `<span class="badge ${cls}">${txt}</span> ` +
     `<span>${rec.date}</span> ` +
@@ -113,8 +125,28 @@ function renderLatest(rec) {
     </tr>`;
   }).join('');
 
+  const grid = rec.grid_signals || [];
+  const gridRows = grid.map(s => {
+    const sig = s.signal;
+    let sigClass = 'ok', sigText = '— 持有';
+    if (sig === 'buy') { sigClass = 'warn'; sigText = '⚠ 买入'; }
+    else if (sig === 'sell') { sigClass = 'ok'; sigText = '✓ 止盈'; }
+    return `<tr>
+      <td>${s.name}</td>
+      <td class="${sigClass}">${sigText}</td>
+      <td>${s.num_buys}</td>
+      <td>¥${s.avg_cost.toFixed(3)}</td>
+      <td>¥${s.price.toFixed(3)}</td>
+      <td class="${s.unrealized_pnl >= 0 ? 'ok' : 'warn'}">${s.return_pct >= 0 ? '+' : ''}${s.return_pct.toFixed(2)}%</td>
+    </tr>`;
+  }).join('');
+
+  const layer = grid[0]?.layer_yuan || 10000;
+
   document.getElementById('latest-detail').innerHTML = `
     <p class="muted">价格日期: ${rec.positions[0]?.date || '?'}</p>
+
+    <h3 style="margin-top:1em;">3pp 再平衡</h3>
     <table>
       <thead>
         <tr>
@@ -123,6 +155,18 @@ function renderLatest(rec) {
       </thead>
       <tbody>${rows}</tbody>
     </table>
+
+    ${grid.length ? `
+    <h3 style="margin-top:1.5em;">复合网格 <span class="muted" style="font-size:12px;font-weight:normal;">(加仓额 ¥${layer.toLocaleString()})</span></h3>
+    <table>
+      <thead>
+        <tr>
+          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>浮盈%</th>
+        </tr>
+      </thead>
+      <tbody>${gridRows}</tbody>
+    </table>
+    ` : ''}
   `;
 }
 
