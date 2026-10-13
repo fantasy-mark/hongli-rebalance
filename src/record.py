@@ -93,6 +93,10 @@ def fetch_positions(holdings: list[dict]) -> Tuple[list[dict], float, list[Tuple
                 "price": round(price, 4), "date": pdate.date().isoformat(),
                 "value": round(value, 2),
             })
+            # Log price freshness so Action log surfaces stale-data issues
+            age_days = (pd.Timestamp.today().normalize() - pdate).days
+            print(f"  {h['name']:<14} ({h['code']}) ¥{price:>9.4f}  "
+                  f"as_of {pdate.date()} (Δ {age_days:+d}d)", file=sys.stderr)
         except Exception as ex:
             errors.append((h["code"], str(ex)))
     return positions, etf_total, errors
