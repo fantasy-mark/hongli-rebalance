@@ -78,5 +78,45 @@
     "target_w": 0.3333333333333333,
     "threshold_pp": 3.0,
     "triggered": false
+  },
+  {
+    "date": "2026-10-13",
+    "total": 175900.6,
+    "etf_value": 175248.6,
+    "cash": 652.0,
+    "positions": [
+      {
+        "name": "红利ETF易方达",
+        "code": "515180",
+        "shares": 40600.0,
+        "price": 1.446,
+        "date": "2026-10-12",
+        "value": 58707.6
+      },
+      {
+        "name": "黄金ETF博时",
+        "code": "159937",
+        "shares": 6900.0,
+        "price": 8.565,
+        "date": "2026-10-12",
+        "value": 59098.5
+      },
+      {
+        "name": "可转债ETF博时",
+        "code": "511380",
+        "shares": 4500.0,
+        "price": 12.765,
+        "date": "2026-10-12",
+        "value": 57442.5
+      }
+    ],
+    "weights": [
+      0.3338,
+      0.336,
+      0.3266
+    ],
+    "target_w": 0.3333333333333333,
+    "threshold_pp": 3.0,
+    "triggered": false
   }
 ]
