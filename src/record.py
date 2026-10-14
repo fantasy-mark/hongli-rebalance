@@ -205,7 +205,8 @@ def write_github_output(date_str: str, total: float, triggered: bool) -> None:
 def build_record(today: str, positions: list[dict], cash: float,
                  total: float, weights: list[float],
                  triggered_3pp: bool, plan: list[dict],
-                 grid_signals: list[dict], grid_state: dict) -> dict:
+                 grid_signals: list[dict], grid_state: dict,
+                 qdii_premiums: list[dict] | None = None) -> dict:
     etf_total = sum(p["value"] for p in positions)
     n = len(positions)
     target_w = 1.0 / n if n > 0 else 0.0
@@ -222,6 +223,7 @@ def build_record(today: str, positions: list[dict], cash: float,
         "plan": plan,
         "grid_signals": grid_signals,
         "grid_state": grid_state,
+        "qdii_premiums": qdii_premiums or [],
     }
 
 
@@ -277,6 +279,7 @@ def main() -> None:
 
     # QDII premium rate: enrich position dicts with premium info
     # (best-effort: failure does not abort the run)
+    qdii_top: list[dict] = []      # tracked-but-not-held QDII premiums
     for p in positions:
         if p["code"] in QDII_CODES:
             try:
@@ -291,6 +294,28 @@ def main() -> None:
                     )
             except Exception as ex:
                 print(f"WARN QDII premium {p['code']} failed: {ex}", file=sys.stderr)
+
+    # Also fetch premium for QDII codes known to ETF_DEFS but NOT held today —
+    # so the email can still warn ("don't buy, premium too high").
+    held_codes = {p["code"] for p in positions}
+    for code, (sina, em, name, is_qdii) in ETF_DEFS.items():
+        if not is_qdii or code in held_codes:
+            continue
+        try:
+            prem = fetch_qdii_premium(code)
+            if prem:
+                qdii_top.append({
+                    "code": code, "name": name, "in_portfolio": False,
+                    **prem,
+                })
+                flag = "⚠" if abs(prem["premium_pct"]) > 5 else "·"
+                print(
+                    f"  QDII {name:<14} (未持仓) premium={prem['premium_pct']:+.2f}%  "
+                    f"(市价 {prem['price']:.4f} / IOPV {prem['iopv']:.4f}@{prem['nav_date']})  {flag}",
+                    file=sys.stderr,
+                )
+        except Exception as ex:
+            print(f"WARN QDII unheld premium {code} failed: {ex}", file=sys.stderr)
 
     total, weights, triggered_3pp, plan = evaluate(positions, cash)
 
@@ -319,6 +344,7 @@ def main() -> None:
         total=total, weights=weights,
         triggered_3pp=triggered_3pp, plan=plan,
         grid_signals=grid_signals, grid_state=new_state,
+        qdii_premiums=qdii_top,
     )
     history = [r for r in history if r["date"] != today]
     history.append(record)

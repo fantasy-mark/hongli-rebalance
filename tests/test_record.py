@@ -533,7 +533,63 @@ def test_qdii_codes_contain_only_true_qdii():
         assert len(v) == 4, f"ETF_DEFS[{code}] not 4-tuple: {v}"
 
 
-def main():
+def test_notify_qdii_unheld_still_alerts():
+    """A QDII tracked but NOT in the user's portfolio must still appear in the
+    QDII block (with an "未持仓" tag) so the user knows the premium is too
+    high to buy.  Subject still gets the QDII warning tag."""
+    from src import notify
+    r = _make_record_with_qdii(premium_pct=13.25)
+    # Remove 513300 from positions, move it to top-level qdii_premiums
+    r["positions"] = [p for p in r["positions"] if p["code"] != "513300"]
+    r["weights"] = [r["weights"][1]]  # drop the QDII weight
+    r["qdii_premiums"] = [{
+        "code": "513300", "name": "纳斯达克ETF华夏", "in_portfolio": False,
+        "price": 2.884, "iopv": 2.5466, "nav_date": "2026-10-13",
+        "premium_pct": 13.25, "quote_time": "2026-10-14 16:14:45",
+        "source": "tencent+fund.eastmoney",
+    }]
+    text = notify.build_text(r)
+    subject = notify.build_subject(r)
+    html = notify.build_html(r, pages_url="https://x/")
+
+    # Subject
+    assert "QDII溢价" in subject, f"subject: {subject!r}"
+    # Text body shows the QDII line with 未持仓 tag
+    assert "纳斯达克ETF华夏" in text
+    assert "未持仓" in text
+    assert "高溢价" in text
+    # HTML body shows the block, red, with 未持仓 badge
+    assert "⚠ QDII 溢价监控" in html
+    assert ">未持仓<" in html
+
+
+def test_notify_qdii_unheld_low_premium_advises_buildable():
+    """Tracked but unheld QDII with low premium should advise 建仓."""
+    from src import notify
+    r = _make_record_with_qdii(premium_pct=2.0)
+    r["positions"] = [p for p in r["positions"] if p["code"] != "513300"]
+    r["weights"] = [r["weights"][1]]
+    r["qdii_premiums"] = [{
+        "code": "513300", "name": "纳斯达克ETF华夏", "in_portfolio": False,
+        "price": 2.6, "iopv": 2.5466, "nav_date": "2026-10-13",
+        "premium_pct": 2.0, "quote_time": "2026-10-14 16:14:45",
+        "source": "tencent+fund.eastmoney",
+    }]
+    text = notify.build_text(r)
+    subject = notify.build_subject(r)
+    html = notify.build_html(r, pages_url="https://x/")
+
+    # No subject warning
+    assert "QDII溢价" not in subject, f"subject wrongly warns at 2%: {subject!r}"
+    # Buildable advice
+    assert "可关注建仓" in text
+    assert "未持仓" in text
+    # HTML: green, not red
+    assert "✓ QDII 溢价可控" in html
+    assert "background:#c0392b" not in html
+
+
+def test_main():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     fails = 0
     for fn in fns:

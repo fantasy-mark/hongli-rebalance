@@ -77,6 +77,27 @@ def _qdii_premium_view(p: dict) -> tuple[str, str, str]:
     return (f"折价 {pct:.2f}%", COLOR_OK, "✓ 折价机会")
 
 
+def _all_qdii(r: dict) -> list[dict]:
+    """Combine QDII entries from:
+      1. positions[].premium  (in-portfolio QDII)
+      2. r["qdii_premiums"]   (top-level — tracked but not held)
+    into a uniform list of {name, code, in_portfolio, ...premium fields}.
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for p in r.get("positions", []):
+        if p.get("premium"):
+            entry = {"name": p["name"], "code": p["code"], "in_portfolio": True, **p["premium"]}
+            out.append(entry)
+            seen.add(p["code"])
+    for prem in r.get("qdii_premiums", []):
+        if prem["code"] not in seen:
+            entry = {"in_portfolio": False, **prem}
+            out.append(entry)
+            seen.add(prem["code"])
+    return out
+
+
 # ---- plain text body ----
 
 def build_text(r: dict) -> str:
@@ -108,17 +129,22 @@ def build_text(r: dict) -> str:
         "",
     ]
 
-    # QDII premium section (text)
+    # QDII premium section (text) — covers both held QDII and tracked-but-not-held
     qdii_lines = []
-    for p, w in zip(r["positions"], r["weights"]):
-        if p.get("premium"):
-            prem = p["premium"]
-            badge, _, advice = _qdii_premium_view(p)
-            qdii_lines.append(
-                f"  {p['name']:<14} {badge:<14} "
-                f"市价 ¥{prem['price']:.4f}  IOPV ¥{prem['iopv']:.4f}@{prem['nav_date']}  "
-                f"{advice}"
-            )
+    for entry in _all_qdii(r):
+        # 还原成 position-shape 以便复用 _qdii_premium_view
+        pseudo = {"name": entry["name"], "premium": {
+            "premium_pct": entry["premium_pct"],
+            "price": entry["price"], "iopv": entry["iopv"],
+            "nav_date": entry["nav_date"],
+        }}
+        badge, _, advice = _qdii_premium_view(pseudo)
+        marker = "·未持仓" if not entry["in_portfolio"] else "·持仓中"
+        qdii_lines.append(
+            f"  {entry['name']:<14} {badge:<14} "
+            f"市价 ¥{entry['price']:.4f}  IOPV ¥{entry['iopv']:.4f}@{entry['nav_date']}  "
+            f"{advice}  {marker}"
+        )
     if qdii_lines:
         lines += [
             "[QDII 溢价监控]  阈值 ±5% ( > 5% 警示 / ≤ 5% 可关注建仓 )",
@@ -217,27 +243,36 @@ def build_html(r: dict, pages_url: str = "") -> str:
     grid_signals = r.get("grid_signals", [])
     grid_section = ""
 
-    # QDII premium section (HTML)
-    qdii_positions = [p for p in r["positions"] if p.get("premium")]
+    # QDII premium section (HTML) — covers both held QDII and tracked-but-not-held
+    qdii_entries = _all_qdii(r)
     qdii_section = ""
-    if qdii_positions:
+    if qdii_entries:
         qdii_rows = []
-        any_warn = any((p["premium"]["premium_pct"]) > 5 for p in qdii_positions)
+        any_warn = any(e["premium_pct"] > 5 for e in qdii_entries)
         accent = COLOR_WARN if any_warn else COLOR_OK
         title = "⚠ QDII 溢价监控" if any_warn else "✓ QDII 溢价可控"
-        for p in qdii_positions:
-            prem = p["premium"]
-            badge_text, badge_color, advice = _qdii_premium_view(p)
+        for e in qdii_entries:
+            pseudo = {"name": e["name"], "premium": {
+                "premium_pct": e["premium_pct"],
+                "price": e["price"], "iopv": e["iopv"],
+                "nav_date": e["nav_date"],
+            }}
+            badge_text, badge_color, advice = _qdii_premium_view(pseudo)
             badge = (
                 f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
                 f'background:{badge_color};color:#fff;font-size:12px;font-weight:600;">{badge_text}</span>'
             )
+            tag = ('<span style="display:inline-block;padding:1px 6px;margin-left:6px;'
+                   'border-radius:3px;background:#eee;color:#666;font-size:11px;">未持仓</span>'
+                   if not e["in_portfolio"] else
+                   '<span style="display:inline-block;padding:1px 6px;margin-left:6px;'
+                   'border-radius:3px;background:#dff5e1;color:#2c7a2c;font-size:11px;">持仓中</span>')
             qdii_rows.append(
                 f'<tr>'
-                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};font-weight:600;">{p["name"]}</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};font-weight:600;">{e["name"]}{tag}</td>'
                 f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:center;">{badge}</td>'
-                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{prem["price"]:.4f}</td>'
-                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{prem["iopv"]:.4f} <span style="color:#999;font-size:11px;">@{prem["nav_date"]}</span></td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{e["price"]:.4f}</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{e["iopv"]:.4f} <span style="color:#999;font-size:11px;">@{e["nav_date"]}</span></td>'
                 f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{badge_color};font-weight:600;">{advice}</td>'
                 f'</tr>'
             )
@@ -361,8 +396,7 @@ def build_subject(r: dict) -> str:
     any_buy = any(s.get("signal") == "buy" for s in grid_signals)
     any_sell = any(s.get("signal") == "sell" for s in grid_signals)
     qdii_warn = any(
-        p.get("premium") and p["premium"]["premium_pct"] > 5
-        for p in r.get("positions", [])
+        e["premium_pct"] > 5 for e in _all_qdii(r)
     )
 
     if triggered_3pp and qdii_warn:
