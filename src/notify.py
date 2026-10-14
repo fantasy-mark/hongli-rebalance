@@ -171,6 +171,7 @@ def build_html(r: dict, pages_url: str = "") -> str:
     target_pct = fmt_pct(r["target_w"], digits=1)
     threshold = f"{r['threshold_pp']:.1f}"
     price_date = r["positions"][0]["date"] if r["positions"] else "?"
+    n_assets = len(r["positions"])
     rows = "".join(
         _position_row(p, w, r["target_w"], r["threshold_pp"])
         for p, w in zip(r["positions"], r["weights"])
@@ -247,7 +248,7 @@ def build_html(r: dict, pages_url: str = "") -> str:
 
     <div style="padding:20px 24px;">
       <div style="font-size:12px;color:#666;margin-bottom:10px;">
-        目标权重 <strong>{target_pct}</strong> · 阈值 ±{threshold}pp · 3 资产等权
+        目标权重 <strong>{target_pct}</strong> · 阈值 ±{threshold}pp · {n_assets} 资产等权
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <thead>

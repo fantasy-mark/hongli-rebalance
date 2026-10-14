@@ -101,6 +101,94 @@ def test_evaluate_3pp_threshold_triggers_on_50pp_drift():
     assert triggered
 
 
+def test_evaluate_2asset_dynamic_target_w():
+    """N=2: equal weight = 50%, target_w derived from len(positions)."""
+    positions = [
+        {"name": "A", "code": "1", "shares": 1, "price": 100, "value": 100, "date": "x"},
+        {"name": "B", "code": "2", "shares": 1, "price": 100, "value": 100, "date": "x"},
+    ]
+    total, weights, triggered, _plan = record.evaluate(positions, 0.0)
+    assert total == 200
+    assert all(abs(w - 0.5) < 1e-9 for w in weights), f"weights={weights}"
+    assert not triggered
+    # build_record also produces dynamic target_w
+    r = record.build_record(
+        today="2026-10-14", positions=positions, cash=0.0,
+        total=200, weights=weights, triggered_3pp=False, plan=[],
+        grid_signals=[], grid_state={},
+    )
+    assert r["target_w"] == 0.5
+    assert len(r["positions"]) == 2
+
+
+def test_evaluate_5asset_dynamic_target_w():
+    """N=5: equal weight = 20%, target_w derived from len(positions)."""
+    positions = [
+        {"name": f"E{i}", "code": str(i), "shares": 1,
+         "price": 100, "value": 100, "date": "x"}
+        for i in range(5)
+    ]
+    total, weights, triggered, plan = record.evaluate(positions, 0.0)
+    assert total == 500
+    assert all(abs(w - 0.2) < 1e-9 for w in weights), f"weights={weights}"
+    assert not triggered
+    # Plan has one entry per position
+    assert len(plan) == 0  # equal weight → no plan unless triggered
+    r = record.build_record(
+        today="2026-10-14", positions=positions, cash=0.0,
+        total=500, weights=weights, triggered_3pp=False, plan=[],
+        grid_signals=[], grid_state={},
+    )
+    assert r["target_w"] == 0.2
+
+
+def test_evaluate_5asset_threshold_triggers_correctly():
+    """N=5: drift detection uses 1/n target, not hardcoded 1/3."""
+    positions = [
+        {"name": "A", "code": "1", "shares": 1, "price": 250, "value": 250, "date": "x"},
+        {"name": "B", "code": "2", "shares": 1, "price": 100, "value": 100, "date": "x"},
+        {"name": "C", "code": "3", "shares": 1, "price": 100, "value": 100, "date": "x"},
+        {"name": "D", "code": "4", "shares": 1, "price": 100, "value": 100, "date": "x"},
+        {"name": "E", "code": "5", "shares": 1, "price": 100, "value": 100, "date": "x"},
+    ]
+    total, weights, triggered, _plan = record.evaluate(positions, 0.0)
+    # total = 250 + 100*4 = 650; A weight = 38.46%; target 20%; delta = +18.46pp > 3pp
+    assert total == 650
+    assert weights[0] > 0.38
+    assert triggered
+
+
+def test_read_holdings_n_agnostic():
+    """read_holdings() accepts any number of ETF rows (N=2..N=5+)."""
+    # Curated rows per N to avoid duplicating the same code (which read_holdings rejects)
+    curated = {
+        2: [
+            ["黄金ETF博时", "159937", 100],
+            ["红利ETF易方达", "515180", 200],
+        ],
+        3: [
+            ["黄金ETF博时", "159937", 100],
+            ["红利ETF易方达", "515180", 200],
+            ["可转债ETF博时", "511380", 300],
+        ],
+        5: [
+            ["黄金ETF博时", "159937", 100],
+            ["红利ETF易方达", "515180", 200],
+            ["可转债ETF博时", "511380", 300],
+            ["纳斯达克ETF华夏", "513300", 400],
+            ["某未来 ETF", "999999", 500],
+        ],
+    }
+    for n, rows in curated.items():
+        with tempfile.TemporaryDirectory() as td:
+            xlsx = Path(td) / "h.xlsx"
+            _write_holdings(xlsx, "现金", 1000.0, rows)
+            record.HOLDINGS = xlsx
+            h, cash = record.read_holdings()
+            assert cash == 1000.0
+            assert len(h) == n, f"N={n} got {len(h)} positions: {h}"
+
+
 def test_evaluate_with_cash_affects_weights():
     # 4 资产生产配置: 4 个等权 ETF, 总值 = 4*100 = 400.
     # target_w = 1/4 = 0.25, 每个 weight = 0.25, 不触发.

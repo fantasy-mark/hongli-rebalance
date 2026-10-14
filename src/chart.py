@@ -1,8 +1,12 @@
 """Render strategy chart to PNG.
 
 Layout (2 stacked subplots, shared x-axis):
-  Top:    3 ETF buy-and-hold + 3pp rebalance + 网格 ROI (%, log scale)
+  Top:    N ETF buy-and-hold + 3pp rebalance + 网格 ROI (%, log scale)
   Bottom: 网格 资金占用 堆叠 (per-asset ¥)
+
+N is derived dynamically from `data/holdings.xlsx` (whichever ETFs the
+user currently holds, codes must be registered in `src.record.ETF_DEFS`).
+This keeps the chart in sync when the user adds/removes/swaps ETFs.
 
 Font handling: tries msyh (Windows), simhei, then any CJK font found on
 the system. On GitHub Actions (Linux, no Microsoft fonts), the script
@@ -45,21 +49,70 @@ OUT_PNG = ROOT / "data" / "grid_chart.png"
 START = "2020-11-05"     # 纳斯达克ETF 上市日, 4 资产公共起点
 END_FALLBACK = pd.Timestamp.today().strftime("%Y-%m-%d")
 
-ASSETS = [
-    ("黄金ETF博时", "sz159937", "159937"),
-    ("红利ETF易方达", "sh515180", "515180"),
-    ("可转债ETF博时", "sh511380", "511380"),
-    ("纳斯达克ETF华夏", "sh513300", "513300"),
-]
-ASSET_NAMES = [n for n, _, _ in ASSETS]
-
 INITIAL_3PP_CAPITAL = 200_000.0
-ASSET_COLORS = {
-    "黄金ETF博时": "#C9A961",
-    "红利ETF易方达": "#C0392B",
-    "可转债ETF博时": "#2C5F8D",
+
+# Curated colors for the original 4 ETFs (preserve visual identity).
+# New ETFs added via ETF_DEFS get cycled from EXTRA_PALETTE below.
+KNOWN_COLORS = {
+    "黄金ETF博时":     "#C9A961",
+    "红利ETF易方达":   "#C0392B",
+    "可转债ETF博时":   "#2C5F8D",
     "纳斯达克ETF华夏": "#48C9B0",
 }
+# Fallback palette for any additional ETF (5th, 6th, ...).
+EXTRA_PALETTE = [
+    "#8E44AD", "#E67E22", "#16A085", "#D35400", "#7F8C8D",
+    "#2ECC71", "#F39C12", "#9B59B6", "#1ABC9C", "#34495E",
+]
+
+
+def _load_chart_assets() -> list[tuple[str, str, str]]:
+    """Resolve (name, sina, eastmoney) for the user's current holdings.
+
+    Reads `data/holdings.xlsx` and joins with `src.record.ETF_DEFS` (which
+    is the registry of known codes with their sina/eastmoney symbols).
+    Falls back to the full ETF_DEFS when xlsx is unreadable — e.g. in
+    tests or if the user is rendering the chart before record.py has run.
+    """
+    try:
+        from src.record import read_holdings, ETF_DEFS
+        holdings, _ = read_holdings()
+        out: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for h in holdings:
+            code = h["code"]
+            if code in seen:
+                continue
+            if code not in ETF_DEFS:
+                print(f"WARN chart: code {code} ({h['name']}) not in ETF_DEFS, skipping",
+                      file=sys.stderr)
+                continue
+            sina, em, name = ETF_DEFS[code]
+            # Keep the user's display name from xlsx, fall back to registry.
+            display = h["name"] or name
+            out.append((display, sina, em))
+            seen.add(code)
+        if out:
+            return out
+    except Exception as ex:
+        print(f"WARN chart: cannot read holdings ({ex}); using ETF_DEFS fallback",
+              file=sys.stderr)
+    # Fallback: full registry
+    from src.record import ETF_DEFS
+    return [(name, sina, em) for _code, (sina, em, name) in ETF_DEFS.items()]
+
+
+def _colors_for(names: list[str]) -> dict[str, str]:
+    """Color for each asset name; curated for known ones, cycled for extras."""
+    out: dict[str, str] = {}
+    extra_idx = 0
+    for n in names:
+        if n in KNOWN_COLORS and n not in out:
+            out[n] = KNOWN_COLORS[n]
+        else:
+            out[n] = EXTRA_PALETTE[extra_idx % len(EXTRA_PALETTE)]
+            extra_idx += 1
+    return out
 
 
 # -----------------------------------------------------------------------------
@@ -114,14 +167,18 @@ def _setup_fonts() -> None:
 # Data assembly
 # -----------------------------------------------------------------------------
 
-def _fetch_asset_window() -> dict[str, pd.Series]:
-    """Fetch the full price history window for the 4 ETFs (Sina fallback).
+def _fetch_asset_window(assets: list[tuple[str, str, str]]) -> dict[str, pd.Series]:
+    """Fetch the full price history window for the user's N ETFs.
+
+    Args:
+        assets: list of (display_name, sina_symbol, eastmoney_code) tuples.
+                Resolved by `_load_chart_assets()` from holdings.xlsx.
 
     Imported lazily so chart rendering can be tested without network.
     """
     from src.fetch import fetch_one
     out: dict[str, pd.Series] = {}
-    for name, sina, em in ASSETS:
+    for name, sina, em in assets:
         df = fetch_one(sina, em)
         df = df[(df.index >= START) & (df.index <= END_FALLBACK)]
         s = df.iloc[:, 0] if isinstance(df, pd.DataFrame) else df
@@ -193,11 +250,19 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
         print("WARN history.json empty; skipping chart render", file=sys.stderr)
         return out_path
 
+    # Resolve assets dynamically from the user's holdings (N-aware).
+    ASSETS = _load_chart_assets()
+    ASSET_NAMES = [n for n, _, _ in ASSETS]
+    ASSET_COLORS = _colors_for(ASSET_NAMES)
+    if not ASSETS:
+        print("WARN no assets resolved; skipping chart render", file=sys.stderr)
+        return out_path
+
     _setup_fonts()
     pct_to_log_vec = _build_pct_to_log_vec()
 
     try:
-        prices = _fetch_asset_window()
+        prices = _fetch_asset_window(ASSETS)
     except Exception as ex:
         print(f"WARN asset fetch failed: {ex}", file=sys.stderr)
         return out_path
@@ -259,16 +324,19 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     )
     fig.subplots_adjust(hspace=0.10)
 
-    style_map = {
-        "黄金ETF博时":   dict(color="#C9A961", lw=1.4, ls="--", alpha=0.85),
-        "红利ETF易方达": dict(color="#C0392B", lw=1.4, ls="--", alpha=0.85),
-        "可转债ETF博时": dict(color="#2C5F8D", lw=1.4, ls="--", alpha=0.85),
-        "纳斯达克ETF华夏": dict(color="#48C9B0", lw=1.4, ls="--", alpha=0.85),
-        "沪深300":       dict(color="#7F8C8D", lw=1.4, ls=":",  alpha=0.85),
-        "3pp 再平衡":    dict(color="#1A1A1A", lw=2.6, ls="-",  alpha=1.0),
+    style_map: dict[str, dict] = {
+        n: dict(color=ASSET_COLORS[n], lw=1.4, ls="--", alpha=0.85)
+        for n in ASSET_NAMES
     }
-    order_top = [n for n in ["沪深300", "黄金ETF博时", "可转债ETF博时",
-                              "纳斯达克ETF华夏", "红利ETF易方达", "3pp 再平衡"] if n in norm_log]
+    style_map["沪深300"]    = dict(color="#7F8C8D", lw=1.4, ls=":",  alpha=0.85)
+    style_map["3pp 再平衡"] = dict(color="#1A1A1A", lw=2.6, ls="-",  alpha=1.0)
+    # Order: 沪深300 first (benchmark), then user's ETFs in registration order,
+    # 3pp rebalance last (the "main" series).
+    order_top = (
+        [n for n in ["沪深300"] if n in norm_log]
+        + [n for n in ASSET_NAMES if n in norm_log]
+        + [n for n in ["3pp 再平衡"] if n in norm_log]
+    )
     for name in order_top:
         s = norm_log[name]
         st = style_map[name]
@@ -335,7 +403,7 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
             )
 
     ax1.set_title(
-        f"4 资产 3pp 再平衡 vs 单资产持有 vs 沪深300  +  网格 ROI\n"
+        f"{len(ASSET_NAMES)} 资产 3pp 再平衡 vs 单资产持有 vs 沪深300  +  网格 ROI\n"
         f"区间 {start_date.date()} → {end_date.date()} "
         f"({(end_date - start_date).days/365.25:.2f} 年) — 收益 % (起点=0%)",
         fontsize=13, fontweight="bold", pad=14,
@@ -372,13 +440,12 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
 
     # ---- Bottom: stacked in-use ----
     stack_df = pd.concat(grid_in_use_by_asset, axis=1).fillna(0.0)
-    stack_df.columns = ASSET_NAMES
+    # Reorder columns to ASSET_NAMES order (stackplot requires explicit series)
+    stack_df = stack_df.reindex(columns=ASSET_NAMES).fillna(0.0)
 
     ax2.stackplot(
         stack_df.index,
-        stack_df["黄金ETF博时"].values,
-        stack_df["红利ETF易方达"].values,
-        stack_df["可转债ETF博时"].values,
+        *(stack_df[n].values for n in ASSET_NAMES),
         labels=[f"{n} (in-use)" for n in ASSET_NAMES],
         colors=[ASSET_COLORS[n] for n in ASSET_NAMES],
         alpha=0.90,
