@@ -663,42 +663,30 @@ def test_notify_qdii_unheld_low_premium_advises_buildable():
 def test_apply_holdings_happy_path():
     """scripts/apply_holdings.py writes a valid holdings.json when given a clean payload."""
     import json
-    import subprocess
     import sys
     with tempfile.TemporaryDirectory() as td:
-        env_root = Path(td)
-        # copy apply_holdings.py + run it pointing to a temp HOLDINGS
         src = ROOT / "scripts" / "apply_holdings.py"
-        rows = json.dumps([
-            {"name": "X", "code": "515180", "shares": 1000},
-            {"name": "Y", "code": "159937", "shares": 2000.5},
-        ])
-        # Patch the script's HOLDINGS to a temp path by env var
-        target = env_root / "data" / "holdings.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # Run with monkey-patched ROOT: simplest is to invoke with cwd in env_root
-        # and copy the script there
-        patched = env_root / "apply_holdings.py"
-        # The script's HOLDINGS is computed from __file__, so we have to set
-        # __file__ via a wrapper. Simpler: import & call main() directly.
+        payload = json.dumps({
+            "rows": [
+                {"name": "X", "code": "515180", "shares": 1000},
+                {"name": "Y", "code": "159937", "shares": 2000.5},
+            ],
+            "cash": 1234.5,
+        })
         import importlib.util
         spec = importlib.util.spec_from_file_location("apply_holdings_test", src)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        mod.HOLDINGS = target
+        mod.HOLDINGS = Path(td) / "holdings.json"
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", payload]
         try:
-            mod.main.__call__ if False else None   # noqa
-            # call with argv-style: monkey-patch sys.argv
-            old_argv = sys.argv
-            sys.argv = ["apply_holdings.py", rows, "1234.5"]
-            try:
-                mod.main()
-            finally:
-                sys.argv = old_argv
+            mod.main()
         except SystemExit as e:
             assert e.code == 0, f"expected exit 0, got {e.code}"
-        # Verify
-        d = json.loads(target.read_text(encoding="utf-8"))
+        finally:
+            sys.argv = old_argv
+        d = json.loads(mod.HOLDINGS.read_text(encoding="utf-8"))
         assert d["cash"] == 1234.5
         assert len(d["positions"]) == 2
         assert d["positions"][0]["code"] == "515180"
@@ -708,16 +696,20 @@ def test_apply_holdings_happy_path():
 def test_apply_holdings_rejects_bad_code():
     """Unknown code in payload → non-zero exit, no file written."""
     import importlib.util
-    import subprocess
+    import json
+    import sys
     src = ROOT / "scripts" / "apply_holdings.py"
     spec = importlib.util.spec_from_file_location("apply_holdings_test", src)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     with tempfile.TemporaryDirectory() as td:
-        target = Path(td) / "holdings.json"
-        mod.HOLDINGS = target
+        mod.HOLDINGS = Path(td) / "holdings.json"
+        payload = json.dumps({
+            "rows": [{"name": "X", "code": "999999", "shares": 1}],
+            "cash": 0,
+        })
         old_argv = sys.argv
-        sys.argv = ["apply_holdings.py", '[{"name":"X","code":"999999","shares":1}]', "0"]
+        sys.argv = ["apply_holdings.py", payload]
         try:
             mod.main()
             ok = True
@@ -726,7 +718,7 @@ def test_apply_holdings_rejects_bad_code():
         finally:
             sys.argv = old_argv
         assert not ok, "expected non-zero exit for bad code"
-        assert not target.exists(), "file should not be written on failure"
+        assert not mod.HOLDINGS.exists(), "file should not be written on failure"
 
 
 def test_main():

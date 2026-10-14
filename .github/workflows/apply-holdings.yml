@@ -20,12 +20,13 @@ jobs:
 
       - name: Apply edit
         env:
-          ROWS_JSON: ${{ github.event.client_payload.rows }}
-          CASH:      ${{ github.event.client_payload.cash }}
-        # Wrap JSON safely: pass via env to avoid shell-quoting of {}[] characters
+          # github.event.client_payload is always a string map; accessing
+          # nested keys (${{ ... .rows }}) in expressions can confuse the
+          # GH template linter, so we dump the whole payload as JSON and
+          # let the python script parse it.
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
         run: |
-          python -X utf8 scripts/apply_holdings.py \
-            "$ROWS_JSON" "$CASH"
+          python -X utf8 scripts/apply_holdings.py "$PAYLOAD"
 
       - name: Verify result
         # Defensive read-back: fail loudly if the file is now invalid JSON

@@ -42,23 +42,26 @@ def fail(msg: str) -> None:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        fail("usage: apply_holdings.py <rows-json> [cash]")
+        fail("usage: apply_holdings.py <payload-json>")
 
     try:
-        rows = json.loads(sys.argv[1])
+        payload = json.loads(sys.argv[1])
     except json.JSONDecodeError as ex:
-        fail(f"rows is not valid JSON: {ex}")
+        fail(f"payload is not valid JSON: {ex}")
+    if not isinstance(payload, dict):
+        fail(f"payload must be a JSON object, got {type(payload).__name__}")
+
+    rows = payload.get("rows", [])
+    cash_raw = payload.get("cash", 0)
     if not isinstance(rows, list):
-        fail("rows must be a JSON array")
+        fail(f"rows must be a JSON array, got {type(rows).__name__}")
     if len(rows) > MAX_ROWS:
         fail(f"too many rows ({len(rows)} > {MAX_ROWS})")
 
-    cash = 0.0
-    if len(sys.argv) > 2 and sys.argv[2] not in (None, "", "null"):
-        try:
-            cash = float(sys.argv[2])
-        except (ValueError, TypeError):
-            fail(f"cash is not a number: {sys.argv[2]!r}")
+    try:
+        cash = float(cash_raw) if cash_raw not in (None, "", "null") else 0.0
+    except (ValueError, TypeError):
+        fail(f"cash is not a number: {cash_raw!r}")
     if cash < 0:
         fail(f"cash cannot be negative: {cash}")
 
