@@ -38,6 +38,18 @@ jobs:
         # record.py 同时跑 3pp + 网格, 并在末尾调用 chart.render_chart
         run: python -m src.record
 
+      - name: Render chart (idempotent recovery)
+        # record.py 的 chart 渲染是 best-effort 静默失败; 在 runner 上
+        # akshare 网络不稳可能导致 PNG 没生成。单独再跑一次保证有图。
+        # 本地 `python -m src.record` 已自带渲染, 这次只是幂等冗余。
+        id: chart
+        continue-on-error: true
+        run: python -m src.chart
+
+      - name: Verify data files
+        # 调试: commit 之前看一眼 data/ 真实状态 (history / grid_state / chart 是否都在)
+        run: ls -la data/
+
       - name: Send email digest
         # 即使 record 失败也尝试发邮件 (说明性)
         if: always()
@@ -57,10 +69,16 @@ jobs:
 
       - name: Commit data files
         if: success()
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: 'auto: snapshot ${{ steps.record.outputs.date }}'
-          file_pattern: |
-            data/history.json
-            data/grid_state.json
-            data/grid_chart.png
+        # 直接用 git add/commit/push, 避免 git-auto-commit 的"没东西就静默跳过"行为
+        # (那个行为之前让 grid_chart.png 连续 7 天没被提交, Pages 一直 404)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/history.json data/grid_state.json data/grid_chart.png 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "::warning::no staged changes in data/ — chart may have failed, see ls -la output above"
+          else
+            git commit -m "auto: snapshot ${{ steps.record.outputs.date }}"
+            git push
+            echo "committed and pushed"
+          fi
