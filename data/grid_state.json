@@ -1,0 +1,26 @@
+{
+  "红利ETF易方达": {
+    "in_cycle": false,
+    "entries": [],
+    "last_120d_min": 1.464,
+    "cum_realized": 0.0
+  },
+  "黄金ETF博时": {
+    "in_cycle": false,
+    "entries": [],
+    "last_120d_min": 8.482,
+    "cum_realized": 0.0
+  },
+  "可转债ETF博时": {
+    "in_cycle": false,
+    "entries": [],
+    "last_120d_min": 12.634,
+    "cum_realized": 0.0
+  },
+  "纳斯达克ETF华夏": {
+    "in_cycle": false,
+    "entries": [],
+    "last_120d_min": 2.884,
+    "cum_realized": 0.0
+  }
+}
