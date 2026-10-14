@@ -155,23 +155,10 @@
       0.3335,
       0.324
     ],
-    "target_w": 0.3333,
+    "target_w": 0.3333333333333333,
     "threshold_pp": 3.0,
     "triggered": false,
     "plan": [],
-    "qdii_premiums": [
-      {
-        "code": "513300",
-        "name": "纳斯达克ETF华夏",
-        "in_portfolio": false,
-        "price": 2.884,
-        "iopv": 2.5466,
-        "nav_date": "2026-10-13",
-        "premium_pct": 13.25,
-        "quote_time": "2026-10-14 16:14:45",
-        "source": "tencent+fund.eastmoney"
-      }
-    ],
     "grid_signals": [
       {
         "name": "红利ETF易方达",
@@ -228,7 +215,26 @@
         "entries": [],
         "last_120d_min": 12.634,
         "cum_realized": 0.0
+      },
+      "纳斯达克ETF华夏": {
+        "in_cycle": false,
+        "entries": [],
+        "last_120d_min": 2.884,
+        "cum_realized": 0.0
       }
-    }
+    },
+    "qdii_premiums": [
+      {
+        "code": "513300",
+        "name": "纳斯达克ETF华夏",
+        "in_portfolio": false,
+        "price": 2.884,
+        "iopv": 2.5466,
+        "nav_date": "2026-10-13",
+        "premium_pct": 13.25,
+        "quote_time": "2026-10-14 16:14:45",
+        "source": "tencent+fund.eastmoney"
+      }
+    ]
   }
 ]
