@@ -189,13 +189,85 @@ function renderTable(history) {
 }
 
 // ---- Holdings editor (POSTs to repository_dispatch) ----
-// Public repo: dispatch endpoint is callable without auth.
-// If you ever make the repo private, set a fine-grained PAT (contents: write,
-// no other scopes) and inject via `?token=` query — but that's discouraged.
+// GitHub's /dispatches endpoint always requires authentication, even on
+// public repos (changed 2022). We store a fine-grained PAT in
+// localStorage so the user only has to paste it once per browser.
+//
+// PAT requirements:
+//   - Fine-grained personal access token
+//   - Repository access: only fantasy-mark/hongli-rebalance
+//   - Permissions: Contents = Read & Write
+//   - (Optionally) set an expiration (recommended ≤ 90 days)
+//   - Get one: https://github.com/settings/personal-access-tokens/new
+//
+// The PAT is stored unencrypted in localStorage. Any JS on this page
+// (including browser extensions) can read it. Only use this on a
+// trusted personal device.
 
 const REPO = "fantasy-mark/hongli-rebalance";
 const HOLDINGS_URL = "data/holdings.json";
 const DISPATCH_URL = `https://api.github.com/repos/${REPO}/dispatches`;
+const PAT_STORAGE_KEY = "hongli_rebalance_pat";
+
+// Lightweight PAT shape validation (catches typos before hitting the API).
+// Accepts both classic `ghp_*` and fine-grained `github_pat_*` formats.
+function isPlausiblePat(s) {
+  if (typeof s !== "string") return false;
+  s = s.trim();
+  if (s.length < 30 || s.length > 255) return false;
+  return /^(ghp_|github_pat_|ghs_|gho_)[A-Za-z0-9_]+$/.test(s);
+}
+
+function getPat() {
+  try {
+    const v = localStorage.getItem(PAT_STORAGE_KEY);
+    return v && v.trim() ? v.trim() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function setPat(pat) {
+  try {
+    if (pat) localStorage.setItem(PAT_STORAGE_KEY, pat);
+    else    localStorage.removeItem(PAT_STORAGE_KEY);
+  } catch (e) {
+    console.warn("localStorage unavailable:", e);
+  }
+  updatePatBadge();
+}
+
+function updatePatBadge() {
+  const badge = document.getElementById("pat-badge");
+  if (!badge) return;
+  const has = !!getPat();
+  badge.innerHTML = has
+    ? `🔑 PAT 已设置 <button type="button" id="pat-clear-btn" class="btn-link">清除</button>`
+    : `⚠ <button type="button" id="pat-set-btn" class="btn-link">设置 PAT</button> (保存前需要)`;
+  const setBtn = document.getElementById("pat-set-btn");
+  if (setBtn) setBtn.addEventListener("click", promptForPat);
+  const clearBtn = document.getElementById("pat-clear-btn");
+  if (clearBtn) clearBtn.addEventListener("click", () => { setPat(null); });
+}
+
+function promptForPat() {
+  const cur = getPat() || "";
+  const v = window.prompt(
+    "粘贴 GitHub Fine-grained PAT\n" +
+    "(Repository access: 仅 fantasy-mark/hongli-rebalance\n" +
+    " Permissions: Contents = Read & Write)\n" +
+    "创建: https://github.com/settings/personal-access-tokens/new",
+    cur
+  );
+  if (v === null) return;   // cancelled
+  const trimmed = v.trim();
+  if (!trimmed) { setPat(null); return; }
+  if (!isPlausiblePat(trimmed)) {
+    alert("格式不像 GitHub PAT (应以 ghp_/github_pat_/ghs_/gho_ 开头). 已忽略, 请重试.");
+    return;
+  }
+  setPat(trimmed);
+}
 
 // Known ETF catalog surfaced in the "code" dropdown (mirrors src/record.py ETF_DEFS).
 // Users can still type a custom 6-digit code, but the workflow will reject unknown ones.
@@ -287,6 +359,15 @@ async function saveHoldings() {
     return;
   }
 
+  // Auth check
+  const pat = getPat();
+  if (!pat) {
+    promptForPat();
+    status.className = 'err';
+    status.textContent = '❌ 需要先设置 GitHub PAT (页面顶部的提示).';
+    return;
+  }
+
   btn.disabled = true;
   status.className = 'muted';
   status.textContent = '提交中…';
@@ -294,7 +375,10 @@ async function saveHoldings() {
   try {
     const res = await fetch(DISPATCH_URL, {
       method: 'POST',
-      headers: { 'Accept': 'application/vnd.github+json' },
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': `Bearer ${pat}`,
+      },
       body: JSON.stringify({
         event_type: 'update_holdings',
         client_payload: { rows, cash },
@@ -305,8 +389,14 @@ async function saveHoldings() {
       status.textContent = '✅ 已提交. Action 约 30 秒后 commit 完成, 邮件会基于新持仓重发. 刷新页面查看新数据.';
     } else {
       const text = await res.text();
-      status.className = 'err';
-      status.textContent = `❌ 提交失败: HTTP ${res.status} — ${text.slice(0, 200)}`;
+      if (res.status === 401 || res.status === 403) {
+        status.className = 'err';
+        status.textContent = `❌ HTTP ${res.status} 认证失败 — PAT 无效/过期/或没勾选 Contents:Write. 顶部点「设置 PAT」重试.`;
+        updatePatBadge();
+      } else {
+        status.className = 'err';
+        status.textContent = `❌ 提交失败: HTTP ${res.status} — ${text.slice(0, 200)}`;
+      }
     }
   } catch (e) {
     status.className = 'err';
@@ -333,6 +423,8 @@ function initEditor() {
       s.className = 'err';
       s.textContent = `加载失败: ${e.message}`;
     });
+
+  updatePatBadge();
 }
 
 main();

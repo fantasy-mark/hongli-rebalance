@@ -51,6 +51,12 @@ code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size:
 #save-status.ok { color: #2c7a2c; }
 #save-status.err { color: #c0392b; }
 
+.btn-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: #2c5f8d; text-decoration: underline; font: inherit;
+}
+.btn-link:hover { color: #1d3f5e; }
+
 .badge {
   display: inline-block;
   padding: 0.25em 0.7em;
