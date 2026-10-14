@@ -90,7 +90,7 @@ def _load_chart_assets() -> list[tuple[str, str, str]]:
                 print(f"WARN chart: code {code} ({h['name']}) not in ETF_DEFS, skipping",
                       file=sys.stderr)
                 continue
-            sina, em, name = ETF_DEFS[code]
+            sina, em, name, _qdii = ETF_DEFS[code]
             # Keep the user's display name from xlsx, fall back to registry.
             display = h["name"] or name
             out.append((display, sina, em))
@@ -102,7 +102,7 @@ def _load_chart_assets() -> list[tuple[str, str, str]]:
               file=sys.stderr)
     # Fallback: full registry
     from src.record import ETF_DEFS
-    return [(name, sina, em) for _code, (sina, em, name) in ETF_DEFS.items()]
+    return [(name, sina, em) for _code, (sina, em, name, _qdii) in ETF_DEFS.items()]
 
 
 def _colors_for(names: list[str]) -> dict[str, str]:

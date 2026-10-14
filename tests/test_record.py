@@ -446,6 +446,93 @@ def pytest_approx(value, rel=1e-9):
     return _Approx(value, rel)
 
 
+# ---------------- QDII premium + notify tests ----------------
+
+def _make_record_with_qdii(premium_pct: float) -> dict:
+    """Build a minimal record with a QDII position carrying `premium` info."""
+    return {
+        "date": "2026-10-14",
+        "total": 200000.0,
+        "etf_value": 199500.0,
+        "cash": 500.0,
+        "positions": [
+            {"name": "纳斯达克ETF华夏", "code": "513300", "shares": 17000,
+             "price": 2.884, "date": "2026-10-14", "value": 49028.0,
+             "premium": {
+                 "code": "513300",
+                 "price": 2.884,
+                 "iopv": 2.5466,
+                 "nav_date": "2026-10-13",
+                 "premium_pct": premium_pct,
+                 "quote_time": "2026-10-14 16:14:45",
+                 "source": "tencent+fund.eastmoney",
+             }},
+            {"name": "黄金ETF博时", "code": "159937", "shares": 5800,
+             "price": 8.482, "date": "2026-10-14", "value": 49195.6},
+        ],
+        "weights": [0.245, 0.246],
+        "target_w": 0.5,
+        "threshold_pp": 3.0,
+        "triggered": False,
+        "plan": [],
+        "grid_signals": [],
+        "grid_state": {},
+    }
+
+
+def test_notify_qdii_high_premium_warns():
+    from src import notify
+    r = _make_record_with_qdii(premium_pct=13.25)
+    text = notify.build_text(r)
+    subject = notify.build_subject(r)
+    # Subject: high premium flag
+    assert "QDII溢价" in subject, f"subject missing QDII flag: {subject!r}"
+    # Text body: warning
+    assert "溢价 +13.25%" in text
+    assert "高溢价" in text
+    assert "不建议加仓" in text
+    # HTML body: red badge + 警示 block
+    html = notify.build_html(r, pages_url="https://x/")
+    assert "⚠ QDII 溢价监控" in html
+    assert "background:#c0392b" in html  # warning red
+    assert "+13.25%" in html
+
+
+def test_notify_qdii_low_premium_advises_buildable():
+    from src import notify
+    r = _make_record_with_qdii(premium_pct=2.5)
+    subject = notify.build_subject(r)
+    text = notify.build_text(r)
+    html = notify.build_html(r, pages_url="https://x/")
+    # No warning
+    assert "QDII溢价" not in subject, f"subject wrongly warns at 2.5%: {subject!r}"
+    # Text body: friendly
+    assert "溢价 +2.50%" in text
+    assert "可关注建仓" in text
+    # HTML body: blue/green, not red
+    assert "✓ QDII 溢价可控" in html
+    assert "background:#c0392b" not in html
+
+
+def test_notify_qdii_discount_opportunity():
+    from src import notify
+    r = _make_record_with_qdii(premium_pct=-1.2)
+    html = notify.build_html(r, pages_url="https://x/")
+    text = notify.build_text(r)
+    assert "折价 -1.20%" in text
+    assert "折价机会" in text
+    assert "✓ QDII 溢价可控" in html
+
+
+def test_qdii_codes_contain_only_true_qdii():
+    """ETF_DEFS qdii flag must be True only for genuinely QDII (overseas) ETFs."""
+    from src import record
+    assert record.QDII_CODES == {"513300"}, f"QDII_CODES={record.QDII_CODES}"
+    # 4-tuple shape
+    for code, v in record.ETF_DEFS.items():
+        assert len(v) == 4, f"ETF_DEFS[{code}] not 4-tuple: {v}"
+
+
 def main():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     fails = 0

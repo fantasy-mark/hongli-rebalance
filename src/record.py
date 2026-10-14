@@ -24,7 +24,7 @@ from typing import Tuple
 import pandas as pd
 
 from . import grid as grid_mod
-from .fetch import latest
+from .fetch import latest, fetch_qdii_premium
 
 ROOT = Path(__file__).resolve().parent.parent
 HOLDINGS = ROOT / "data" / "holdings.xlsx"
@@ -32,15 +32,16 @@ HISTORY = ROOT / "data" / "history.json"
 GRID_STATE = ROOT / "data" / "grid_state.json"
 GRID_CHART = ROOT / "data" / "grid_chart.png"
 
-# Code → (sina_symbol, eastmoney_symbol, display_name)
-# Verified via Eastmoney FundSearch API (see hongli memory/etf-code-mapping.md)
+# Code → (sina_symbol, eastmoney_symbol, display_name, is_qdii)
+# QDII flags drive the premium-rate fetch & alert in notify.py.
 ETF_DEFS = {
-    "515180": ("sh515180", "515180", "红利ETF易方达"),
-    "159937": ("sz159937", "159937", "黄金ETF博时"),
-    "511380": ("sh511380", "511380", "可转债ETF博时"),
-    "513300": ("sh513300", "513300", "纳斯达克ETF华夏"),    # 2020-11-05 上市
+    "515180": ("sh515180", "515180", "红利ETF易方达", False),
+    "159937": ("sz159937", "159937", "黄金ETF博时", False),
+    "511380": ("sh511380", "511380", "可转债ETF博时", False),
+    "513300": ("sh513300", "513300", "纳斯达克ETF华夏", True),   # QDII
 }
 ASSET_NAMES = [v[2] for v in ETF_DEFS.values()]
+QDII_CODES = {code for code, v in ETF_DEFS.items() if v[3]}
 
 # 3pp parameters
 TARGET_W = 1.0 / 3
@@ -98,7 +99,7 @@ def fetch_positions(holdings: list[dict]) -> Tuple[list[dict], float, list[Tuple
         if h["code"] not in ETF_DEFS:
             errors.append((h["code"], "unknown code (not in ETF_DEFS)"))
             continue
-        sina, em, _ = ETF_DEFS[h["code"]]
+        sina, em, _, _ = ETF_DEFS[h["code"]]
         try:
             price, pdate = latest(sina, em)
             value = h["shares"] * price
@@ -274,6 +275,23 @@ def main() -> None:
         print("ERROR all fetches failed", file=sys.stderr)
         sys.exit(1)
 
+    # QDII premium rate: enrich position dicts with premium info
+    # (best-effort: failure does not abort the run)
+    for p in positions:
+        if p["code"] in QDII_CODES:
+            try:
+                prem = fetch_qdii_premium(p["code"])
+                if prem:
+                    p["premium"] = prem   # {price, iopv, premium_pct, nav_date, ...}
+                    flag = "⚠" if abs(prem["premium_pct"]) > 5 else "·"
+                    print(
+                        f"  QDII {p['name']:<14} premium={prem['premium_pct']:+.2f}%  "
+                        f"(市价 {prem['price']:.4f} / IOPV {prem['iopv']:.4f}@{prem['nav_date']})  {flag}",
+                        file=sys.stderr,
+                    )
+            except Exception as ex:
+                print(f"WARN QDII premium {p['code']} failed: {ex}", file=sys.stderr)
+
     total, weights, triggered_3pp, plan = evaluate(positions, cash)
 
     # 3pp pool for grid layer sizing (history.totals + today)
@@ -314,10 +332,11 @@ def main() -> None:
         print(f"WARN chart render failed: {ex}", file=sys.stderr)
 
     any_signal = triggered_3pp or any(s["signal"] for s in grid_signals)
+    dyn_target = 1.0 / len(positions) if positions else TARGET_W
     print(f"DATE={today} TOTAL={total:.2f} STATUS={'TRIGGER' if any_signal else 'ok'}")
-    print(f"  3pp: {'⚠ TRIGGERED' if triggered_3pp else 'ok'} (max Δ {max(abs(w - TARGET_W) * 100 for w in weights):.2f}pp)")
+    print(f"  3pp: {'⚠ TRIGGERED' if triggered_3pp else 'ok'} (max Δ {max(abs(w - dyn_target) * 100 for w in weights):.2f}pp)")
     for p, w in zip(positions, weights):
-        delta = (w - TARGET_W) * 100
+        delta = (w - dyn_target) * 100
         flag = " ⚠" if abs(delta) > THRESHOLD_PP else ""
         print(f"    {p['name']:<14} {w:>6.2%}  Δ={delta:+.2f}pp{flag}")
     print(f"  grid layer: ¥{grid_mod.layer_yuan(total, recent_min):,.0f} "

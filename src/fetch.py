@@ -155,6 +155,36 @@ def _eastmoney_universal_quote(code: str) -> Optional[Tuple[float, pd.Timestamp]
         return None
 
 
+def _tencent_quote(code: str) -> Optional[Tuple[float, pd.Timestamp]]:
+    """Tencent `qt.gtimg.cn` fallback — used when Eastmoney push2 is throttled.
+
+    Returns (price, today) or None.  Works for any on-exchange ETF/股票
+    and is generally more available than push2.eastmoney.com from CN ISPs.
+    """
+    if not code or requests is None:
+        return None
+    code6 = str(code).zfill(6)
+    prefix = "sh" if code6[0] in ("5", "6", "9") else "sz"
+    url = f"https://qt.gtimg.cn/q={prefix}{code6}"
+    try:
+        r = requests.get(
+            url, timeout=5,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"},
+        )
+        if r.status_code != 200 or b"~" not in r.content:
+            return None
+        parts = r.content.decode("gbk", errors="ignore").split("~")
+        if len(parts) < 6:
+            return None
+        raw_p = parts[3]
+        if not raw_p:
+            return None
+        return float(raw_p), pd.Timestamp.now().normalize()
+    except Exception as ex:
+        log.warning("Tencent quote %s failed: %s", code6, ex)
+        return None
+
+
 def _eastmoney_etf_spot(code: str) -> Optional[Tuple[float, pd.Timestamp]]:
     """Realtime tick via `ak.fund_etf_spot_em` (东财 ETF 实时行情).
 
@@ -184,8 +214,91 @@ def latest_history(sina: str, eastmoney: str = "") -> Tuple[float, pd.Timestamp]
     return float(df.iloc[-1]["close"]), df.index[-1]
 
 
+# ---------------------------------------------------------------------
+# QDII premium rate (溢价率): T-1 NAV vs market price
+# ---------------------------------------------------------------------
+
+def fetch_qdii_premium(code: str) -> Optional[dict]:
+    """For QDII ETFs (e.g. 513300), compute (price - IOPV) / IOPV.
+
+    Two sources cross-checked:
+      - T-1 unit NAV from `api.fund.eastmoney.com/f10/lsjz` (authoritative)
+      - Realtime market price from `qt.gtimg.cn` (Tencent, robust to push2 limit)
+
+    Returns dict {price, iopv, premium_pct, nav_date, quote_time, source}
+    or None on failure.  QDII IOPV is published ~22:30 Beijing after US
+    close, so intraday the "IOPV" we report is the T-1 NAV (the latest
+    authoritative reference NAV for today's trading).  The premium is
+    always measured against that reference.
+    """
+    if not code or requests is None:
+        return None
+    code6 = str(code).strip().zfill(6)
+
+    # 1) T-1 NAV
+    nav, nav_date = None, None
+    try:
+        r = requests.get(
+            "https://api.fund.eastmoney.com/f10/lsjz",
+            params={"fundCode": code6, "pageIndex": 1, "pageSize": 1},
+            timeout=5,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://fund.eastmoney.com/"},
+        )
+        if r.status_code == 200:
+            lst = (r.json().get("Data") or {}).get("LSJZList") or []
+            if lst:
+                nav = float(lst[0]["DWJZ"])
+                nav_date = lst[0]["FSRQ"]
+    except Exception as ex:
+        log.warning("QDII NAV fetch %s failed: %s", code6, ex)
+
+    # 2) Realtime price from Tencent (push2 / qt.gtimg)
+    price, quote_time = None, None
+    for url in [
+        f"https://qt.gtimg.cn/q={('sh' if code6[0] in ('5','6','9') else 'sz')}{code6}",
+    ]:
+        try:
+            r = requests.get(
+                url, timeout=5,
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"},
+            )
+            if r.status_code == 200 and b"~" in r.content:
+                parts = r.content.decode("gbk", errors="ignore").split("~")
+                if len(parts) > 5:
+                    raw_p = parts[3]
+                    raw_t = parts[30] if len(parts) > 30 else ""
+                    if raw_p:
+                        price = float(raw_p)
+                    if raw_t and len(raw_t) >= 12:
+                        # 格式: YYYYMMDDHHMMSS
+                        try:
+                            quote_time = (
+                                f"{raw_t[0:4]}-{raw_t[4:6]}-{raw_t[6:8]} "
+                                f"{raw_t[8:10]}:{raw_t[10:12]}:{raw_t[12:14]}"
+                            )
+                        except Exception:
+                            quote_time = raw_t
+                break
+        except Exception as ex:
+            log.warning("Tencent quote %s failed: %s", code6, ex)
+
+    if price is None or nav is None or nav <= 0:
+        return None
+    premium_pct = (price - nav) / nav * 100.0
+    return {
+        "code": code6,
+        "price": round(price, 4),
+        "iopv": round(nav, 4),           # T-1 NAV (latest authoritative ref)
+        "nav_date": nav_date,
+        "premium_pct": round(premium_pct, 2),
+        "quote_time": quote_time,
+        "source": "tencent+fund.eastmoney",
+    }
+
+
 def latest(sina: str, eastmoney: str = "") -> Tuple[float, pd.Timestamp]:
-    """Freshest price available: Eastmoney universal quote → ETF spot → historical.
+    """Freshest price available: Eastmoney universal quote → ETF spot
+    → Tencent (qt.gtimg) → historical.
 
     Returns (price, as_of_date).  For the spot paths `as_of_date` is
     tagged with today (the API does not return an explicit timestamp);
@@ -198,4 +311,7 @@ def latest(sina: str, eastmoney: str = "") -> Tuple[float, pd.Timestamp]:
         s = _eastmoney_etf_spot(eastmoney)
         if s is not None:
             return s
+        t = _tencent_quote(eastmoney)
+        if t is not None:
+            return t
     return latest_history(sina, eastmoney)

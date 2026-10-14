@@ -155,7 +155,16 @@
         "shares": 17300.0,
         "price": 2.884,
         "date": "2026-10-14",
-        "value": 49893.2
+        "value": 49893.2,
+        "premium": {
+          "code": "513300",
+          "price": 2.884,
+          "iopv": 2.5466,
+          "nav_date": "2026-10-13",
+          "premium_pct": 13.25,
+          "quote_time": "2026-10-14 16:14:45",
+          "source": "tencent+fund.eastmoney"
+        }
       }
     ],
     "weights": [

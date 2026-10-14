@@ -58,6 +58,25 @@ def fmt_signal(sig: str | None) -> str:
     return {"buy": "⚠ 买入", "sell": "✓ 止盈"}.get(sig or "", "持有")
 
 
+def _qdii_premium_view(p: dict) -> tuple[str, str, str]:
+    """Return (badge_text, badge_color, advice) for a QDII position.
+
+    Premium thresholds:
+      |premium| > 5%  → 警告 (red)
+      |premium| ≤ 5%  → 关注可建仓 (blue)
+      折价 (negative) → 机会 (green)
+    """
+    prem = p.get("premium")
+    if not prem:
+        return ("", "#999", "")
+    pct = prem["premium_pct"]
+    if pct > 5:
+        return (f"溢价 +{pct:.2f}%", COLOR_WARN, "⚠ 高溢价, 不建议加仓")
+    if pct > 0:
+        return (f"溢价 +{pct:.2f}%", COLOR_GRID, "· 溢价可控, 可关注建仓")
+    return (f"折价 {pct:.2f}%", COLOR_OK, "✓ 折价机会")
+
+
 # ---- plain text body ----
 
 def build_text(r: dict) -> str:
@@ -88,6 +107,24 @@ def build_text(r: dict) -> str:
         f"3pp 结论: {'⚠ 触发调仓' if r['triggered'] else '✓ 无需调仓'}",
         "",
     ]
+
+    # QDII premium section (text)
+    qdii_lines = []
+    for p, w in zip(r["positions"], r["weights"]):
+        if p.get("premium"):
+            prem = p["premium"]
+            badge, _, advice = _qdii_premium_view(p)
+            qdii_lines.append(
+                f"  {p['name']:<14} {badge:<14} "
+                f"市价 ¥{prem['price']:.4f}  IOPV ¥{prem['iopv']:.4f}@{prem['nav_date']}  "
+                f"{advice}"
+            )
+    if qdii_lines:
+        lines += [
+            "[QDII 溢价监控]  阈值 ±5% ( > 5% 警示 / ≤ 5% 可关注建仓 )",
+            *qdii_lines,
+            "",
+        ]
 
     # Grid section
     grid_signals = r.get("grid_signals", [])
@@ -179,6 +216,51 @@ def build_html(r: dict, pages_url: str = "") -> str:
 
     grid_signals = r.get("grid_signals", [])
     grid_section = ""
+
+    # QDII premium section (HTML)
+    qdii_positions = [p for p in r["positions"] if p.get("premium")]
+    qdii_section = ""
+    if qdii_positions:
+        qdii_rows = []
+        any_warn = any((p["premium"]["premium_pct"]) > 5 for p in qdii_positions)
+        accent = COLOR_WARN if any_warn else COLOR_OK
+        title = "⚠ QDII 溢价监控" if any_warn else "✓ QDII 溢价可控"
+        for p in qdii_positions:
+            prem = p["premium"]
+            badge_text, badge_color, advice = _qdii_premium_view(p)
+            badge = (
+                f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
+                f'background:{badge_color};color:#fff;font-size:12px;font-weight:600;">{badge_text}</span>'
+            )
+            qdii_rows.append(
+                f'<tr>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};font-weight:600;">{p["name"]}</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:center;">{badge}</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{prem["price"]:.4f}</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{prem["iopv"]:.4f} <span style="color:#999;font-size:11px;">@{prem["nav_date"]}</span></td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{badge_color};font-weight:600;">{advice}</td>'
+                f'</tr>'
+            )
+        qdii_section = f"""
+    <div style="padding:20px 24px;border-top:1px solid #eee;">
+      <div style="background:{accent};padding:10px 16px;color:#fff;border-radius:6px;margin-bottom:12px;font-weight:bold;font-size:14px;">{title}</div>
+      <div style="font-size:12px;color:#666;margin-bottom:10px;">
+        QDII 溢价率 = (市价 − IOPV) / IOPV · 阈值 ±5% · &gt; 5% 警示暂停加仓 · ≤ 5% 可关注建仓
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <thead>
+          <tr style="background:#f8f9fa;">
+            <th style="text-align:left;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">名称</th>
+            <th style="text-align:center;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">溢价率</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">市价</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">IOPV</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">建议</th>
+          </tr>
+        </thead>
+        <tbody>{"".join(qdii_rows)}</tbody>
+      </table>
+    </div>
+"""
     if grid_signals:
         grid_rows = "".join(_grid_row(s) for s in grid_signals)
         layer = grid_signals[0].get("layer_yuan", 10000)
@@ -264,6 +346,7 @@ def build_html(r: dict, pages_url: str = "") -> str:
       </table>
     </div>
 {grid_section}
+{qdii_section}
     <div style="padding:14px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:{COLOR_MUTED};">
       由 GitHub Actions 自动发送 · 数据 akshare · {pages_link}{chart_link}
     </div>
@@ -277,11 +360,19 @@ def build_subject(r: dict) -> str:
     grid_signals = r.get("grid_signals", [])
     any_buy = any(s.get("signal") == "buy" for s in grid_signals)
     any_sell = any(s.get("signal") == "sell" for s in grid_signals)
+    qdii_warn = any(
+        p.get("premium") and p["premium"]["premium_pct"] > 5
+        for p in r.get("positions", [])
+    )
 
-    if triggered_3pp and any_buy:
+    if triggered_3pp and qdii_warn:
+        tag = "⚠ 再平衡+QDII溢价"
+    elif triggered_3pp and any_buy:
         tag = "⚠ 再平衡+买入"
     elif triggered_3pp:
         tag = "⚠ 触发"
+    elif qdii_warn:
+        tag = "⚠ QDII溢价"
     elif any_buy:
         tag = "⚠ 网格买入"
     elif any_sell:
