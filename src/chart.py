@@ -13,8 +13,11 @@ the system. On GitHub Actions (Linux, no Microsoft fonts), the script
 relies on the pre-installed `fonts-noto-cjk` package — the workflow
 installs it explicitly.
 
-The chart is generated from the persisted `data/history.json`:
-  - 3pp series: from records[i].total
+The chart is generated from `data/history.json` + a full backtest:
+  - 3pp series: from `three_pp.run_backtest()` on fetched ETF prices
+    (起点 ¥200,000, 跨 2020-11-05 → 今; 与 scripts/plot_strategy.py 同口径).
+    This avoids the misleading "X% in 4 days" artefact that comes from
+    normalizing history.json (which is too short to draw a meaningful curve).
   - Per-asset normalized returns: re-fetched from akshare for the same window
   - Per-asset grid ¥ in-use: rebuilt by replaying run_compound_grid on the
     current grid_state.json
@@ -287,6 +290,16 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
         [r["total"] for r in history if "total" in r],
         index=pd.to_datetime([r["date"] for r in history if "total" in r]),
     ).sort_index()
+    # Compute the same "3pp 再平衡" line via full backtest on the fetched
+    # price window. This is what scripts/plot_strategy.py does too, and
+    # gives a proper multi-year curve (vs. history.json which usually has
+    # only a handful of entries and produces a misleading flat-then-spike).
+    from src.three_pp import run_backtest
+    prices_df = pd.DataFrame(prices).sort_index().dropna()
+    pp_bt = run_backtest(prices_df, initial_cash=INITIAL_3PP_CAPITAL)
+    pp_series_bt = pp_bt["series"]
+    # Prefer the backtested curve (long history); use it as the plotted line.
+    pp_series = pp_series_bt
     norm["3pp 再平衡"] = pp_series / pp_series.iloc[0] * 100
 
     norm_ret_pct = {n: s - 100 for n, s in norm.items()}
