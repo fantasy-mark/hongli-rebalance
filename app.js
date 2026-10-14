@@ -188,4 +188,152 @@ function renderTable(history) {
   `;
 }
 
+// ---- Holdings editor (POSTs to repository_dispatch) ----
+// Public repo: dispatch endpoint is callable without auth.
+// If you ever make the repo private, set a fine-grained PAT (contents: write,
+// no other scopes) and inject via `?token=` query — but that's discouraged.
+
+const REPO = "fantasy-mark/hongli-rebalance";
+const HOLDINGS_URL = "data/holdings.json";
+const DISPATCH_URL = `https://api.github.com/repos/${REPO}/dispatches`;
+
+// Known ETF catalog surfaced in the "code" dropdown (mirrors src/record.py ETF_DEFS).
+// Users can still type a custom 6-digit code, but the workflow will reject unknown ones.
+const ETF_CATALOG = {
+  "515180": "红利ETF易方达",
+  "159937": "黄金ETF博时",
+  "511380": "可转债ETF博时",
+  "513300": "纳斯达克ETF华夏",
+};
+
+let originalHoldings = null;   // last fetched snapshot for "reset"
+
+function renderEditor(holdings) {
+  originalHoldings = JSON.parse(JSON.stringify(holdings));  // deep copy
+  const tbody = document.getElementById('holdings-tbody');
+  tbody.innerHTML = '';
+  for (const p of holdings.positions) {
+    tbody.appendChild(makeRow(p));
+  }
+  document.getElementById('cash-input').value = holdings.cash ?? 0;
+  document.getElementById('save-status').textContent = '';
+  document.getElementById('save-status').className = 'muted';
+}
+
+function makeRow(p = { name: '', code: '', shares: 0 }) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input data-k="name"   type="text"   value="${escapeAttr(p.name)}" placeholder="名称" /></td>
+    <td>
+      <input data-k="code"   type="text"   list="etf-codes" value="${escapeAttr(p.code)}"
+             placeholder="6 位代码" maxlength="6" pattern="\\d{6}" />
+      <datalist id="etf-codes">
+        ${Object.entries(ETF_CATALOG).map(([c, n]) => `<option value="${c}">${n}</option>`).join('')}
+      </datalist>
+    </td>
+    <td><input data-k="shares" type="number" value="${p.shares ?? 0}" min="0" step="1" style="text-align:right;" /></td>
+    <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
+  `;
+  tr.querySelector('.row-del-btn').addEventListener('click', () => tr.remove());
+  return tr;
+}
+
+function escapeAttr(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function collectRows() {
+  const rows = [...document.querySelectorAll('#holdings-tbody tr')].map(tr => {
+    const get = k => tr.querySelector(`[data-k="${k}"]`).value;
+    return {
+      name:   get('name').trim(),
+      code:   get('code').trim(),
+      shares: parseFloat(get('shares')) || 0,
+    };
+  }).filter(r => r.code);   // drop rows with empty code
+  return rows;
+}
+
+async function loadHoldings() {
+  const res = await fetch(HOLDINGS_URL, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status} loading ${HOLDINGS_URL}`);
+  return await res.json();
+}
+
+async function saveHoldings() {
+  const status = document.getElementById('save-status');
+  const btn = document.getElementById('save-btn');
+  const rows = collectRows();
+  const cash = parseFloat(document.getElementById('cash-input').value) || 0;
+
+  // Client-side validation (server re-validates too)
+  for (const r of rows) {
+    if (!/^\d{6}$/.test(r.code)) {
+      status.className = 'err';
+      status.textContent = `❌ 代码必须是 6 位数字: "${r.code}"`;
+      return;
+    }
+    if (r.shares < 0) {
+      status.className = 'err';
+      status.textContent = `❌ 数量不能为负: ${r.code}`;
+      return;
+    }
+  }
+  if (cash < 0) {
+    status.className = 'err';
+    status.textContent = '❌ 现金不能为负';
+    return;
+  }
+
+  btn.disabled = true;
+  status.className = 'muted';
+  status.textContent = '提交中…';
+
+  try {
+    const res = await fetch(DISPATCH_URL, {
+      method: 'POST',
+      headers: { 'Accept': 'application/vnd.github+json' },
+      body: JSON.stringify({
+        event_type: 'update_holdings',
+        client_payload: { rows, cash },
+      }),
+    });
+    if (res.status === 204 || res.ok) {
+      status.className = 'ok';
+      status.textContent = '✅ 已提交. Action 约 30 秒后 commit 完成, 邮件会基于新持仓重发. 刷新页面查看新数据.';
+    } else {
+      const text = await res.text();
+      status.className = 'err';
+      status.textContent = `❌ 提交失败: HTTP ${res.status} — ${text.slice(0, 200)}`;
+    }
+  } catch (e) {
+    status.className = 'err';
+    status.textContent = `❌ 网络错误: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function initEditor() {
+  document.getElementById('add-row-btn').addEventListener('click', () => {
+    document.getElementById('holdings-tbody').appendChild(makeRow());
+  });
+  document.getElementById('reset-btn').addEventListener('click', () => {
+    if (originalHoldings) renderEditor(originalHoldings);
+  });
+  document.getElementById('save-btn').addEventListener('click', saveHoldings);
+
+  // Load initial state
+  loadHoldings()
+    .then(renderEditor)
+    .catch(e => {
+      const s = document.getElementById('save-status');
+      s.className = 'err';
+      s.textContent = `加载失败: ${e.message}`;
+    });
+}
+
 main();
+initEditor();

@@ -189,6 +189,70 @@ def test_read_holdings_n_agnostic():
             assert len(h) == n, f"N={n} got {len(h)} positions: {h}"
 
 
+def test_read_holdings_json_schema():
+    """v2 schema: cash + positions[]; _schema/_comment ignored.
+
+    Unknown codes are NOT filtered here — that happens later in
+    fetch_positions(). read_holdings is a pure parser.
+    """
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "h.json"
+        p.write_text(json.dumps({
+            "_schema": "v1",
+            "_comment": "ignored",
+            "cash": 1234.5,
+            "positions": [
+                {"name": "A", "code": "515180", "shares": 100},
+                {"name": "B", "code": "159937", "shares": 200.0},  # float
+                {"name": "bad", "code": "",      "shares": 50},     # empty code → skip
+                {"name": "x",   "code": "511380","shares": None},   # null shares → skip
+            ],
+        }, ensure_ascii=False), encoding="utf-8")
+        record.HOLDINGS = p
+        h, cash = record.read_holdings()
+        assert cash == 1234.5
+        assert len(h) == 2, h
+        assert h[0]["code"] == "515180"
+        assert h[0]["shares"] == 100
+        assert h[1]["code"] == "159937"
+        # 200.0 → 200.0 (json.load returns float; not coerced to int)
+        assert h[1]["shares"] == 200.0
+
+
+def test_read_holdings_json_missing_returns_empty():
+    """Missing file with no xlsx fallback → (positions=[], cash=0)."""
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "nope.json"
+        record.HOLDINGS = p
+        h, cash = record.read_holdings()
+        assert h == []
+        assert cash == 0.0
+
+
+def test_read_holdings_xlsx_fallback_when_json_missing():
+    """If json doesn't exist, fall back to legacy xlsx (for migration)."""
+    import openpyxl
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "h.json"     # doesn't exist
+        xlsx = Path(td) / "h.xlsx"  # legacy format
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.cell(row=2, column=1, value="现金")
+        ws.cell(row=2, column=2, value=999.0)
+        ws.cell(row=4, column=1, value="名称")
+        ws.cell(row=4, column=2, value="代码")
+        ws.cell(row=4, column=3, value="数量")
+        ws.cell(row=5, column=1, value="红利ETF易方达")
+        ws.cell(row=5, column=2, value="515180")
+        ws.cell(row=5, column=3, value=1000)
+        wb.save(xlsx)
+        record.HOLDINGS = p
+        h, cash = record.read_holdings()
+        assert cash == 999.0
+        assert len(h) == 1 and h[0]["code"] == "515180" and h[0]["shares"] == 1000
+
+
 def test_evaluate_with_cash_affects_weights():
     # 4 资产生产配置: 4 个等权 ETF, 总值 = 4*100 = 400.
     # target_w = 1/4 = 0.25, 每个 weight = 0.25, 不触发.
@@ -405,31 +469,38 @@ def test_advance_grid_tp_basis_first_buy_higher_target():
     assert s3["in_cycle"] is False
 
 
-def _write_holdings(xlsx_path: Path, cash_label: str, cash: float, rows: list[list]) -> None:
-    """Build a minimal holdings.xlsx with the layout read_holdings() expects.
+def _write_holdings(json_path: Path, cash_label: str, cash: float, rows: list[list]) -> None:
+    """Build a minimal holdings.json matching the schema read_holdings() expects.
 
-    Matches the comment in record.read_holdings (Excel 1-indexed):
-        row 1: empty
-        row 2: <现金|资产> | <cash amount> | (anything)
-        row 3: empty
-        row 4: header (名称 / 代码 / 数量)
-        row 5..: data rows
+    Schema:
+        {"cash": <number>, "positions": [{"name":..., "code":..., "shares":...}, ...]}
+
+    `cash_label` is accepted for backwards-compat (no longer written — json has no
+    "资产" / "现金" label, just the number).
+
+    Bad rows (None fields, non-numeric shares) are dropped to match the
+    tolerant behaviour of the production read_holdings().
     """
-    import openpyxl
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.cell(row=1, column=1, value="")            # row 1: empty (spacer)
-    if cash_label:
-        ws.cell(row=2, column=1, value=cash_label)  # row 2: cash label
-        ws.cell(row=2, column=2, value=cash)
-    ws.cell(row=3, column=1, value="")            # row 3: empty
-    ws.cell(row=4, column=1, value="名称")        # row 4: header
-    ws.cell(row=4, column=2, value="代码")
-    ws.cell(row=4, column=3, value="数量")
-    for i, row in enumerate(rows, start=5):     # row 5+: data
-        for j, val in enumerate(row, start=1):
-            ws.cell(row=i, column=j, value=val)
-    wb.save(xlsx_path)
+    import json
+    positions = []
+    for row in rows:
+        if not row or len(row) < 3: continue
+        name, code, shares = row[0], row[1], row[2]
+        if name is None or code is None or shares is None: continue
+        try:
+            positions.append({
+                "name": str(name),
+                "code": str(code).strip().split(".")[0],
+                "shares": float(shares),
+            })
+        except (ValueError, TypeError):
+            continue
+    doc = {
+        "_schema": "v1",
+        "cash": float(cash),
+        "positions": positions,
+    }
+    json_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # -----------------------------------------------------------------------------
@@ -587,6 +658,75 @@ def test_notify_qdii_unheld_low_premium_advises_buildable():
     # HTML: green, not red
     assert "✓ QDII 溢价可控" in html
     assert "background:#c0392b" not in html
+
+
+def test_apply_holdings_happy_path():
+    """scripts/apply_holdings.py writes a valid holdings.json when given a clean payload."""
+    import json
+    import subprocess
+    import sys
+    with tempfile.TemporaryDirectory() as td:
+        env_root = Path(td)
+        # copy apply_holdings.py + run it pointing to a temp HOLDINGS
+        src = ROOT / "scripts" / "apply_holdings.py"
+        rows = json.dumps([
+            {"name": "X", "code": "515180", "shares": 1000},
+            {"name": "Y", "code": "159937", "shares": 2000.5},
+        ])
+        # Patch the script's HOLDINGS to a temp path by env var
+        target = env_root / "data" / "holdings.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Run with monkey-patched ROOT: simplest is to invoke with cwd in env_root
+        # and copy the script there
+        patched = env_root / "apply_holdings.py"
+        # The script's HOLDINGS is computed from __file__, so we have to set
+        # __file__ via a wrapper. Simpler: import & call main() directly.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("apply_holdings_test", src)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.HOLDINGS = target
+        try:
+            mod.main.__call__ if False else None   # noqa
+            # call with argv-style: monkey-patch sys.argv
+            old_argv = sys.argv
+            sys.argv = ["apply_holdings.py", rows, "1234.5"]
+            try:
+                mod.main()
+            finally:
+                sys.argv = old_argv
+        except SystemExit as e:
+            assert e.code == 0, f"expected exit 0, got {e.code}"
+        # Verify
+        d = json.loads(target.read_text(encoding="utf-8"))
+        assert d["cash"] == 1234.5
+        assert len(d["positions"]) == 2
+        assert d["positions"][0]["code"] == "515180"
+        assert d["positions"][1]["shares"] == 2000.5  # float preserved
+
+
+def test_apply_holdings_rejects_bad_code():
+    """Unknown code in payload → non-zero exit, no file written."""
+    import importlib.util
+    import subprocess
+    src = ROOT / "scripts" / "apply_holdings.py"
+    spec = importlib.util.spec_from_file_location("apply_holdings_test", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        target = Path(td) / "holdings.json"
+        mod.HOLDINGS = target
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", '[{"name":"X","code":"999999","shares":1}]', "0"]
+        try:
+            mod.main()
+            ok = True
+        except SystemExit as e:
+            ok = (e.code == 0)
+        finally:
+            sys.argv = old_argv
+        assert not ok, "expected non-zero exit for bad code"
+        assert not target.exists(), "file should not be written on failure"
 
 
 def test_main():

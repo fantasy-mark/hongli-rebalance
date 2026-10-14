@@ -1,0 +1,59 @@
+name: Apply Holdings Update
+
+# Triggered by the GitHub Pages editor — see index.html form.
+# Payload: { event_type: "update_holdings",
+#            client_payload: { rows: [{name,code,shares}, ...], cash: number } }
+on:
+  repository_dispatch:
+    types: [update_holdings]
+
+permissions:
+  contents: write   # commit data/holdings.json back
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply edit
+        env:
+          ROWS_JSON: ${{ github.event.client_payload.rows }}
+          CASH:      ${{ github.event.client_payload.cash }}
+        # Wrap JSON safely: pass via env to avoid shell-quoting of {}[] characters
+        run: |
+          python -X utf8 scripts/apply_holdings.py \
+            "$ROWS_JSON" "$CASH"
+
+      - name: Verify result
+        # Defensive read-back: fail loudly if the file is now invalid JSON
+        # (would block the next record.py run).
+        run: |
+          python -c "import json; d=json.load(open('data/holdings.json')); \
+            print('verify ok:', d.get('cash'), len(d.get('positions',[])))"
+
+      - name: Commit and push
+        run: |
+          git config user.name  "holdings-bot[bot]"
+          git config user.email "holdings-bot@users.noreply.github.com"
+          if git diff --quiet data/holdings.json; then
+            echo "no changes; skipping commit"
+            exit 0
+          fi
+          git add data/holdings.json
+          git commit -m "holdings: user edit via Pages ($(date -u +%FT%TZ))"
+          git push
+
+      - name: Re-trigger daily record
+        # Re-run record.py so the email digest & history.json reflect the
+        # new holdings within ~1 minute of the edit.
+        run: |
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: apply-holdings-bot" \
+            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
+            -d '{"event_type":"trigger"}' \
+            && echo "triggered daily re-record" \
+            || echo "WARN failed to trigger daily re-record (non-fatal)"

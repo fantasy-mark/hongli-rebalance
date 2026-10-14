@@ -21,6 +21,36 @@ code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size:
 #status-badge { font-size: 1.05em; padding: 1em; }
 #status-badge.loading { color: #888; }
 
+/* Holdings editor */
+#holdings-table { width: 100%; border-collapse: collapse; margin: 0.5em 0 1em; }
+#holdings-table th, #holdings-table td { padding: 0.5em 0.4em; border-bottom: 1px solid #eee; }
+#holdings-table input {
+  width: 100%; box-sizing: border-box; padding: 0.3em 0.4em;
+  border: 1px solid #ddd; border-radius: 3px; font: inherit;
+}
+#holdings-table td.del-cell { width: 2.5em; text-align: center; }
+#holdings-table .row-del-btn {
+  background: #fee; color: #c0392b; border: 1px solid #fcc;
+  padding: 0.2em 0.6em; border-radius: 3px; cursor: pointer; font-size: 0.95em;
+}
+#holdings-table .row-del-btn:hover { background: #fdd; }
+
+.editor-actions { margin-top: 0.8em; display: flex; align-items: center; flex-wrap: wrap; gap: 0.4em; }
+.editor-actions input[type="number"] {
+  padding: 0.3em 0.4em; border: 1px solid #ddd; border-radius: 3px; font: inherit;
+}
+.btn-primary, .btn-secondary {
+  border: 0; padding: 0.5em 1.1em; border-radius: 4px; cursor: pointer;
+  font: inherit; font-weight: 600; transition: background 0.15s;
+}
+.btn-primary { background: #2c5f8d; color: #fff; }
+.btn-primary:hover { background: #234a6e; }
+.btn-primary:disabled { background: #aaa; cursor: not-allowed; }
+.btn-secondary { background: #f0f0f0; color: #333; }
+.btn-secondary:hover { background: #e3e3e3; }
+#save-status.ok { color: #2c7a2c; }
+#save-status.err { color: #c0392b; }
+
 .badge {
   display: inline-block;
   padding: 0.25em 0.7em;

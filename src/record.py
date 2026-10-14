@@ -27,7 +27,7 @@ from . import grid as grid_mod
 from .fetch import latest, fetch_qdii_premium
 
 ROOT = Path(__file__).resolve().parent.parent
-HOLDINGS = ROOT / "data" / "holdings.xlsx"
+HOLDINGS = ROOT / "data" / "holdings.json"   # v2: plain JSON (was holdings.xlsx)
 HISTORY = ROOT / "data" / "history.json"
 GRID_STATE = ROOT / "data" / "grid_state.json"
 GRID_CHART = ROOT / "data" / "grid_chart.png"
@@ -52,18 +52,54 @@ THRESHOLD_PP = float(os.environ.get("THRESHOLD_PP", "3.0"))
 # Holdings / pricing (preserved from v1)
 # -----------------------------------------------------------------------------
 
-def read_holdings(xlsx_path: Path | None = None) -> Tuple[list[dict], float]:
-    """Parse holdings.xlsx. Accept '现金' (current) or '资产' (legacy) label.
+def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float]:
+    """Parse holdings.json.
 
-    Layout (Excel rows are 0-indexed):
-        row 0: empty
-        row 1: <现金|资产> | <cash amount> | (anything)
-        row 2: empty
-        row 3: header (名称 / 代码 / 数量)
-        row 4..: (名称, 代码, 数量) per row
+    Schema (data/holdings.json):
+        {
+            "_schema": "v1",          # optional, ignored
+            "_comment": "...",        # optional, ignored
+            "cash": <number>,
+            "positions": [
+                {"name": "...", "code": "xxxxxx", "shares": <number>},
+                ...
+            ]
+        }
+
+    For backwards compatibility, falls back to the legacy
+    data/holdings.xlsx (5-row header layout) if holdings.json is missing.
     """
-    if xlsx_path is None:
-        xlsx_path = HOLDINGS
+    if json_path is None:
+        json_path = HOLDINGS
+    if not json_path.exists():
+        # Backwards-compat: fall back to xlsx
+        legacy = json_path.with_suffix(".xlsx")
+        if legacy.exists():
+            return _read_holdings_legacy_xlsx(legacy)
+        return [], 0.0
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except Exception as ex:
+        print(f"WARN holdings.json unreadable: {ex}", file=sys.stderr)
+        return [], 0.0
+    cash = float(doc.get("cash", 0) or 0)
+    holdings: list[dict] = []
+    for p in doc.get("positions", []):
+        if not isinstance(p, dict): continue
+        name = str(p.get("name", "")).strip()
+        code = str(p.get("code", "")).strip().split(".")[0]
+        if not name or not code: continue
+        try:
+            shares = float(p.get("shares", 0))
+        except (ValueError, TypeError):
+            continue
+        holdings.append({"name": name, "code": code, "shares": shares})
+    return holdings, cash
+
+
+def _read_holdings_legacy_xlsx(xlsx_path: Path) -> Tuple[list[dict], float]:
+    """Legacy v1: read 5-row-header xlsx. Kept for backwards compat."""
     df = pd.read_excel(xlsx_path, header=None)
     cash = 0.0
     for i in range(len(df)):
