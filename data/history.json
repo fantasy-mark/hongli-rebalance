@@ -196,5 +196,141 @@
         "source": "tencent+fund.eastmoney"
       }
     ]
+  },
+  {
+    "date": "2026-10-15",
+    "total": 172666.7,
+    "etf_value": 172014.7,
+    "cash": 652.0,
+    "positions": [
+      {
+        "name": "红利ETF易方达",
+        "code": "515180",
+        "shares": 40600.0,
+        "price": 1.423,
+        "date": "2026-10-15",
+        "value": 57773.8
+      },
+      {
+        "name": "黄金ETF博时",
+        "code": "159937",
+        "shares": 6900.0,
+        "price": 8.456,
+        "date": "2026-10-15",
+        "value": 58346.4
+      },
+      {
+        "name": "可转债ETF博时",
+        "code": "511380",
+        "shares": 4500.0,
+        "price": 12.421,
+        "date": "2026-10-15",
+        "value": 55894.5
+      }
+    ],
+    "weights": [
+      0.3346,
+      0.3379,
+      0.3237
+    ],
+    "target_w": 0.3333333333333333,
+    "threshold_pp": 3.0,
+    "triggered": false,
+    "plan": [],
+    "grid_signals": [
+      {
+        "name": "红利ETF易方达",
+        "price": 1.423,
+        "layer_yuan": 10000.0,
+        "signal": "buy",
+        "in_cycle": true,
+        "num_buys": 1,
+        "avg_cost": 1.423,
+        "current_value": 10000.0,
+        "unrealized_pnl": 0.0,
+        "return_pct": 0.0
+      },
+      {
+        "name": "黄金ETF博时",
+        "price": 8.456,
+        "layer_yuan": 10000.0,
+        "signal": "buy",
+        "in_cycle": true,
+        "num_buys": 1,
+        "avg_cost": 8.456,
+        "current_value": 10000.0,
+        "unrealized_pnl": 0.0,
+        "return_pct": 0.0
+      },
+      {
+        "name": "可转债ETF博时",
+        "price": 12.421,
+        "layer_yuan": 10000.0,
+        "signal": "buy",
+        "in_cycle": true,
+        "num_buys": 1,
+        "avg_cost": 12.421,
+        "current_value": 10000.0,
+        "unrealized_pnl": 0.0,
+        "return_pct": 0.0
+      }
+    ],
+    "grid_state": {
+      "红利ETF易方达": {
+        "in_cycle": true,
+        "entries": [
+          {
+            "date": "2026-10-15",
+            "price": 1.423,
+            "shares": 7027.406886858749
+          }
+        ],
+        "last_120d_min": 1.423,
+        "cum_realized": 0.0
+      },
+      "黄金ETF博时": {
+        "in_cycle": true,
+        "entries": [
+          {
+            "date": "2026-10-15",
+            "price": 8.456,
+            "shares": 1182.5922421948912
+          }
+        ],
+        "last_120d_min": 8.456,
+        "cum_realized": 0.0
+      },
+      "可转债ETF博时": {
+        "in_cycle": true,
+        "entries": [
+          {
+            "date": "2026-10-15",
+            "price": 12.421,
+            "shares": 805.0881571532083
+          }
+        ],
+        "last_120d_min": 12.421,
+        "cum_realized": 0.0
+      },
+      "纳斯达克ETF华夏": {
+        "in_cycle": false,
+        "entries": [],
+        "last_120d_min": 2.884,
+        "cum_realized": 0.0
+      }
+    },
+    "qdii_premiums": [
+      {
+        "code": "513300",
+        "name": "纳斯达克ETF华夏",
+        "in_portfolio": false,
+        "price": 2.793,
+        "iopv": 2.5466,
+        "nav_date": "2026-10-13",
+        "premium_pct": 9.68,
+        "quote_time": "2026-10-15 14:03:46",
+        "source": "tencent+fund.eastmoney"
+      }
+    ]
   }
 ]

@@ -1,20 +1,38 @@
 {
   "红利ETF易方达": {
-    "in_cycle": false,
-    "entries": [],
-    "last_120d_min": 1.464,
+    "in_cycle": true,
+    "entries": [
+      {
+        "date": "2026-10-15",
+        "price": 1.423,
+        "shares": 7027.406886858749
+      }
+    ],
+    "last_120d_min": 1.423,
     "cum_realized": 0.0
   },
   "黄金ETF博时": {
-    "in_cycle": false,
-    "entries": [],
-    "last_120d_min": 8.482,
+    "in_cycle": true,
+    "entries": [
+      {
+        "date": "2026-10-15",
+        "price": 8.456,
+        "shares": 1182.5922421948912
+      }
+    ],
+    "last_120d_min": 8.456,
     "cum_realized": 0.0
   },
   "可转债ETF博时": {
-    "in_cycle": false,
-    "entries": [],
-    "last_120d_min": 12.634,
+    "in_cycle": true,
+    "entries": [
+      {
+        "date": "2026-10-15",
+        "price": 12.421,
+        "shares": 805.0881571532083
+      }
+    ],
+    "last_120d_min": 12.421,
     "cum_realized": 0.0
   },
   "纳斯达克ETF华夏": {
