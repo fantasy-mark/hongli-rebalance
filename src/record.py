@@ -24,7 +24,7 @@ from typing import Tuple
 import pandas as pd
 
 from . import grid as grid_mod
-from .fetch import latest, fetch_qdii_premium
+from .fetch import latest, fetch_qdii_premium, fetch_kline_history
 
 ROOT = Path(__file__).resolve().parent.parent
 HOLDINGS = ROOT / "data" / "holdings.json"   # v2: plain JSON (was holdings.xlsx)
@@ -391,11 +391,28 @@ def main() -> None:
     recent_min = float(pool.tail(window).min()) if len(pool) else 0.0
 
     # Advance grid
+    # Today uses the K-line LOW (intraday low) so the trigger can fire on
+    # intraday dips even if the close is above yesterday's close.
     state = load_grid_state()
     prices_by_name = {p["name"]: p["price"] for p in positions if p["name"] in ASSET_NAMES}
+    lows_by_name: dict[str, float] = {}
+    for p in positions:
+        if p["name"] not in ASSET_NAMES:
+            continue
+        code = p["code"]
+        kf = fetch_kline_history(code, start=today, end=today)
+        if kf is not None and not kf.empty:
+            lows_by_name[p["name"]] = float(kf["low"].iloc[-1])
+    # If K-line fetch failed for an asset, fall back to the realtime close
+    grid_prices = {n: lows_by_name.get(n, prices_by_name.get(n)) for n in ASSET_NAMES}
     new_state, grid_signals = advance_all_grids(
-        state, today, prices_by_name, total, recent_min,
+        state, today, grid_prices, total, recent_min,
     )
+    # Annotate signals with the (intraday) low that drove the decision so
+    # the daily record shows the actual trigger price, not the close.
+    for s in grid_signals:
+        if s["name"] in lows_by_name:
+            s["intraday_low"] = round(lows_by_name[s["name"]], 4)
     save_grid_state(new_state)
 
     # Persist record

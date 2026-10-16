@@ -64,9 +64,14 @@ def _run_trigger(prices: pd.Series, mode: str, lookback: int = LOOKBACK,
             if i > 0:
                 if mode == "global":  # A: rolling global min (from start)
                     past_min = prices_sorted.iloc[:i].min()
-                else:                 # C: past N trading days
+                elif mode == "window":  # C: past N trading days
                     window = prices_sorted.iloc[max(0, i - lookback):i]
                     past_min = window.min() if len(window) else float("inf")
+                elif mode == "window_buffer":  # C + 3% 缓冲: 低于窗口最低 3% 才开
+                    window = prices_sorted.iloc[max(0, i - lookback):i]
+                    past_min = window.min() * (1 - step_pct / 100) if len(window) else float("inf")
+                else:
+                    raise ValueError(f"unknown mode: {mode}")
                 if price < past_min:
                     sh = pos_yuan / price
                     entries.append({"date": date, "price": price, "shares": sh})
@@ -174,8 +179,9 @@ def main() -> None:
 
     print()
     results = []
-    for mode, label in [("global", "A 全局滚动最低"),
-                         ("window", "C 120日窗口最低")]:
+    for mode, label in [("global",        "A 全局滚动最低"),
+                         ("window",        "C 120日窗口最低"),
+                         ("window_buffer", "C+3% 窗口最低-3%")]:
         print(f"回测 {label}...")
         r = run_mode(mode, label, prices)
         results.append(r)
@@ -184,21 +190,21 @@ def main() -> None:
               f"pnl=¥{r['total_pnl']:>+10,.0f}  roi={r['roi_pct']:>+5.2f}%")
 
     print()
-    print("=" * 78)
-    print(f"{'metric':<22} {'A 全局滚动':>20} {'C 120日窗口':>20} {'Δ':>10}")
-    print("-" * 78)
-    a, c = results
+    print("=" * 95)
+    print(f"{'metric':<22} {'A 全局':>18} {'C 窗口':>18} {'C+3%':>18} {'C+3% - C':>14}")
+    print("-" * 95)
+    a, c, cb = results
     rows = [
-        ("n_trades",        a["n_trades"],        c["n_trades"]),
-        ("win_rate",        a["win_rate"],        c["win_rate"]),
-        ("avg_hold_days",   a["avg_hold_days"],   c["avg_hold_days"]),
-        ("total_pnl ¥",     a["total_pnl"],       c["total_pnl"]),
-        ("total_invested ¥", a["total_invested"], c["total_invested"]),
-        ("roi %",           a["roi_pct"],         c["roi_pct"]),
+        ("n_trades",          a["n_trades"],          c["n_trades"],          cb["n_trades"]),
+        ("win_rate",          a["win_rate"],          c["win_rate"],          cb["win_rate"]),
+        ("avg_hold_days",     a["avg_hold_days"],     c["avg_hold_days"],     cb["avg_hold_days"]),
+        ("total_pnl ¥",       a["total_pnl"],         c["total_pnl"],         cb["total_pnl"]),
+        ("total_invested ¥",  a["total_invested"],    c["total_invested"],    cb["total_invested"]),
+        ("roi %",             a["roi_pct"],           c["roi_pct"],           cb["roi_pct"]),
     ]
-    for label, x, y in rows:
-        print(f"{label:<22} {x:>20,.4f} {y:>20,.4f} {y - x:>+10,.4f}")
-    print("=" * 78)
+    for label, x, y, z in rows:
+        print(f"{label:<22} {x:>18,.4f} {y:>18,.4f} {z:>18,.4f} {z - y:>+14,.4f}")
+    print("=" * 95)
 
     print("\nPer-asset 详细:")
     for i, (name, _, _) in enumerate(ASSETS):

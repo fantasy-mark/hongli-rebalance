@@ -315,3 +315,63 @@ def latest(sina: str, eastmoney: str = "") -> Tuple[float, pd.Timestamp]:
         if t is not None:
             return t
     return latest_history(sina, eastmoney)
+
+
+def fetch_kline_history(code: str, start: str = "", end: str = "") -> Optional[pd.DataFrame]:
+    """Daily K-line (含 low) via Tencent `web.ifzq.gtimg.cn`.
+
+    Returns a DataFrame indexed by date with columns: open, close, high, low.
+    Used for the grid trigger — the 120-day low window + today's intraday low —
+    so it matches what stock software (同花顺/通达信) shows.
+
+    We use Tencent (not akshare Eastmoney) because:
+      - TenCent kline is reachable from CN ISPs where push2his.eastmoney.com
+        is often throttled or aborted.
+      - It returns unadjusted OHLC which is what we need for relative-low
+        comparison.
+    """
+    if requests is None:
+        return None
+    code6 = str(code).strip().zfill(6)
+    prefix = "sh" if code6[0] in ("5", "6", "9") else "sz"
+    sym = f"{prefix}{code6}"
+    url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    params = {"param": f"{sym},day,,,1000,qfq"}
+    raw = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, params=params, timeout=15,
+                             headers={"User-Agent": "Mozilla/5.0",
+                                      "Referer": "https://gu.qq.com/"})
+            if r.status_code != 200:
+                continue
+            j = r.json()
+            data = j.get("data", {}).get(sym, {})
+            klines = data.get("day") or data.get("qfqday") or []
+            if klines:
+                raw = klines
+                break
+        except Exception as ex:
+            log.warning("tencent kline %s attempt %d failed: %s", sym, attempt + 1, ex)
+            import time as _t
+            _t.sleep(1.0 * (attempt + 1))
+    if not raw:
+        return None
+    # row: [date, open, close, high, low, volume]
+    rows = []
+    for k in raw:
+        try:
+            d = pd.Timestamp(k[0])
+            o, c, h, lo = float(k[1]), float(k[2]), float(k[3]), float(k[4])
+            rows.append((d, o, c, h, lo))
+        except (ValueError, TypeError, IndexError):
+            continue
+    if not rows:
+        return None
+    df = pd.DataFrame(rows, columns=["date", "open", "close", "high", "low"]).set_index("date")
+    df = df.sort_index()
+    if start:
+        df = df[df.index >= pd.Timestamp(start)]
+    if end:
+        df = df[df.index <= pd.Timestamp(end)]
+    return df

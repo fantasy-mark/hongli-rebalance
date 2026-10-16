@@ -1,4 +1,4 @@
-"""One-shot backfill of grid_state.json's last_prices window.
+"""One-shot backfill of grid_state.json's last_prices window using K-line lows.
 
 The grid state JSON was bootstrapped under the old A-rule (single
 "last_120d_min" scalar). After switching to the C-rule (rolling 120-day
@@ -6,11 +6,10 @@ window), the new `last_prices` queue was filled with only the most recent
 2 days, which causes false triggers: any 1-day dip looks like a "new
 120-day low" when the window is short.
 
-This script fetches the actual past GRID_LOOKBACK closes for each asset
-and rewrites `last_prices` in data/grid_state.json. It also keeps the
-existing in-cycle entries untouched (so the simulated holdings don't
-disappear) but recomputes the cum_realized of any in-progress cycle from
-the actual prices.
+This script fetches the actual past GRID_LOOKBACK K-line LOWS (matches
+同花顺/通达信 stock-software numbers) for each asset and rewrites
+`last_prices` in data/grid_state.json. Existing in-cycle entries are
+cleared so the live rule re-evaluates from a clean window.
 
 Run:
     python scripts/backfill_grid_window.py
@@ -33,7 +32,7 @@ for _n in ("matplotlib", "akshare", "urllib3", "requests"):
 import pandas as pd
 
 from src import grid as grid_mod
-from src.fetch import fetch_one
+from src.fetch import fetch_kline_history
 
 ASSETS = [
     ("黄金ETF博时",   "sz159937", "159937"),
@@ -52,26 +51,25 @@ def main() -> None:
     start_str = start.strftime("%Y-%m-%d")
     end_str = today.strftime("%Y-%m-%d")
 
-    print(f"回填窗口: {start_str} → {end_str}  (target lookback={LOOKBACK})\n")
-    for name, sina, em in ASSETS:
+    print(f"回填窗口: {start_str} → {end_str}  (lookback={LOOKBACK}, 用 K 线最低价)\n")
+    for name, _sina, code in ASSETS:
         if name not in state:
             print(f"[{name}] 不在 grid_state 里, 跳过")
             continue
         s = state[name]
-        df = fetch_one(sina, em, start_str, end_str)
-        closes = df["close"].dropna().sort_index()
-        # 取截至今天（含）的最后 LOOKBACK 个 close
-        window = closes[closes.index <= today].tail(LOOKBACK)
+        df = fetch_kline_history(code, start=start_str, end=end_str)
+        if df is None or df.empty:
+            print(f"[{name}] K 线拉取失败, 跳过")
+            continue
+        lows = df["low"].dropna().sort_index()
+        window = lows[lows.index <= today].tail(LOOKBACK)
         old_entries = s.get("entries", [])
-        # Reset: 进 cycle 的入口是在错误的"短窗口"状态下塞进去的,
-        # 用真 120 日窗口回顾, 当天的 close 全部 >= 窗口最低 → 应该都没有触发.
-        # 所以清掉 entries 重新开始 (模拟仓位归零).
         s["in_cycle"] = False
         s["entries"] = []
         s["cum_realized"] = 0.0
         s["last_prices"] = [float(p) for p in window.values]
         print(f"[{name}]  清 {len(old_entries)} 旧 entries, "
-              f"last_prices 长度 {len(s['last_prices'])}, "
+              f"K线 {len(df)} 行 → 取末 {LOOKBACK} = {len(window)} 行, "
               f"min={min(s['last_prices']):.4f}  max={max(s['last_prices']):.4f}  "
               f"末值={s['last_prices'][-1]:.4f}  "
               f"窗口 {window.index[0].date()} → {window.index[-1].date()}")
