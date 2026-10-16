@@ -217,11 +217,13 @@ def _replay_grid_for_chart(prices_by_asset: dict[str, pd.Series],
     DataFrame. We re-run `run_compound_grid` from the start, then
     splice the current state into the tail to keep the chart consistent
     with the persisted state.
+
+    trigger_mode='window' (120-day rolling low) matches the live rule.
     """
     from src.grid import run_compound_grid
     out: dict[str, pd.DataFrame] = {}
     for name, s in prices_by_asset.items():
-        result = run_compound_grid(s)
+        result = run_compound_grid(s, trigger_mode="window")
         out[name] = result["history"]
     return out
 
@@ -306,7 +308,7 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     norm_log = {n: pd.Series(pct_to_log_vec(s.values), index=s.index, name=n)
                 for n, s in norm_ret_pct.items()}
 
-    # Replay grid to get per-asset in-use ¥ series
+    # Replay grid with trigger_mode="window" (120-day rolling low) — the live rule.
     grid_state = _load_grid_state_safe()
     grid_histories = _replay_grid_for_chart(etf_w, grid_state)
     grid_in_use_by_asset = {n: grid_histories[n]["current_value"] for n in ASSET_NAMES}
@@ -451,7 +453,7 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     span = (x_right - x_left)
     ax1.set_xlim(x_left, x_right + span * 0.02)
 
-    # ---- Bottom: stacked in-use ----
+    # ---- Bottom: stacked in-use (C variant, opaque) ----
     stack_df = pd.concat(grid_in_use_by_asset, axis=1).fillna(0.0)
     # Reorder columns to ASSET_NAMES order (stackplot requires explicit series)
     stack_df = stack_df.reindex(columns=ASSET_NAMES).fillna(0.0)
@@ -461,10 +463,11 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
         *(stack_df[n].values for n in ASSET_NAMES),
         labels=[f"{n} (in-use)" for n in ASSET_NAMES],
         colors=[ASSET_COLORS[n] for n in ASSET_NAMES],
-        alpha=0.90,
+        alpha=0.95,
         edgecolor="white",
         linewidth=0.8,
     )
+
     ax2.set_facecolor("#FAFAFA")
     if not grid_in_use_total.empty:
         last_val = float(grid_in_use_total.values[-1])

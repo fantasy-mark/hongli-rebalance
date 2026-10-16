@@ -360,7 +360,7 @@ def test_layer_yuan_scales_with_floating():
 
 def test_advance_grid_buy_on_120day_low():
     state = grid_mod.fresh_asset_state()
-    state["last_120d_min"] = 100.0
+    state["last_prices"] = [100.0]
     new_state, signal = grid_mod.advance_one_day(
         state, date_str="2026-01-01", price=99.0, layer_yuan_value=10_000.0,
     )
@@ -374,21 +374,21 @@ def test_advance_grid_buy_on_120day_low():
 
 def test_advance_grid_hold_no_signal():
     state = grid_mod.fresh_asset_state()
-    state["last_120d_min"] = 100.0
+    state["last_prices"] = [100.0]
     new_state, signal = grid_mod.advance_one_day(
         state, date_str="2026-01-01", price=101.0, layer_yuan_value=10_000.0,
     )
     assert signal is None
     assert new_state["in_cycle"] is False
     assert new_state["entries"] == []
-    # rolling min 更新到 100 (没破)
-    assert new_state["last_120d_min"] == 100.0
+    # rolling window: today's 101 appended → [100, 101]
+    assert new_state["last_prices"] == [100.0, 101.0]
 
 
 def test_advance_grid_pyramid_then_sell():
     """两层金字塔 → +3% 止盈触发 sell."""
     state = grid_mod.fresh_asset_state()
-    state["last_120d_min"] = 100.0
+    state["last_prices"] = [100.0]
     # 第一层 @ 100
     state, sig1 = grid_mod.advance_one_day(
         state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
@@ -435,7 +435,7 @@ def test_advance_grid_tp_basis_first_buy_higher_target():
     - 第一笔 99, 第一笔×1.03 = 101.97 (101 < 101.97 不触发, 103 ≥ 101.97 触发)
     """
     state = grid_mod.fresh_asset_state()
-    state["last_120d_min"] = 100.0
+    state["last_prices"] = [100.0]
     state, _ = grid_mod.advance_one_day(state, "2026-01-01", price=99.0,
                                         layer_yuan_value=10_000.0)
     state, _ = grid_mod.advance_one_day(state, "2026-01-02", price=96.0,
@@ -444,14 +444,14 @@ def test_advance_grid_tp_basis_first_buy_higher_target():
     # 均价 × 1.03 ≈ 100.40, 第一笔 × 1.03 = 101.97
 
     # 在 101: 均价 basis 触发, first_buy basis 不触发
-    s1 = json.loads(json.dumps(state)); s1["last_120d_min"] = 100.0
+    s1 = json.loads(json.dumps(state)); s1["last_prices"] = [100.0]
     s1, sig_avg = grid_mod.advance_one_day(
         s1, "2026-01-03", price=101.0, layer_yuan_value=10_000.0,
         tp_basis="avg_cost",
     )
     assert sig_avg == "sell", f"avg_cost basis should trigger at 101, got {sig_avg}"
 
-    s2 = json.loads(json.dumps(state)); s2["last_120d_min"] = 100.0
+    s2 = json.loads(json.dumps(state)); s2["last_prices"] = [100.0]
     s2, sig_fb = grid_mod.advance_one_day(
         s2, "2026-01-03", price=101.0, layer_yuan_value=10_000.0,
         tp_basis="first_buy",
@@ -460,7 +460,7 @@ def test_advance_grid_tp_basis_first_buy_higher_target():
     assert s2["in_cycle"] is True
 
     # 涨到 103: first_buy basis 触发 (103 >= 99*1.03 = 101.97)
-    s3 = json.loads(json.dumps(state)); s3["last_120d_min"] = 100.0
+    s3 = json.loads(json.dumps(state)); s3["last_prices"] = [100.0]
     s3, sig_fb2 = grid_mod.advance_one_day(
         s3, "2026-01-03", price=103.0, layer_yuan_value=10_000.0,
         tp_basis="first_buy",

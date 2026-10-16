@@ -55,8 +55,13 @@ def run_compound_grid(
     tp_basis: str = GRID_TP_BASIS,
     pos_yuan: float = GRID_BASE_YUAN,
     pos_yuan_fn: Optional[Callable[[object], float]] = None,
+    trigger_mode: str = "window",
 ) -> dict:
     """Run the compound grid on a full price series (used for chart + tests).
+
+    trigger_mode:
+        "window" — open cycle when price < min of past `lookback` days  (default)
+        "global" — open cycle when price < min of all prior history (rolling global low)
 
     Returns dict with: cycles (closed), history (daily DataFrame), cum_realized,
     open_cycle, open_avg_cost, open_invested, open_shares.
@@ -78,7 +83,10 @@ def run_compound_grid(
     for i, (date, price) in enumerate(prices_sorted.items()):
         if not in_cycle:
             if i > 0:
-                past = prices_sorted.iloc[max(0, i - lookback):i]
+                if trigger_mode == "global":
+                    past = prices_sorted.iloc[:i]
+                else:
+                    past = prices_sorted.iloc[max(0, i - lookback):i]
                 if len(past) >= 1 and price < past.min():
                     sh = _layer(date, price) / price
                     entries.append({"date": date, "price": float(price), "shares": sh})
@@ -159,7 +167,11 @@ def fresh_asset_state() -> dict:
     return {
         "in_cycle": False,
         "entries": [],                # [{date: ISO, price: float, shares: float}]
-        "last_120d_min": None,        # for next-day 120-day-low trigger
+        # Rolling window of past closes (length up to GRID_LOOKBACK). The
+        # trigger condition is `price < min(window)` — i.e. a new 120-day low.
+        # We persist a queue so the rule survives Action restarts and JSON
+        # round-trips.
+        "last_prices": [],
         "cum_realized": 0.0,
     }
 
@@ -192,14 +204,19 @@ def advance_one_day(
     """
     in_cycle = bool(state.get("in_cycle", False))
     entries: list[dict] = list(state.get("entries", []))
-    last_120d_min = state.get("last_120d_min")
+    # Compat: if state was saved under the old "last_120d_min" key, start
+    # the window with that single value (treat it as a known low).
+    legacy_min = state.get("last_120d_min")
+    last_prices: list[float] = list(state.get("last_prices", []))
+    if not last_prices and legacy_min is not None:
+        last_prices = [float(legacy_min)]
     cum_realized = float(state.get("cum_realized", 0.0))
 
     signal: Optional[str] = None
 
     if not in_cycle:
-        # Trigger: today < min of past 120 days
-        if last_120d_min is not None and price < last_120d_min:
+        # Trigger: today < min of past `lookback` days (rolling window).
+        if last_prices and price < min(last_prices):
             sh = layer_yuan_value / price if price > 0 else 0.0
             entries.append({"date": date_str, "price": float(price), "shares": sh})
             in_cycle = True
@@ -230,14 +247,15 @@ def advance_one_day(
                 entries = []
                 signal = "sell"
 
-    # Update rolling 120-day min: min(last_min, price)
-    if last_120d_min is None or price < last_120d_min:
-        last_120d_min = price
+    # Update rolling window: append today, then trim to `lookback` entries.
+    last_prices.append(float(price))
+    if len(last_prices) > lookback:
+        last_prices = last_prices[-lookback:]
 
     new_state = {
         "in_cycle": in_cycle,
         "entries": entries,
-        "last_120d_min": last_120d_min,
+        "last_prices": last_prices,
         "cum_realized": cum_realized,
     }
     return new_state, signal
