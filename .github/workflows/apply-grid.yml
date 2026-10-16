@@ -1,0 +1,63 @@
+name: Apply Grid Update
+
+# Triggered by the GitHub Pages editor — see app.js (manual grid ops form).
+# Payload: { event_type: "update_grid",
+#            client_payload: { schema: "grid-ops-v1",
+#                              ops: [{date, code, op, price, shares?, note?}, ...] } }
+#
+# The editor submits manual grid operations (open / add / tp). apply_grid.py
+# mutates data/grid_state.json in place. The next daily.yml run picks up the
+# updated state automatically.
+on:
+  repository_dispatch:
+    types: [update_grid]
+
+permissions:
+  contents: write   # commit data/grid_state.json back
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply edit
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          python -X utf8 scripts/apply_grid.py "$PAYLOAD"
+
+      - name: Verify result
+        # Defensive read-back: fail loudly if the file is now invalid JSON
+        # (would block the next record.py run).
+        run: |
+          python -c "import json; \
+            g=json.load(open('data/grid_state.json')); \
+            print('verify ok: assets=', len(g), \
+                  'in_cycle=', sum(1 for s in g.values() if s.get('in_cycle')))"
+
+      - name: Commit and push
+        run: |
+          git config user.name  "grid-bot[bot]"
+          git config user.email "grid-bot@users.noreply.github.com"
+          if git diff --quiet data/grid_state.json; then
+            echo "no changes; skipping commit"
+            exit 0
+          fi
+          git add data/grid_state.json
+          git commit -m "grid: user edit via Pages ($(date -u +%FT%TZ))"
+          git push
+
+      - name: Re-trigger daily record
+        # Re-run record.py so the email digest & history.json reflect the
+        # new grid state within ~1 minute of the edit.
+        run: |
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: apply-grid-bot" \
+            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
+            -d '{"event_type":"trigger"}' \
+            && echo "triggered daily re-record" \
+            || echo "WARN failed to trigger daily re-record (non-fatal)"

@@ -293,3 +293,66 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
     }
+
+
+# -----------------------------------------------------------------------------
+# Manual operations (driven by the Pages editor, not by daily advancement)
+# -----------------------------------------------------------------------------
+
+def manual_op(state: dict, op: str, today: str,
+              price: float, shares: float) -> dict:
+    """Apply a manual grid operation. Returns a NEW state dict (does not mutate).
+
+    op ∈ {"open", "add", "tp"}:
+      - open: in_cycle must be False. Append an entry, set in_cycle=True,
+        and push `price` to the rolling `last_prices` window (so the manual
+        buy is also seen as a known-low for the next daily run).
+      - add:  in_cycle must be True. Append an entry. `last_prices` is NOT
+        touched. `entries[-1].price` becomes the new "加仓参考价" for the
+        next auto pyramid, matching advance_one_day's behavior.
+      - tp:   in_cycle must be True. Compute pnl at the user's exit price,
+        add to cum_realized, set in_cycle=False, clear entries.
+        `last_prices` is NOT touched.
+    """
+    if op not in ("open", "add", "tp"):
+        raise ValueError(f"unknown op: {op!r}")
+    if not (price > 0):
+        raise ValueError(f"price must be > 0, got {price}")
+    # For "open" and "add", `shares` is the layer share count → must be > 0.
+    # For "tp", `shares` is ignored (we always exit ALL existing entries),
+    # so any value (including 0) is accepted.
+    if op in ("open", "add") and not (shares > 0):
+        raise ValueError(f"{op} requires shares > 0, got {shares}")
+    in_cycle = bool(state.get("in_cycle", False))
+    if op == "open" and in_cycle:
+        raise ValueError("open requires no open cycle (use tp to close first)")
+    if op in ("add", "tp") and not in_cycle:
+        raise ValueError(f"{op} requires an open cycle")
+
+    new_state = {
+        "in_cycle": in_cycle,
+        "entries": list(state.get("entries", [])),
+        "last_prices": list(state.get("last_prices", [])),
+        "cum_realized": float(state.get("cum_realized", 0.0)),
+    }
+
+    if op in ("open", "add"):
+        new_state["entries"].append({
+            "date": today, "price": float(price), "shares": float(shares),
+        })
+        new_state["in_cycle"] = True
+        if op == "open":
+            new_state["last_prices"].append(float(price))
+            if len(new_state["last_prices"]) > GRID_LOOKBACK:
+                new_state["last_prices"] = new_state["last_prices"][-GRID_LOOKBACK:]
+    else:  # tp
+        entries = new_state["entries"]
+        total_shares = sum(e["shares"] for e in entries)
+        total_invested = sum(e["shares"] * e["price"] for e in entries)
+        exit_value = total_shares * float(price)
+        pnl = exit_value - total_invested
+        new_state["cum_realized"] += pnl
+        new_state["entries"] = []
+        new_state["in_cycle"] = False
+
+    return new_state

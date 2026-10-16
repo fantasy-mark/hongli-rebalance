@@ -300,10 +300,16 @@ def load_grid_state() -> dict:
 
 
 def save_grid_state(state: dict) -> None:
-    GRID_STATE.write_text(
+    # Atomic write (temp + replace) — matches scripts/apply_holdings.py and
+    # scripts/apply_grid.py. A failed write leaves the previous valid
+    # grid_state.json in place rather than a half-written corrupt file.
+    import os
+    tmp = GRID_STATE.with_suffix(GRID_STATE.suffix + ".tmp")
+    tmp.write_text(
         json.dumps(state, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
+    os.replace(tmp, GRID_STATE)
 
 
 # -----------------------------------------------------------------------------

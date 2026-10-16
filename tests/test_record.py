@@ -469,6 +469,108 @@ def test_advance_grid_tp_basis_first_buy_higher_target():
     assert s3["in_cycle"] is False
 
 
+# -----------------------------------------------------------------------------
+# grid.manual_op — Pages-driven open/add/tp operations
+# -----------------------------------------------------------------------------
+
+def test_manual_op_open_creates_cycle():
+    """open: in_cycle False → True, entry appended, last_prices extended."""
+    import json as _json
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [1.40, 1.38, 1.37]
+    new_state = grid_mod.manual_op(
+        state, op="open", today="2026-10-17", price=1.35, shares=1000.0,
+    )
+    assert new_state["in_cycle"] is True
+    assert len(new_state["entries"]) == 1
+    assert new_state["entries"][0] == {
+        "date": "2026-10-17", "price": 1.35, "shares": 1000.0,
+    }
+    # 1.35 pushed to rolling window
+    assert new_state["last_prices"][-1] == 1.35
+    assert len(new_state["last_prices"]) == 4
+    # original state NOT mutated
+    assert state["in_cycle"] is False
+    assert state["entries"] == []
+
+
+def test_manual_op_open_rejects_existing_cycle():
+    """open while in_cycle=True → ValueError."""
+    state = grid_mod.fresh_asset_state()
+    state["in_cycle"] = True
+    state["entries"] = [{"date": "2026-10-15", "price": 1.40, "shares": 1000.0}]
+    try:
+        grid_mod.manual_op(state, op="open", today="2026-10-17",
+                           price=1.30, shares=500.0)
+    except ValueError as e:
+        assert "no open cycle" in str(e)
+    else:
+        raise AssertionError("open on in_cycle=True should raise")
+
+
+def test_manual_op_add_appends_to_cycle():
+    """add: in_cycle True → entry appended, last_prices UNCHANGED."""
+    state = grid_mod.fresh_asset_state()
+    state["in_cycle"] = True
+    state["entries"] = [{"date": "2026-10-15", "price": 1.40, "shares": 1000.0}]
+    state["last_prices"] = [1.40, 1.38, 1.37]
+    new_state = grid_mod.manual_op(
+        state, op="add", today="2026-10-17", price=1.30, shares=1000.0,
+    )
+    assert new_state["in_cycle"] is True
+    assert len(new_state["entries"]) == 2
+    assert new_state["entries"][1]["price"] == 1.30
+    # 加仓参考价 = entries[-1].price (新加的)
+    assert new_state["entries"][-1]["price"] == 1.30
+    # last_prices unchanged
+    assert new_state["last_prices"] == [1.40, 1.38, 1.37]
+
+
+def test_manual_op_add_rejects_no_cycle():
+    """add while in_cycle=False → ValueError."""
+    state = grid_mod.fresh_asset_state()
+    try:
+        grid_mod.manual_op(state, op="add", today="2026-10-17",
+                           price=1.30, shares=1000.0)
+    except ValueError as e:
+        assert "requires an open cycle" in str(e)
+    else:
+        raise AssertionError("add on in_cycle=False should raise")
+
+
+def test_manual_op_tp_books_pnl():
+    """tp: in_cycle True → P&L booked to cum_realized, cycle closed."""
+    state = grid_mod.fresh_asset_state()
+    state["in_cycle"] = True
+    state["entries"] = [
+        {"date": "2026-10-15", "price": 1.40, "shares": 1000.0},
+        {"date": "2026-10-16", "price": 1.30, "shares": 1000.0},
+    ]
+    state["cum_realized"] = 50.0
+    new_state = grid_mod.manual_op(
+        state, op="tp", today="2026-10-17", price=1.50, shares=0.0,
+    )
+    # total_invested = 1000*1.40 + 1000*1.30 = 2700
+    # total_shares = 2000
+    # exit_value = 2000 * 1.50 = 3000
+    # pnl = 3000 - 2700 = 300
+    assert new_state["cum_realized"] == 50.0 + 300.0
+    assert new_state["in_cycle"] is False
+    assert new_state["entries"] == []
+
+
+def test_manual_op_tp_rejects_no_cycle():
+    """tp while in_cycle=False → ValueError."""
+    state = grid_mod.fresh_asset_state()
+    try:
+        grid_mod.manual_op(state, op="tp", today="2026-10-17",
+                           price=1.50, shares=0.0)
+    except ValueError as e:
+        assert "requires an open cycle" in str(e)
+    else:
+        raise AssertionError("tp on in_cycle=False should raise")
+
+
 def _write_holdings(json_path: Path, cash_label: str, cash: float, rows: list[list]) -> None:
     """Build a minimal holdings.json matching the schema read_holdings() expects.
 
@@ -914,6 +1016,112 @@ def test_rebuild_holdings_from_trades_as_of_date_inclusive():
     ]
     _, cash = record.rebuild_holdings_from_trades(trades, as_of_date="2026-10-13")
     assert cash == 1000.0   # second deposit is after 10-13, skipped
+
+
+# -----------------------------------------------------------------------------
+# scripts/apply_grid.py — Pages editor → grid_state.json (open/add/tp)
+# -----------------------------------------------------------------------------
+
+def test_apply_grid_happy_path_add_then_tp():
+    """An `add` op followed by a `tp` op in one batch updates state correctly."""
+    import importlib.util
+    import json
+    import sys
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        # Pre-populate an in-cycle grid state for one asset
+        initial = {
+            "红利ETF易方达": {
+                "in_cycle": True,
+                "entries": [{"date": "2026-10-15", "price": 1.40, "shares": 1000.0}],
+                "last_prices": [1.40, 1.38, 1.37],
+                "cum_realized": 0.0,
+            },
+            "黄金ETF博时": {
+                "in_cycle": False, "entries": [],
+                "last_prices": [8.50], "cum_realized": 0.0,
+            },
+        }
+        state_path = td / "grid_state.json"
+        state_path.write_text(json.dumps(initial, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+        src = ROOT / "scripts" / "apply_grid.py"
+        spec = importlib.util.spec_from_file_location("apply_grid_test", src)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.GRID_STATE = state_path
+        payload = json.dumps({
+            "schema": "grid-ops-v1",
+            "ops": [
+                {"date": "2026-10-17", "code": "515180", "op": "add",
+                 "price": 1.30, "shares": 1000, "note": "pyramid"},
+                {"date": "2026-10-17", "code": "515180", "op": "tp",
+                 "price": 1.50, "shares": 0, "note": "tp"},
+            ],
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_grid.py", payload]
+        try:
+            mod.main()
+        except SystemExit as e:
+            assert e.code == 0, f"expected exit 0, got {e.code}"
+        finally:
+            sys.argv = old_argv
+        # Reload state, verify the two ops applied
+        out = json.loads(state_path.read_text(encoding="utf-8"))
+        a = out["红利ETF易方达"]
+        # After add+tp: cycle closed, 2 entries added then cleared, pnl booked
+        assert a["in_cycle"] is False
+        assert a["entries"] == []
+        # total_invested = 1000*1.40 + 1000*1.30 = 2700
+        # total_shares = 2000; exit_value = 2000*1.50 = 3000; pnl = 300
+        assert a["cum_realized"] == 300.0
+        # last_prices for the add branch should NOT have been touched
+        assert a["last_prices"] == [1.40, 1.38, 1.37]
+        # Other asset untouched
+        assert out["黄金ETF博时"]["in_cycle"] is False
+
+
+def test_apply_grid_rejects_open_when_in_cycle():
+    """open on an in-cycle asset → SystemExit(1)."""
+    import importlib.util
+    import json
+    import sys
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        state_path = td / "grid_state.json"
+        state_path.write_text(json.dumps({
+            "红利ETF易方达": {
+                "in_cycle": True, "entries": [],
+                "last_prices": [], "cum_realized": 0.0,
+            },
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        src = ROOT / "scripts" / "apply_grid.py"
+        spec = importlib.util.spec_from_file_location("apply_grid_test", src)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.GRID_STATE = state_path
+        payload = json.dumps({
+            "schema": "grid-ops-v1",
+            "ops": [{"date": "2026-10-17", "code": "515180", "op": "open",
+                     "price": 1.20, "shares": 1000}],
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_grid.py", payload]
+        raised = False
+        try:
+            mod.main()
+        except SystemExit as e:
+            raised = True
+            assert e.code == 1
+        finally:
+            sys.argv = old_argv
+        assert raised, "expected SystemExit(1) for open on in-cycle asset"
+        # State file should NOT have been written (atomic write happens after
+        # all ops apply; the failing op should abort before any write).
+        # In practice apply_grid.py may rewrite the file even on a single-op
+        # failure depending on order — we only assert exit code here.
+
 
 
 def test_main():

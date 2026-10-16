@@ -645,6 +645,206 @@ function resetForm(kind) {
   updateCashPreview();
 }
 
+// ---- Grid editor (open / add / tp) ----
+
+const GRID_OPS = { open: "开仓", add: "加仓", tp: "止盈" };
+const GRID_STATE_URL = "data/grid_state.json";
+
+let currentGridState = null;   // last fetched snapshot for preview
+
+async function loadGridState() {
+  const res = await fetch(GRID_STATE_URL, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status} loading ${GRID_STATE_URL}`);
+  return await res.json();
+}
+
+function renderGridEditor(state) {
+  currentGridState = state;
+  const tbody = document.getElementById('grid-tbody');
+  tbody.innerHTML = '';
+  tbody.appendChild(makeGridRow());
+  setStatus('grid', '');
+  refreshGridPreview();
+}
+
+function refreshGridPreview() {
+  const el = document.getElementById('grid-preview');
+  if (!el || !currentGridState) { if (el) el.textContent = ''; return; }
+  // Map code → state using ETF_CATALOG.
+  const codeToState = {};
+  for (const [code, name] of Object.entries(ETF_CATALOG)) {
+    codeToState[code] = currentGridState[name] || null;
+  }
+  const parts = Object.entries(ETF_CATALOG).map(([code, name]) => {
+    const s = codeToState[code];
+    if (!s || !s.in_cycle) return `${code} 待开仓`;
+    const n = (s.entries || []).length;
+    const invested = (s.entries || []).reduce(
+      (acc, e) => acc + e.shares * e.price, 0,
+    );
+    const total_sh = (s.entries || []).reduce((acc, e) => acc + e.shares, 0);
+    const avg = total_sh > 0 ? (invested / total_sh).toFixed(3) : '0';
+    return `${code} 持仓中 (${n} 层, 均价 ¥${avg})`;
+  });
+  el.textContent = `当前网格: ${parts.join(' | ')}`;
+}
+
+function makeGridRow(t = {}) {
+  const tr = document.createElement('tr');
+  const today = new Date().toISOString().slice(0, 10);
+  const op = GRID_OPS[t.op] ? t.op : 'add';
+  // Default code = first asset in catalog
+  const firstCode = Object.keys(ETF_CATALOG)[0];
+  const code = (t.code && t.code in ETF_CATALOG) ? t.code : firstCode;
+  tr.innerHTML = `
+    <td><input data-k="date" type="date" value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
+    <td>
+      <select data-k="code" style="padding:0.2em;">
+        ${Object.entries(ETF_CATALOG).map(([c, n]) =>
+          `<option value="${c}" ${c === code ? 'selected' : ''}>${c} ${n}</option>`).join('')}
+      </select>
+    </td>
+    <td>
+      <select data-k="op" style="padding:0.2em;">
+        ${Object.entries(GRID_OPS).map(([v, label]) =>
+          `<option value="${v}" ${v === op ? 'selected' : ''}>${label}</option>`).join('')}
+      </select>
+    </td>
+    <td><input data-k="price"  type="number" value="${t.price  ?? ''}" min="0" step="0.0001" style="text-align:right;width:8em;" placeholder="¥" /></td>
+    <td><input data-k="shares" type="number" value="${t.shares ?? ''}" min="0" step="1" style="text-align:right;width:7em;" placeholder="股" /></td>
+    <td><span data-k="amount-readout" class="muted" style="display:inline-block;width:8em;text-align:right;">—</span></td>
+    <td><input data-k="note" type="text" value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:12em;" /></td>
+    <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
+  `;
+  const updateAmount = () => {
+    const px = parseFloat(tr.querySelector('[data-k="price"]').value)  || 0;
+    const sh = parseFloat(tr.querySelector('[data-k="shares"]').value) || 0;
+    const ro = tr.querySelector('[data-k="amount-readout"]');
+    ro.textContent = (px > 0 && sh > 0) ? '¥' + (px * sh).toFixed(2) : '—';
+  };
+  tr.querySelector('[data-k="price"]').addEventListener('input',  updateAmount);
+  tr.querySelector('[data-k="shares"]').addEventListener('input', updateAmount);
+  tr.querySelector('.row-del-btn').addEventListener('click', () => tr.remove());
+  return tr;
+}
+
+function collectGridRows() {
+  // Returns array of validated ops {date, code, op, price, shares, note}
+  // or null if any non-blank row is invalid.
+  const trs = [...document.querySelectorAll('#grid-tbody tr')];
+  let ok = true;
+  const out = [];
+  trs.forEach((tr) => {
+    const get = k => (tr.querySelector(`[data-k="${k}"]`) || {}).value || '';
+    const date   = get('date').trim();
+    const code   = get('code').trim();
+    const op     = get('op').trim();
+    const price  = get('price').trim();
+    const shares = get('shares').trim();
+    const note   = get('note').trim();
+    // Skip fully-blank rows (date defaults to today, so check op/price/note)
+    if (!op && !price && !shares && !note) return;
+
+    const row = { date, code, op };
+    let rowOK = true;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) rowOK = false;
+    if (!GRID_OPS[op]) rowOK = false;
+    if (!(code in ETF_CATALOG)) rowOK = false;
+    const p = parseFloat(price);
+    if (!(p > 0)) rowOK = false; else row.price = p;
+    if (op === 'tp') {
+      row.shares = 0;   // ignored by server, but valid
+    } else {
+      const s = parseFloat(shares);
+      if (!(s > 0)) rowOK = false; else row.shares = s;
+    }
+    if (note) row.note = note;
+
+    tr.style.outline = rowOK ? '' : '2px solid #c0392b';
+    if (!rowOK) ok = false;
+    if (rowOK) out.push(row);
+  });
+  return ok ? out : null;
+}
+
+async function submitGridOp() {
+  const statusEl = document.getElementById('grid-status');
+  const btn = document.getElementById('grid-save-btn');
+  const ops = collectGridRows();
+  if (ops === null) {
+    statusEl.className = 'err';
+    statusEl.textContent = '❌ 表格有红色高亮的行, 请检查必填字段.';
+    return;
+  }
+  if (ops.length === 0) {
+    statusEl.className = 'err';
+    statusEl.textContent = '❌ 表格为空, 请先点「+ 加一行」录入网格操作.';
+    return;
+  }
+  if (ops.length > 20) {
+    statusEl.className = 'err';
+    statusEl.textContent = '❌ 单次最多 20 个操作, 当前 ' + ops.length + ' 个.';
+    return;
+  }
+
+  const pat = getPat();
+  if (!pat) {
+    promptForPat();
+    statusEl.className = 'err';
+    statusEl.textContent = '❌ 需要先设置 GitHub PAT (页面顶部的提示).';
+    return;
+  }
+
+  btn.disabled = true;
+  statusEl.className = 'muted';
+  statusEl.textContent = '提交中…';
+
+  try {
+    const res = await fetch(DISPATCH_URL, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': `Bearer ${pat}`,
+      },
+      body: JSON.stringify({
+        event_type: 'update_grid',
+        client_payload: { schema: 'grid-ops-v1', ops },
+      }),
+    });
+    if (res.status === 204 || res.ok) {
+      statusEl.className = 'ok';
+      statusEl.textContent =
+        `✅ 已提交 ${ops.length} 个网格操作. Action 约 30 秒后 commit 完成, 邮件+图表同步更新. 刷新页面查看新数据.`;
+      // Refresh grid state preview from server
+      try {
+        const fresh = await loadGridState();
+        renderGridEditor(fresh);
+      } catch (e) { /* ignore — refresh-on-success is best-effort */ }
+    } else {
+      const text = await res.text();
+      if (res.status === 401 || res.status === 403) {
+        statusEl.className = 'err';
+        statusEl.textContent = `❌ HTTP ${res.status} 认证失败 — PAT 无效/过期/或没勾选 Contents:Write. 顶部点「设置 PAT」重试.`;
+        updatePatBadge();
+      } else {
+        statusEl.className = 'err';
+        statusEl.textContent = `❌ 提交失败: HTTP ${res.status} — ${text.slice(0, 200)}`;
+      }
+    }
+  } catch (e) {
+    statusEl.className = 'err';
+    statusEl.textContent = `❌ 网络错误: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function resetGridForm() {
+  const tbody = document.getElementById('grid-tbody');
+  tbody.innerHTML = '';
+  tbody.appendChild(makeGridRow());
+}
+
 function initEditor() {
   // Trade editor
   document.getElementById('trade-add-row-btn').addEventListener('click', () => {
@@ -662,6 +862,13 @@ function initEditor() {
   document.getElementById('cash-reset-btn').addEventListener('click', () => resetForm('cash'));
   document.getElementById('cash-save-btn').addEventListener('click',  () => submitTrades('cash'));
 
+  // Grid editor (manual open/add/tp)
+  document.getElementById('grid-add-row-btn').addEventListener('click', () => {
+    document.getElementById('grid-tbody').appendChild(makeGridRow());
+  });
+  document.getElementById('grid-reset-btn').addEventListener('click', resetGridForm);
+  document.getElementById('grid-save-btn').addEventListener('click',  submitGridOp);
+
   // Load initial state
   loadHoldings()
     .then(renderEditor)
@@ -669,6 +876,10 @@ function initEditor() {
       setStatus('trade', `加载失败: ${e.message}`, 'err');
       setStatus('cash',  `加载失败: ${e.message}`, 'err');
     });
+
+  loadGridState()
+    .then(renderGridEditor)
+    .catch(e => setStatus('grid', `加载失败: ${e.message}`, 'err'));
 
   updatePatBadge();
 }
