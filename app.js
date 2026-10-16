@@ -241,12 +241,13 @@ function updatePatBadge() {
   const badge = document.getElementById("pat-badge");
   if (!badge) return;
   const has = !!getPat();
-  // cron-job 链接常驻：定时触发 Action 也需要配同样的 PAT
+  // 外部链接常驻：跳转去配 PAT / cron-job
+  const githubLink = `<a href="https://github.com/settings/personal-access-tokens/21045200" target="_blank" rel="noopener" class="btn-link">github ↗</a>`;
   const cronLink = `<a href="https://console.cron-job.org/" target="_blank" rel="noopener" class="btn-link">cron-job ↗</a>`;
   const patPart = has
     ? `🔑 PAT 已设置 <button type="button" id="pat-clear-btn" class="btn-link">清除</button>`
     : `⚠ <button type="button" id="pat-set-btn" class="btn-link">设置 PAT</button> (保存前需要)`;
-  badge.innerHTML = `${patPart} <span class="muted">·</span> ${cronLink}`;
+  badge.innerHTML = `${patPart} <span class="muted">·</span> ${githubLink} <span class="muted">·</span> ${cronLink}`;
   const setBtn = document.getElementById("pat-set-btn");
   if (setBtn) setBtn.addEventListener("click", promptForPat);
   const clearBtn = document.getElementById("pat-clear-btn");
