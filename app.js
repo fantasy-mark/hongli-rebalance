@@ -241,9 +241,12 @@ function updatePatBadge() {
   const badge = document.getElementById("pat-badge");
   if (!badge) return;
   const has = !!getPat();
-  badge.innerHTML = has
+  // cron-job 链接常驻：定时触发 Action 也需要配同样的 PAT
+  const cronLink = `<a href="https://console.cron-job.org/" target="_blank" rel="noopener" class="btn-link">cron-job ↗</a>`;
+  const patPart = has
     ? `🔑 PAT 已设置 <button type="button" id="pat-clear-btn" class="btn-link">清除</button>`
     : `⚠ <button type="button" id="pat-set-btn" class="btn-link">设置 PAT</button> (保存前需要)`;
+  badge.innerHTML = `${patPart} <span class="muted">·</span> ${cronLink}`;
   const setBtn = document.getElementById("pat-set-btn");
   if (setBtn) setBtn.addEventListener("click", promptForPat);
   const clearBtn = document.getElementById("pat-clear-btn");
