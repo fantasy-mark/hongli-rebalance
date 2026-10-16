@@ -2,10 +2,13 @@
 
 The user's first real investment day is 2026-10-12. The current `holdings.json`
 holds the *current* state (post any real trades that happened between 10-12
-and today). To bootstrap the trade ledger we synthesize a single `deposit`
-entry dated 2026-10-12 whose `amount` equals the historical value of the
-holdings at that day's close plus the current cash. This makes the ledger
-math reproduce the current state without a fictitious buy history.
+and today). To bootstrap the trade ledger we synthesize a single
+`deposit_rebalance` entry dated 2026-10-12 whose `amount` equals the historical
+value of the holdings at that day's close plus the current cash. This makes
+the ledger math reproduce the current state without a fictitious buy history.
+
+The initial cash is always routed to `cash_rebalance` (the real money pool);
+`cash_grid` starts at 0 (per user decision — virtual pool initialized empty).
 
 Idempotent: re-running overwrites with the same single deposit (id is
 deterministic). Run ONCE, locally, before the first `apply-holdings.yml`
@@ -90,13 +93,18 @@ def write_trades_json(path: Path, trades: list[dict]) -> None:
 
 
 def write_holdings_v2(path: Path, cash: float, positions: list[dict]) -> None:
-    """Rewrite data/holdings.json as schema v2 (derived cache)."""
+    """Rewrite data/holdings.json as schema v2 with two cash pools
+    (derived cache). Initial bootstrap routes all cash to cash_rebalance;
+    cash_grid starts at 0."""
     doc = {
         "_schema": "v2",
-        "_comment": ("REBUILT from data/trades.json. 编辑持仓请用页面"
+        "_comment": ("REBUILT from data/trades.json. 双池: "
+                     "cash_rebalance (真实现金, ETF买卖用) + "
+                     "cash_grid (虚拟, 网格记账用). 编辑持仓请用页面"
                      "交易表单 (会同时更新 trades.json); 直接改这个文件"
                      "会被下一次 apply-holdings 覆盖."),
-        "cash": round(float(cash), 2),
+        "cash_rebalance": round(float(cash), 2),
+        "cash_grid": 0.0,
         "positions": [
             {"name": p["name"], "code": p["code"], "shares": p["shares"]}
             for p in positions
@@ -131,14 +139,15 @@ def main() -> None:
     print(f"  + cash              = ¥{cash:>12,.2f}")
     print(f"  = deposit           = ¥{deposit_amount:>12,.2f}\n")
 
-    # Reconstruct the initial portfolio: 1 deposit + 1 buy per position,
-    # all on INITIAL_DATE.  Replaying these yields:
-    #   cash = deposit − Σ(shares × close) = 652
+    # Reconstruct the initial portfolio: 1 deposit_rebalance + 1 buy per
+    # position, all on INITIAL_DATE.  Replaying these yields:
+    #   cash_rebalance = deposit − Σ(shares × close) = 652
+    #   cash_grid = 0
     #   positions[i].shares = exact holdings.json values
     trades: list[dict] = [{
-        "id": f"{INITIAL_DATE}-deposit-001",
+        "id": f"{INITIAL_DATE}-deposit_rebalance-001",
         "date": INITIAL_DATE,
-        "side": "deposit",
+        "side": "deposit_rebalance",
         "amount": deposit_amount,
         "note": (f"初始入金 (back-derived from holdings.json × "
                  f"{INITIAL_DATE} close + cash=¥{cash:.2f})"),

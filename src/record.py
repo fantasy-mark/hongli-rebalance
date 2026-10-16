@@ -53,22 +53,26 @@ THRESHOLD_PP = float(os.environ.get("THRESHOLD_PP", "3.0"))
 # Holdings / pricing (preserved from v1)
 # -----------------------------------------------------------------------------
 
-def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float]:
+def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float, float]:
     """Parse holdings.json.
 
-    Schema (data/holdings.json):
+    Schema (data/holdings.json, v2 with two cash pools):
         {
-            "_schema": "v1",          # optional, ignored
-            "_comment": "...",        # optional, ignored
-            "cash": <number>,
+            "_schema": "v2",
+            "cash_rebalance": <number>,    # real money for ETF buy/sell
+            "cash_grid": <number>,         # virtual money for grid accounting
             "positions": [
                 {"name": "...", "code": "xxxxxx", "shares": <number>},
                 ...
             ]
         }
 
-    For backwards compatibility, falls back to the legacy
-    data/holdings.xlsx (5-row header layout) if holdings.json is missing.
+    Backwards-compat: if only legacy `cash` exists, treat as cash_rebalance
+    with cash_grid=0 (one-time bootstrap for old backups).  If json is
+    missing entirely, falls back to legacy xlsx (5-row layout) which has
+    a single cash field; same treatment.
+
+    Returns (positions, cash_rebalance, cash_grid).
     """
     if json_path is None:
         json_path = HOLDINGS
@@ -76,15 +80,23 @@ def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float]:
         # Backwards-compat: fall back to xlsx
         legacy = json_path.with_suffix(".xlsx")
         if legacy.exists():
-            return _read_holdings_legacy_xlsx(legacy)
-        return [], 0.0
+            positions, cash = _read_holdings_legacy_xlsx(legacy)
+            return positions, cash, 0.0
+        return [], 0.0, 0.0
     try:
         with open(json_path, encoding="utf-8") as f:
             doc = json.load(f)
     except Exception as ex:
         print(f"WARN holdings.json unreadable: {ex}", file=sys.stderr)
-        return [], 0.0
-    cash = float(doc.get("cash", 0) or 0)
+        return [], 0.0, 0.0
+    # Two-pool schema
+    if "cash_rebalance" in doc or "cash_grid" in doc:
+        cash_rebalance = float(doc.get("cash_rebalance", 0) or 0)
+        cash_grid = float(doc.get("cash_grid", 0) or 0)
+    else:
+        # Legacy single-pool bootstrap
+        cash_rebalance = float(doc.get("cash", 0) or 0)
+        cash_grid = 0.0
     holdings: list[dict] = []
     for p in doc.get("positions", []):
         if not isinstance(p, dict): continue
@@ -96,7 +108,7 @@ def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float]:
         except (ValueError, TypeError):
             continue
         holdings.append({"name": name, "code": code, "shares": shares})
-    return holdings, cash
+    return holdings, cash_rebalance, cash_grid
 
 
 # -----------------------------------------------------------------------------
@@ -107,8 +119,13 @@ def load_trades(json_path: Path | None = None) -> list[dict]:
     """Return the trades list from data/trades.json. Returns [] if missing/unreadable.
 
     Each trade is one of:
-        {side: "deposit" | "withdraw", date, amount, [note]}
-        {side: "buy" | "sell",         date, code, shares, price, [fee], [note]}
+        ETF block (always touches cash_rebalance):
+          {side: "buy"  | "sell",                    date, code, shares, price, [fee], [note]}
+        Cash block (specific pool):
+          {side: "deposit_rebalance"  | "withdraw_rebalance",  date, amount, [note]}
+          {side: "deposit_grid"       | "withdraw_grid",       date, amount, [note]}
+          {side: "transfer_to_rebalance",  date, amount, [note]}  # grid→rebalance
+          {side: "transfer_to_grid",       date, amount, [note]}  # rebalance→grid
     `id` is auto-assigned by the editor; we do not require it here.
     """
     if json_path is None:
@@ -125,50 +142,95 @@ def load_trades(json_path: Path | None = None) -> list[dict]:
 
 
 def apply_trade(state: dict, trade: dict) -> None:
-    """Mutate `state` in place: state = {"cash": float, "positions": {code: shares}}.
+    """Mutate `state` in place: state = {"cash_rebalance": float,
+    "cash_grid": float, "positions": {code: shares}}.
 
-    Rounds cash to 2 dp after each trade. Raises ValueError on unknown side
-    or oversell (positions < 0). This is defense in depth — `apply_holdings.py`
-    pre-validates, but `record.py` should also be safe to call on any trade.
+    Side routing:
+        deposit_rebalance  → +amount to cash_rebalance
+        deposit_grid       → +amount to cash_grid
+        withdraw_rebalance → -amount from cash_rebalance
+        withdraw_grid      → -amount from cash_grid
+        transfer_to_grid   → -amount from cash_rebalance, +amount to cash_grid
+        transfer_to_rebalance → +amount to cash_rebalance, -amount from cash_grid
+        buy                → -amount from cash_rebalance, +shares to positions
+        sell               → +amount to cash_rebalance, -shares from positions
+
+    Atomic: computes the new state in a scratch dict, validates (no
+    negative pool, no oversell), then commits. On failure the original
+    `state` is left untouched and ValueError is raised.
+
+    Rounds cash to 2 dp after each trade.
     """
     side = trade["side"]
-    if side == "deposit":
-        state["cash"] += float(trade["amount"])
-    elif side == "withdraw":
-        state["cash"] -= float(trade["amount"])
+    # Compute new state in a scratch copy; commit only if validation passes.
+    new_state: dict = {
+        "cash_rebalance": state.get("cash_rebalance", 0.0),
+        "cash_grid":      state.get("cash_grid", 0.0),
+        "positions": dict(state.get("positions", {})),
+    }
+    if side == "deposit_rebalance":
+        new_state["cash_rebalance"] += float(trade["amount"])
+    elif side == "deposit_grid":
+        new_state["cash_grid"] += float(trade["amount"])
+    elif side == "withdraw_rebalance":
+        new_state["cash_rebalance"] -= float(trade["amount"])
+    elif side == "withdraw_grid":
+        new_state["cash_grid"] -= float(trade["amount"])
+    elif side == "transfer_to_grid":
+        amt = float(trade["amount"])
+        new_state["cash_rebalance"] -= amt
+        new_state["cash_grid"] += amt
+    elif side == "transfer_to_rebalance":
+        amt = float(trade["amount"])
+        new_state["cash_grid"] -= amt
+        new_state["cash_rebalance"] += amt
     elif side == "buy":
         code = str(trade["code"])
         sh = float(trade["shares"])
         px = float(trade["price"])
         fee = float(trade.get("fee", 0.0))
-        state["positions"][code] = state["positions"].get(code, 0.0) + sh
-        state["cash"] -= sh * px + fee
+        new_state["positions"][code] = new_state["positions"].get(code, 0.0) + sh
+        new_state["cash_rebalance"] -= sh * px + fee
     elif side == "sell":
         code = str(trade["code"])
         sh = float(trade["shares"])
         px = float(trade["price"])
         fee = float(trade.get("fee", 0.0))
-        held = state["positions"].get(code, 0.0)
+        held = new_state["positions"].get(code, 0.0)
         if held < sh - 1e-9:
             raise ValueError(
                 f"oversell {code}: held={held:.4f}, sell={sh:.4f}")
-        state["positions"][code] = held - sh
-        state["cash"] += sh * px - fee
+        new_state["positions"][code] = held - sh
+        new_state["cash_rebalance"] += sh * px - fee
     else:
         raise ValueError(f"unknown side: {side!r}")
-    state["cash"] = round(state["cash"], 2)
-    for c in list(state["positions"].keys()):
-        state["positions"][c] = round(state["positions"][c], 2)
-        if state["positions"][c] <= 0:
-            del state["positions"][c]
+    new_state["cash_rebalance"] = round(new_state["cash_rebalance"], 2)
+    new_state["cash_grid"] = round(new_state["cash_grid"], 2)
+    # Defense: any pool going negative is a programming error
+    if new_state["cash_rebalance"] < 0 or new_state["cash_grid"] < 0:
+        raise ValueError(
+            f"cash would go negative: rebalance={new_state['cash_rebalance']:.2f}, "
+            f"grid={new_state['cash_grid']:.2f} (after {side})")
+    # All validations passed — commit
+    state["cash_rebalance"] = new_state["cash_rebalance"]
+    state["cash_grid"] = new_state["cash_grid"]
+    for c in list(new_state["positions"].keys()):
+        v = round(new_state["positions"][c], 2)
+        if v <= 0:
+            # Drop zero/negative entries; if this was the only position for
+            # a code, remove the key entirely.
+            if c in state["positions"]:
+                del state["positions"][c]
+        else:
+            state["positions"][c] = v
 
 
 def rebuild_holdings_from_trades(
     trades: list[dict],
     as_of_date: str | None = None,
     name_lookup: dict[str, str] | None = None,
-) -> Tuple[list[dict], float]:
-    """Replay `trades` chronologically; return (positions, cash).
+) -> Tuple[list[dict], float, float]:
+    """Replay `trades` chronologically; return (positions, cash_rebalance, cash_grid).
 
     Only includes codes with shares > 0 in the returned positions list.
     `as_of_date` (ISO yyyy-mm-dd) is inclusive — trades dated after it are
@@ -176,7 +238,7 @@ def rebuild_holdings_from_trades(
     """
     if name_lookup is None:
         name_lookup = {code: v[2] for code, v in ETF_DEFS.items()}
-    state: dict = {"cash": 0.0, "positions": {}}
+    state: dict = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
     seen_codes: list[str] = []
 
     # Sort by (date, original_index) so same-day trades play in append order.
@@ -198,7 +260,7 @@ def rebuild_holdings_from_trades(
         for c in seen_codes
         if state["positions"].get(c, 0.0) > 0
     ]
-    return positions, state["cash"]
+    return positions, state["cash_rebalance"], state["cash_grid"]
 
 
 def _read_holdings_legacy_xlsx(xlsx_path: Path) -> Tuple[list[dict], float]:
@@ -260,12 +322,19 @@ def fetch_positions(holdings: list[dict]) -> Tuple[list[dict], float, list[Tuple
 # 3pp evaluation
 # -----------------------------------------------------------------------------
 
-def evaluate(positions: list[dict], cash: float) -> Tuple[float, list[float], bool, list[dict]]:
+def evaluate(positions: list[dict], cash_rebalance: float, cash_grid: float
+              ) -> Tuple[float, list[float], bool, list[dict]]:
     """Return (total, weights, triggered, plan). plan is empty when not triggered.
+
+    total = etf_value + cash_rebalance + cash_grid.  The grid pool is
+    part of the portfolio (so weights and trigger check include it),
+    but the grid engine itself is fully virtual and doesn't touch the
+    cash pool — see src/grid.py.
 
     TARGET_W is dynamic: 1/len(positions) — works for 3, 4, 5 asset configs.
     """
-    total = sum(p["value"] for p in positions) + cash
+    cash_total = cash_rebalance + cash_grid
+    total = sum(p["value"] for p in positions) + cash_total
     n = len(positions)
     target_w = 1.0 / n if n > 0 else 0.0
     weights = [p["value"] / total if total > 0 else 0 for p in positions]
@@ -347,7 +416,8 @@ def write_github_output(date_str: str, total: float, triggered: bool) -> None:
         f.write(f"trigger={'yes' if triggered else 'no'}\n")
 
 
-def build_record(today: str, positions: list[dict], cash: float,
+def build_record(today: str, positions: list[dict],
+                 cash_rebalance: float, cash_grid: float,
                  total: float, weights: list[float],
                  triggered_3pp: bool, plan: list[dict],
                  grid_signals: list[dict], grid_state: dict,
@@ -359,7 +429,9 @@ def build_record(today: str, positions: list[dict], cash: float,
         "date": today,
         "total": round(total, 2),
         "etf_value": round(etf_total, 2),
-        "cash": round(cash, 2),
+        "cash_rebalance": round(cash_rebalance, 2),
+        "cash_grid": round(cash_grid, 2),
+        "cash_total": round(cash_rebalance + cash_grid, 2),
         "positions": positions,
         "weights": [round(w, 4) for w in weights],
         "target_w": target_w,
@@ -437,12 +509,14 @@ def main() -> None:
 
     # 1) Universe of codes = holdings.json (cheap registry of what the user
     #    wants tracked).  Shares here are STALE — we only use the code list.
-    raw_holdings, _legacy_cash = read_holdings()
+    raw_holdings, _legacy_cash_rebalance, _legacy_cash_grid = read_holdings()
 
     # 2) Real positions + cash from the trade ledger.  This is the
     #    canonical source for shares/cash in the daily snapshot.
     trades = load_trades()
-    positions, cash = rebuild_holdings_from_trades(trades, as_of_date=today)
+    positions, cash_rebalance, cash_grid = rebuild_holdings_from_trades(
+        trades, as_of_date=today,
+    )
 
     # 3) Defensive fallback: empty trades (the bootstrap moment before
     #    scripts/init_trades_ledger.py has been run).  In that case fall
@@ -507,7 +581,9 @@ def main() -> None:
         except Exception as ex:
             print(f"WARN QDII unheld premium {code} failed: {ex}", file=sys.stderr)
 
-    total, weights, triggered_3pp, plan = evaluate(positions, cash)
+    total, weights, triggered_3pp, plan = evaluate(
+        positions, cash_rebalance, cash_grid,
+    )
 
     # 3pp pool for grid layer sizing (history.totals + today)
     history = load_history()
@@ -547,7 +623,8 @@ def main() -> None:
 
     # Persist record
     record = build_record(
-        today=today, positions=positions, cash=cash,
+        today=today, positions=positions,
+        cash_rebalance=cash_rebalance, cash_grid=cash_grid,
         total=total, weights=weights,
         triggered_3pp=triggered_3pp, plan=plan,
         grid_signals=grid_signals, grid_state=new_state,

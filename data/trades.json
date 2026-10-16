@@ -1,11 +1,11 @@
 {
   "_schema": "trades-v1",
-  "_comment": "Append-only trade ledger. Source of truth for cash and positions[].shares. Do not reorder; corrections are new entries.",
+  "_comment": "Append-only trade ledger. Source of truth for cash and positions[].shares. Do not reorder; corrections are new entries. Two cash pools: buy/sell/deposit_rebalance/withdraw_rebalance/transfer_to_grid move cash_rebalance; deposit_grid/withdraw_grid/transfer_to_rebalance move cash_grid.",
   "trades": [
     {
-      "id": "2026-10-12-deposit-001",
+      "id": "2026-10-12-deposit_rebalance-001",
       "date": "2026-10-12",
-      "side": "deposit",
+      "side": "deposit_rebalance",
       "amount": 175900.6,
       "note": "初始入金 (back-derived from holdings.json × 2026-10-12 close + cash=¥652.00)"
     },

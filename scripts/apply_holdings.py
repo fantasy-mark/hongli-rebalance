@@ -8,14 +8,15 @@ payload on argv[1] with shape:
       "trades": [
         {"date": "2026-10-17", "side": "buy",   "code": "515180",
          "shares": 1000, "price": 1.40, "note": "..."},
-        {"date": "2026-10-17", "side": "deposit", "amount": 5000, "note": "..."}
+        {"date": "2026-10-17", "side": "deposit_rebalance", "amount": 5000, "note": "..."}
       ]
     }
 
 Validates and appends the new trades to `data/trades.json`, then rebuilds
-`data/holdings.json` (schema v2) by replaying the full ledger. The script
-intentionally does NOT import src/record.py (the workflow doesn't install
-its deps); all replay logic is inlined as pure stdlib.
+`data/holdings.json` (schema v2, two cash pools) by replaying the full
+ledger. The script intentionally does NOT import src/record.py (the
+workflow doesn't install its deps); all replay logic is inlined as pure
+stdlib.
 
 Validation rules:
   - schema == "trades-v1"
@@ -23,7 +24,7 @@ Validation rules:
   - per-trade field rules per `data/trades.json` schema (see README)
   - date is ISO yyyy-mm-dd, not in the future (today + 1 day tolerated)
   - sell never exceeds current held shares
-  - cash after replay ≥ 0 (no negative balance)
+  - cash_rebalance + cash_grid both ≥ 0 after replay (no negative balance)
   - all buy/sell codes are in ALLOWED_CODES whitelist
   - id is auto-assigned server-side as `<date>-<side>-<seq>` (zero-padded)
 
@@ -56,7 +57,20 @@ NAME_LOOKUP = ALLOWED_CODES  # 6-digit code → Chinese display name
 MAX_ROWS = 20
 CODE_RE = re.compile(r"^\d{6}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-VALID_SIDES = {"buy", "sell", "deposit", "withdraw"}
+# 8 valid trade sides — two cash pools (rebalance=real ETF money, grid=virtual).
+# buy/sell always touch cash_rebalance.  transfer_* are inter-pool moves.
+VALID_SIDES = {
+    "buy", "sell",
+    "deposit_rebalance", "deposit_grid",
+    "withdraw_rebalance", "withdraw_grid",
+    "transfer_to_rebalance", "transfer_to_grid",
+}
+ETF_SIDES = {"buy", "sell"}
+CASH_SIDES = {
+    "deposit_rebalance", "deposit_grid",
+    "withdraw_rebalance", "withdraw_grid",
+    "transfer_to_rebalance", "transfer_to_grid",
+}
 
 
 def fail(msg: str) -> None:
@@ -70,19 +84,32 @@ def fail(msg: str) -> None:
 # -----------------------------------------------------------------------------
 
 def inline_apply(state: dict, t: dict) -> None:
-    """In-place: state = {"cash": float, "positions": {code: shares}}."""
+    """In-place: state = {"cash_rebalance": float, "cash_grid": float,
+    "positions": {code: shares}}."""
     side = t["side"]
-    if side == "deposit":
-        state["cash"] += float(t["amount"])
-    elif side == "withdraw":
-        state["cash"] -= float(t["amount"])
+    if side == "deposit_rebalance":
+        state["cash_rebalance"] += float(t["amount"])
+    elif side == "deposit_grid":
+        state["cash_grid"] += float(t["amount"])
+    elif side == "withdraw_rebalance":
+        state["cash_rebalance"] -= float(t["amount"])
+    elif side == "withdraw_grid":
+        state["cash_grid"] -= float(t["amount"])
+    elif side == "transfer_to_grid":
+        amt = float(t["amount"])
+        state["cash_rebalance"] -= amt
+        state["cash_grid"] += amt
+    elif side == "transfer_to_rebalance":
+        amt = float(t["amount"])
+        state["cash_grid"] -= amt
+        state["cash_rebalance"] += amt
     elif side == "buy":
         code = str(t["code"])
         sh = float(t["shares"])
         px = float(t["price"])
         fee = float(t.get("fee", 0.0))
         state["positions"][code] = state["positions"].get(code, 0.0) + sh
-        state["cash"] -= sh * px + fee
+        state["cash_rebalance"] -= sh * px + fee
     elif side == "sell":
         code = str(t["code"])
         sh = float(t["shares"])
@@ -92,10 +119,11 @@ def inline_apply(state: dict, t: dict) -> None:
         if held < sh - 1e-9:
             fail(f"oversell {code}: held={held:.4f}, sell={sh:.4f}")
         state["positions"][code] = held - sh
-        state["cash"] += sh * px - fee
+        state["cash_rebalance"] += sh * px - fee
     else:
         fail(f"unknown side: {side!r}")
-    state["cash"] = round(state["cash"], 2)
+    state["cash_rebalance"] = round(state["cash_rebalance"], 2)
+    state["cash_grid"] = round(state["cash_grid"], 2)
     for c in list(state["positions"].keys()):
         v = round(state["positions"][c], 2)
         if v <= 0:
@@ -104,14 +132,17 @@ def inline_apply(state: dict, t: dict) -> None:
             state["positions"][c] = v
 
 
-def inline_rebuild(trades: list[dict]) -> tuple[dict, float]:
-    """Replay `trades`; return (state, cash). state['positions'] is {code: shares}."""
-    state: dict = {"cash": 0.0, "positions": {}}
+def inline_rebuild(trades: list[dict]) -> tuple[dict, float, float]:
+    """Replay `trades`; return (state, cash_rebalance, cash_grid).
+    state['positions'] is {code: shares}; cash_rebalance + cash_grid are
+    tracked separately for the two-pool model.
+    """
+    state: dict = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
     indexed = list(enumerate(trades))
     indexed.sort(key=lambda kv: (kv[1].get("date", ""), kv[0]))
     for _, t in indexed:
         inline_apply(state, t)
-    return state, state["cash"]
+    return state, state["cash_rebalance"], state["cash_grid"]
 
 
 # -----------------------------------------------------------------------------
@@ -146,7 +177,7 @@ def _validate_trade(t: dict, idx: int, today: str) -> dict:
     note = str(t.get("note", "") or "").strip()
 
     out: dict = {"side": side, "date": date, "note": note}
-    if side in ("buy", "sell"):
+    if side in ETF_SIDES:
         code = str(t.get("code", "")).strip().split(".")[0]
         if not CODE_RE.match(code):
             fail(f"trade {idx}: code must be 6 digits, got {code!r}")
@@ -160,7 +191,7 @@ def _validate_trade(t: dict, idx: int, today: str) -> dict:
         if fee is None or fee == "":
             fee = 0.0
         out["fee"] = _coerce_number(fee, f"trade {idx}.fee", allow_zero=True)
-    else:  # deposit / withdraw
+    else:  # cash sides (deposit/withdraw/transfer)
         if "code" in t and str(t.get("code", "")).strip():
             fail(f"trade {idx}: {side} must not have a code")
         if "shares" in t and str(t.get("shares", "")).strip():
@@ -263,12 +294,15 @@ def main() -> None:
 
     # Replay merged ledger: oversell check fires inside inline_apply.
     merged = existing + cleaned
-    state, cash = inline_rebuild(merged)
+    state, cash_rebalance, cash_grid = inline_rebuild(merged)
 
-    # Reject negative cash (per user requirement).
-    if cash < 0:
-        fail(f"cash would go negative after this batch: "
-             f"current={state['cash']:.2f}")
+    # Reject negative cash in either pool (per user requirement).
+    if cash_rebalance < 0:
+        fail(f"cash_rebalance would go negative after this batch: "
+             f"current={cash_rebalance:.2f}")
+    if cash_grid < 0:
+        fail(f"cash_grid would go negative after this batch: "
+             f"current={cash_grid:.2f}")
 
     # Persist trades.json
     _atomic_write(TRADES, {
@@ -289,10 +323,13 @@ def main() -> None:
         })
     _atomic_write(HOLDINGS, {
         "_schema": "v2",
-        "_comment": ("REBUILT from data/trades.json. 编辑持仓请用页面"
+        "_comment": ("REBUILT from data/trades.json. 双池: "
+                     "cash_rebalance (真实现金, ETF买卖用) + "
+                     "cash_grid (虚拟, 网格记账用). 编辑持仓请用页面"
                      "交易表单 (会同时更新 trades.json); 直接改这个文件"
                      "会被下一次 apply-holdings 覆盖."),
-        "cash": state["cash"],
+        "cash_rebalance": cash_rebalance,
+        "cash_grid": cash_grid,
         "positions": positions,
     })
 
@@ -303,7 +340,8 @@ def main() -> None:
     except ValueError:
         rel_t, rel_h = TRADES, HOLDINGS
     print(f"OK wrote {rel_t}: {len(merged)} trades (+{len(cleaned)} new)")
-    print(f"OK wrote {rel_h}: cash=CNY {state['cash']:.2f}, {len(positions)} positions")
+    print(f"OK wrote {rel_h}: cash_rebalance=CNY {cash_rebalance:.2f}, "
+          f"cash_grid=CNY {cash_grid:.2f}, {len(positions)} positions")
     for p in positions:
         print(f"  - {p['name']:<14} ({p['code']}) {p['shares']:>12,}")
     # Show the new trades that were just appended
@@ -314,7 +352,7 @@ def main() -> None:
                   f"{t['shares']:>10} @ CNY {t['price']:.4f}  "
                   f"date={t['date']}  note={t.get('note','')}")
         else:
-            print(f"  - {t['id']}  {t['side']:<7} amount=CNY {t['amount']:>10.2f}  "
+            print(f"  - {t['id']}  {t['side']:<21} amount=CNY {t['amount']:>10.2f}  "
                   f"date={t['date']}  note={t.get('note','')}")
 
 

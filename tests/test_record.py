@@ -29,8 +29,9 @@ def test_read_holdings_with_现金_label():
             ["可转债ETF博时", "511380", 13000],
         ])
         record.HOLDINGS = xlsx
-        h, cash = record.read_holdings()
-        assert cash == 50000.0, f"cash={cash}"
+        h, cash_rebalance, cash_grid = record.read_holdings()
+        assert cash_rebalance == 50000.0, f"cash_rebalance={cash_rebalance}"
+        assert cash_grid == 0.0, f"cash_grid={cash_grid}"
         assert len(h) == 3
         codes = sorted(x["code"] for x in h)
         assert codes == ["159937", "511380", "515180"]
@@ -43,8 +44,9 @@ def test_read_holdings_accepts_legacy_资产_label():
             ["黄金ETF博时", "159937", 5000],
         ])
         record.HOLDINGS = xlsx
-        h, cash = record.read_holdings()
-        assert cash == 123456.0
+        h, cash_rebalance, cash_grid = record.read_holdings()
+        assert cash_rebalance == 123456.0
+        assert cash_grid == 0.0
         assert len(h) == 1 and h[0]["code"] == "159937"
 
 
@@ -60,8 +62,9 @@ def test_read_holdings_skips_invalid_rows():
             ["可转债ETF博时", "511380", 500],
         ])
         record.HOLDINGS = xlsx
-        h, cash = record.read_holdings()
-        assert cash == 0.0
+        h, cash_rebalance, cash_grid = record.read_holdings()
+        assert cash_rebalance == 0.0
+        assert cash_grid == 0.0
         assert len(h) == 2
         assert sorted(x["code"] for x in h) == ["159937", "511380"]
 
@@ -71,8 +74,9 @@ def test_read_holdings_no_label_defaults_to_zero():
         xlsx = Path(td) / "h.xlsx"
         _write_holdings(xlsx, "", 0.0, [["A", "159937", 100]])
         record.HOLDINGS = xlsx
-        h, cash = record.read_holdings()
-        assert cash == 0.0
+        h, cash_rebalance, cash_grid = record.read_holdings()
+        assert cash_rebalance == 0.0
+        assert cash_grid == 0.0
         assert len(h) == 1
 
 
@@ -82,7 +86,7 @@ def test_evaluate_3pp_equal_weight_no_trigger():
         {"name": "B", "code": "2", "shares": 1, "price": 100, "value": 100, "date": "2026-01-01"},
         {"name": "C", "code": "3", "shares": 1, "price": 100, "value": 100, "date": "2026-01-01"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0)
+    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
     assert total == 300
     assert all(abs(w - 1/3) < 1e-9 for w in weights)
     assert not triggered
@@ -94,7 +98,7 @@ def test_evaluate_3pp_threshold_triggers_on_50pp_drift():
         {"name": "B", "code": "2", "shares": 1, "price": 100, "value": 100, "date": "x"},
         {"name": "C", "code": "3", "shares": 1, "price": 100, "value": 100, "date": "x"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0)
+    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
     # A: 150/350 = 42.86%, target 33.33%, delta = +9.52pp > 3pp
     assert total == 350
     assert weights[0] > 0.4
@@ -107,13 +111,14 @@ def test_evaluate_2asset_dynamic_target_w():
         {"name": "A", "code": "1", "shares": 1, "price": 100, "value": 100, "date": "x"},
         {"name": "B", "code": "2", "shares": 1, "price": 100, "value": 100, "date": "x"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0)
+    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
     assert total == 200
     assert all(abs(w - 0.5) < 1e-9 for w in weights), f"weights={weights}"
     assert not triggered
     # build_record also produces dynamic target_w
     r = record.build_record(
-        today="2026-10-14", positions=positions, cash=0.0,
+        today="2026-10-14", positions=positions,
+        cash_rebalance=0.0, cash_grid=0.0,
         total=200, weights=weights, triggered_3pp=False, plan=[],
         grid_signals=[], grid_state={},
     )
@@ -128,14 +133,15 @@ def test_evaluate_5asset_dynamic_target_w():
          "price": 100, "value": 100, "date": "x"}
         for i in range(5)
     ]
-    total, weights, triggered, plan = record.evaluate(positions, 0.0)
+    total, weights, triggered, plan = record.evaluate(positions, 0.0, 0.0)
     assert total == 500
     assert all(abs(w - 0.2) < 1e-9 for w in weights), f"weights={weights}"
     assert not triggered
     # Plan has one entry per position
     assert len(plan) == 0  # equal weight → no plan unless triggered
     r = record.build_record(
-        today="2026-10-14", positions=positions, cash=0.0,
+        today="2026-10-14", positions=positions,
+        cash_rebalance=0.0, cash_grid=0.0,
         total=500, weights=weights, triggered_3pp=False, plan=[],
         grid_signals=[], grid_state={},
     )
@@ -151,7 +157,7 @@ def test_evaluate_5asset_threshold_triggers_correctly():
         {"name": "D", "code": "4", "shares": 1, "price": 100, "value": 100, "date": "x"},
         {"name": "E", "code": "5", "shares": 1, "price": 100, "value": 100, "date": "x"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0)
+    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
     # total = 250 + 100*4 = 650; A weight = 38.46%; target 20%; delta = +18.46pp > 3pp
     assert total == 650
     assert weights[0] > 0.38
@@ -184,8 +190,9 @@ def test_read_holdings_n_agnostic():
             xlsx = Path(td) / "h.xlsx"
             _write_holdings(xlsx, "现金", 1000.0, rows)
             record.HOLDINGS = xlsx
-            h, cash = record.read_holdings()
-            assert cash == 1000.0
+            h, cash_rebalance, cash_grid = record.read_holdings()
+            assert cash_rebalance == 1000.0
+            assert cash_grid == 0.0
             assert len(h) == n, f"N={n} got {len(h)} positions: {h}"
 
 
@@ -210,8 +217,10 @@ def test_read_holdings_json_schema():
             ],
         }, ensure_ascii=False), encoding="utf-8")
         record.HOLDINGS = p
-        h, cash = record.read_holdings()
-        assert cash == 1234.5
+        h, cash_rebalance, cash_grid = record.read_holdings()
+        # Legacy single-cash file migrates: 1234.5 → cash_rebalance, grid=0
+        assert cash_rebalance == 1234.5
+        assert cash_grid == 0.0
         assert len(h) == 2, h
         assert h[0]["code"] == "515180"
         assert h[0]["shares"] == 100
@@ -221,13 +230,14 @@ def test_read_holdings_json_schema():
 
 
 def test_read_holdings_json_missing_returns_empty():
-    """Missing file with no xlsx fallback → (positions=[], cash=0)."""
+    """Missing file with no xlsx fallback → ([], 0, 0)."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "nope.json"
         record.HOLDINGS = p
-        h, cash = record.read_holdings()
+        h, cash_rebalance, cash_grid = record.read_holdings()
         assert h == []
-        assert cash == 0.0
+        assert cash_rebalance == 0.0
+        assert cash_grid == 0.0
 
 
 def test_read_holdings_xlsx_fallback_when_json_missing():
@@ -248,8 +258,9 @@ def test_read_holdings_xlsx_fallback_when_json_missing():
         ws.cell(row=5, column=3, value=1000)
         wb.save(xlsx)
         record.HOLDINGS = p
-        h, cash = record.read_holdings()
-        assert cash == 999.0
+        h, cash_rebalance, cash_grid = record.read_holdings()
+        assert cash_rebalance == 999.0
+        assert cash_grid == 0.0
         assert len(h) == 1 and h[0]["code"] == "515180" and h[0]["shares"] == 1000
 
 
@@ -262,7 +273,7 @@ def test_evaluate_with_cash_affects_weights():
         {"name": "C", "code": "3", "shares": 1, "price": 100, "value": 100, "date": "x"},
         {"name": "D", "code": "4", "shares": 1, "price": 100, "value": 100, "date": "x"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0)
+    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
     assert total == 400
     assert all(abs(w - 0.25) < 0.01 for w in weights)
     assert not triggered
@@ -270,7 +281,7 @@ def test_evaluate_with_cash_affects_weights():
     # 有现金但仍等权: 每个 200, 现金 200, 总值 1000, weight 0.20 vs target 0.25 → 5pp 偏离 → 触发
     for p in positions:
         p["value"] = 200.0
-    total2, weights2, triggered2, _plan2 = record.evaluate(positions, 200.0)
+    total2, weights2, triggered2, _plan2 = record.evaluate(positions, 200.0, 0.0)
     assert total2 == 1000
     assert all(abs(w - 0.20) < 0.01 for w in weights2)
     assert triggered2   # 5pp > 3pp 阈值
@@ -286,13 +297,16 @@ def test_build_record_shape():
           "price": 12.930, "value": 177141.0, "date": "2026-10-09"},
     ]
     r = record.build_record(
-        today="2026-10-11", positions=positions, cash=5.0,
+        today="2026-10-11", positions=positions,
+        cash_rebalance=5.0, cash_grid=0.0,
         total=526221.4, weights=[0.3267, 0.3368, 0.3365],
         triggered_3pp=False, plan=[],
         grid_signals=[], grid_state={},
     )
     assert r["date"] == "2026-10-11"
-    assert r["cash"] == 5.0
+    assert r["cash_rebalance"] == 5.0
+    assert r["cash_grid"] == 0.0
+    assert r["cash_total"] == 5.0
     assert abs(r["total"] - 526221.4) < 0.1
     assert len(r["positions"]) == 3
     assert len(r["weights"]) == 3
@@ -574,11 +588,12 @@ def test_manual_op_tp_rejects_no_cycle():
 def _write_holdings(json_path: Path, cash_label: str, cash: float, rows: list[list]) -> None:
     """Build a minimal holdings.json matching the schema read_holdings() expects.
 
-    Schema:
-        {"cash": <number>, "positions": [{"name":..., "code":..., "shares":...}, ...]}
+    Schema (v2, two-pool):
+        {"cash_rebalance": <number>, "cash_grid": <number>,
+         "positions": [{"name":..., "code":..., "shares":...}, ...]}
 
     `cash_label` is accepted for backwards-compat (no longer written — json has no
-    "资产" / "现金" label, just the number).
+    "资产" / "现金" label, just the numbers).
 
     Bad rows (None fields, non-numeric shares) are dropped to match the
     tolerant behaviour of the production read_holdings().
@@ -598,8 +613,9 @@ def _write_holdings(json_path: Path, cash_label: str, cash: float, rows: list[li
         except (ValueError, TypeError):
             continue
     doc = {
-        "_schema": "v1",
-        "cash": float(cash),
+        "_schema": "v2",
+        "cash_rebalance": float(cash),
+        "cash_grid": 0.0,
         "positions": positions,
     }
     json_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -627,7 +643,9 @@ def _make_record_with_qdii(premium_pct: float) -> dict:
         "date": "2026-10-14",
         "total": 200000.0,
         "etf_value": 199500.0,
-        "cash": 500.0,
+        "cash_rebalance": 500.0,
+        "cash_grid": 0.0,
+        "cash_total": 500.0,
         "positions": [
             {"name": "纳斯达克ETF华夏", "code": "513300", "shares": 17000,
              "price": 2.884, "date": "2026-10-14", "value": 49028.0,
@@ -764,7 +782,7 @@ def test_notify_qdii_unheld_low_premium_advises_buildable():
 
 def test_apply_holdings_happy_path():
     """scripts/apply_holdings.py accepts a clean trades-v1 payload and writes
-    both data/trades.json and data/holdings.json."""
+    both data/trades.json and data/holdings.json (two-pool schema)."""
     import json
     import sys
     with tempfile.TemporaryDirectory() as td:
@@ -773,7 +791,7 @@ def test_apply_holdings_happy_path():
         payload = json.dumps({
             "schema": "trades-v1",
             "trades": [
-                {"date": "2026-10-12", "side": "deposit", "amount": 10000.0},
+                {"date": "2026-10-12", "side": "deposit_rebalance", "amount": 10000.0},
                 {"date": "2026-10-13", "side": "buy", "code": "515180",
                  "shares": 1000, "price": 5.0},
             ],
@@ -799,8 +817,9 @@ def test_apply_holdings_happy_path():
         # holdings.json (rebuilt)
         h_doc = json.loads(mod.HOLDINGS.read_text(encoding="utf-8"))
         assert h_doc["_schema"] == "v2"
-        # 10000 deposit - 5000 buy = 5000 cash, 1000 shares of 515180
-        assert h_doc["cash"] == 5000.0
+        # 10000 deposit_rebalance - 5000 buy = 5000 cash_rebalance
+        assert h_doc["cash_rebalance"] == 5000.0
+        assert h_doc["cash_grid"] == 0.0
         assert len(h_doc["positions"]) == 1
         assert h_doc["positions"][0]["code"] == "515180"
         assert h_doc["positions"][0]["shares"] == 1000
@@ -869,7 +888,7 @@ def test_apply_holdings_rejects_legacy_rows_payload():
 
 
 def test_apply_holdings_rejects_negative_cash():
-    """A buy that would push cash < 0 is rejected."""
+    """A buy that would push cash_rebalance < 0 is rejected."""
     import importlib.util
     import json
     import sys
@@ -884,7 +903,7 @@ def test_apply_holdings_rejects_negative_cash():
         payload = json.dumps({
             "schema": "trades-v1",
             "trades": [
-                {"date": "2026-10-12", "side": "deposit", "amount": 100.0},
+                {"date": "2026-10-12", "side": "deposit_rebalance", "amount": 100.0},
                 {"date": "2026-10-13", "side": "buy",
                  "code": "515180", "shares": 1000, "price": 1.0},
             ],
@@ -898,7 +917,7 @@ def test_apply_holdings_rejects_negative_cash():
             ok = (e.code == 0)
         finally:
             sys.argv = old_argv
-        assert not ok, "buy that pushes cash negative should be rejected"
+        assert not ok, "buy that pushes cash_rebalance negative should be rejected"
         assert not mod.HOLDINGS.exists()
 
 
@@ -918,7 +937,7 @@ def test_apply_holdings_rejects_oversell():
         payload = json.dumps({
             "schema": "trades-v1",
             "trades": [
-                {"date": "2026-10-12", "side": "deposit", "amount": 1000.0},
+                {"date": "2026-10-12", "side": "deposit_rebalance", "amount": 1000.0},
                 {"date": "2026-10-13", "side": "buy",
                  "code": "515180", "shares": 100, "price": 1.0},
                 {"date": "2026-10-14", "side": "sell",
@@ -959,16 +978,16 @@ def test_load_trades_unreadable_returns_empty():
 
 
 def test_apply_trade_buy_increments_shares_decrements_cash():
-    state = {"cash": 10000.0, "positions": {}}
+    state = {"cash_rebalance": 10000.0, "cash_grid": 0.0, "positions": {}}
     record.apply_trade(state, {
         "side": "buy", "code": "515180", "shares": 1000, "price": 1.40, "fee": 0.0,
     })
-    assert state["cash"] == round(10000 - 1000 * 1.40, 2) == 8600.0
+    assert state["cash_rebalance"] == round(10000 - 1000 * 1.40, 2) == 8600.0
     assert state["positions"]["515180"] == 1000
 
 
 def test_apply_trade_sell_rejects_oversell_raises():
-    state = {"cash": 0.0, "positions": {"515180": 100.0}}
+    state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {"515180": 100.0}}
     raised = False
     try:
         record.apply_trade(state, {
@@ -981,28 +1000,35 @@ def test_apply_trade_sell_rejects_oversell_raises():
 
 
 def test_rebuild_holdings_from_trades_deposit_only_yields_initial_state():
-    """One deposit → cash = amount, positions empty."""
-    trades = [{"side": "deposit", "date": "2026-10-12", "amount": 175900.60}]
-    positions, cash = record.rebuild_holdings_from_trades(trades, as_of_date="2026-10-12")
-    assert cash == 175900.60
+    """One deposit_rebalance → cash_rebalance = amount, positions empty."""
+    trades = [{"side": "deposit_rebalance", "date": "2026-10-12", "amount": 175900.60}]
+    positions, cash_rebalance, cash_grid = record.rebuild_holdings_from_trades(
+        trades, as_of_date="2026-10-12",
+    )
+    assert cash_rebalance == 175900.60
+    assert cash_grid == 0.0
     assert positions == []
 
 
 def test_rebuild_holdings_from_trades_chains_buy_sell_deposit_withdraw():
-    """Replay: deposit 10000, buy 1000@10, sell 200@12, withdraw 500.
-    Expected: cash = 10000 - 10000 + 2400 - 500 = 1900
+    """Replay: deposit_rebalance 10000, buy 1000@10, sell 200@12, withdraw_rebalance 500.
+    Expected: cash_rebalance = 10000 - 10000 + 2400 - 500 = 1900
+              cash_grid = 0
               515180 shares = 800
     """
     trades = [
-        {"side": "deposit", "date": "2026-10-12", "amount": 10000.0},
+        {"side": "deposit_rebalance", "date": "2026-10-12", "amount": 10000.0},
         {"side": "buy",     "date": "2026-10-13", "code": "515180",
          "shares": 1000, "price": 10.0, "fee": 0.0},
         {"side": "sell",    "date": "2026-10-14", "code": "515180",
          "shares": 200, "price": 12.0, "fee": 0.0},
-        {"side": "withdraw","date": "2026-10-15", "amount": 500.0},
+        {"side": "withdraw_rebalance","date": "2026-10-15", "amount": 500.0},
     ]
-    positions, cash = record.rebuild_holdings_from_trades(trades, as_of_date="2026-10-15")
-    assert cash == round(10000 - 10000 + 2400 - 500, 2) == 1900.0
+    positions, cash_rebalance, cash_grid = record.rebuild_holdings_from_trades(
+        trades, as_of_date="2026-10-15",
+    )
+    assert cash_rebalance == round(10000 - 10000 + 2400 - 500, 2) == 1900.0
+    assert cash_grid == 0.0
     assert len(positions) == 1
     assert positions[0]["code"] == "515180"
     assert positions[0]["shares"] == 800.0
@@ -1011,11 +1037,263 @@ def test_rebuild_holdings_from_trades_chains_buy_sell_deposit_withdraw():
 def test_rebuild_holdings_from_trades_as_of_date_inclusive():
     """Trades after as_of_date are skipped."""
     trades = [
-        {"side": "deposit", "date": "2026-10-12", "amount": 1000.0},
-        {"side": "deposit", "date": "2026-10-15", "amount": 500.0},
+        {"side": "deposit_rebalance", "date": "2026-10-12", "amount": 1000.0},
+        {"side": "deposit_rebalance", "date": "2026-10-15", "amount": 500.0},
     ]
-    _, cash = record.rebuild_holdings_from_trades(trades, as_of_date="2026-10-13")
-    assert cash == 1000.0   # second deposit is after 10-13, skipped
+    _, cash_rebalance, _ = record.rebuild_holdings_from_trades(
+        trades, as_of_date="2026-10-13",
+    )
+    assert cash_rebalance == 1000.0   # second deposit is after 10-13, skipped
+
+
+# -----------------------------------------------------------------------------
+# Two-pool cash tests — exercises the new deposit_rebalance / deposit_grid /
+# withdraw_rebalance / withdraw_grid / transfer_to_rebalance / transfer_to_grid
+# sides at the apply_trade / rebuild / apply_holdings level.
+# -----------------------------------------------------------------------------
+
+def test_apply_trade_deposit_rebalance_credits_rebalance_only():
+    state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
+    record.apply_trade(state, {
+        "side": "deposit_rebalance", "amount": 5000.0,
+    })
+    assert state["cash_rebalance"] == 5000.0
+    assert state["cash_grid"] == 0.0
+
+
+def test_apply_trade_deposit_grid_credits_grid_only():
+    state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
+    record.apply_trade(state, {
+        "side": "deposit_grid", "amount": 8000.0,
+    })
+    assert state["cash_rebalance"] == 0.0
+    assert state["cash_grid"] == 8000.0
+
+
+def test_apply_trade_withdraw_grid_rejects_insufficient():
+    state = {"cash_rebalance": 0.0, "cash_grid": 100.0, "positions": {}}
+    raised = False
+    try:
+        record.apply_trade(state, {
+            "side": "withdraw_grid", "amount": 200.0,
+        })
+    except ValueError as ex:
+        raised = True
+        assert "cash would go negative" in str(ex)
+    assert raised, "withdraw_grid exceeding balance should raise"
+    # State must not be mutated on failure
+    assert state["cash_grid"] == 100.0
+
+
+def test_apply_trade_transfer_to_grid_deducts_rebalance_adds_grid():
+    state = {"cash_rebalance": 5000.0, "cash_grid": 1000.0, "positions": {}}
+    record.apply_trade(state, {
+        "side": "transfer_to_grid", "amount": 2000.0,
+    })
+    assert state["cash_rebalance"] == 3000.0
+    assert state["cash_grid"] == 3000.0
+    # Total preserved
+    assert state["cash_rebalance"] + state["cash_grid"] == 6000.0
+
+
+def test_apply_trade_transfer_to_grid_rejects_insufficient_rebalance():
+    state = {"cash_rebalance": 100.0, "cash_grid": 5000.0, "positions": {}}
+    raised = False
+    try:
+        record.apply_trade(state, {
+            "side": "transfer_to_grid", "amount": 1000.0,
+        })
+    except ValueError as ex:
+        raised = True
+        assert "cash would go negative" in str(ex)
+    assert raised, "transfer_to_grid exceeding rebalance pool should raise"
+    # No partial credit — atomic
+    assert state["cash_rebalance"] == 100.0
+    assert state["cash_grid"] == 5000.0
+
+
+def test_apply_trade_transfer_to_rebalance_deducts_grid_adds_rebalance():
+    state = {"cash_rebalance": 0.0, "cash_grid": 5000.0, "positions": {}}
+    record.apply_trade(state, {
+        "side": "transfer_to_rebalance", "amount": 1500.0,
+    })
+    assert state["cash_rebalance"] == 1500.0
+    assert state["cash_grid"] == 3500.0
+
+
+def test_apply_trade_transfer_sides_dont_change_positions():
+    """transfer_* only moves cash between pools; positions stay identical."""
+    state = {
+        "cash_rebalance": 2000.0, "cash_grid": 1000.0,
+        "positions": {"515180": 5000.0},
+    }
+    positions_before = dict(state["positions"])
+    record.apply_trade(state, {
+        "side": "transfer_to_grid", "amount": 500.0,
+    })
+    record.apply_trade(state, {
+        "side": "transfer_to_rebalance", "amount": 200.0,
+    })
+    assert state["positions"] == positions_before
+
+
+def test_rebuild_holdings_from_trades_six_new_cash_sides():
+    """End-to-end replay: one of each cash side, final pool balances correct."""
+    trades = [
+        {"side": "deposit_rebalance",     "date": "2026-10-12", "amount": 10000.0},
+        {"side": "deposit_grid",          "date": "2026-10-13", "amount": 3000.0},
+        {"side": "transfer_to_grid",      "date": "2026-10-14", "amount": 2000.0},
+        {"side": "withdraw_grid",         "date": "2026-10-15", "amount": 500.0},
+        {"side": "transfer_to_rebalance", "date": "2026-10-16", "amount": 400.0},
+        {"side": "withdraw_rebalance",    "date": "2026-10-17", "amount": 100.0},
+    ]
+    positions, cash_rebalance, cash_grid = record.rebuild_holdings_from_trades(
+        trades, as_of_date="2026-10-17",
+    )
+    # rebalance: +10000 -2000(transfer out) +400(transfer in) -100(withdraw) = 8300
+    # grid:     +3000 +2000(transfer in) -500(withdraw) -400(transfer out) = 4100
+    assert cash_rebalance == 8300.0, f"got {cash_rebalance}"
+    assert cash_grid == 4100.0, f"got {cash_grid}"
+    assert positions == []
+
+
+def test_apply_holdings_accepts_6_new_cash_sides():
+    """scripts/apply_holdings.py accepts a payload with one of each of the 6
+    new cash sides and writes a two-pool holdings.json with the right balances."""
+    import importlib.util
+    import json
+    import sys
+    src = ROOT / "scripts" / "apply_holdings.py"
+    spec = importlib.util.spec_from_file_location("apply_holdings_test6", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
+        payload = json.dumps({
+            "schema": "trades-v1",
+            "trades": [
+                {"date": "2026-10-12", "side": "deposit_rebalance",     "amount": 10000.0},
+                {"date": "2026-10-13", "side": "deposit_grid",          "amount":  3000.0},
+                {"date": "2026-10-14", "side": "transfer_to_grid",      "amount":  2000.0},
+                {"date": "2026-10-15", "side": "withdraw_grid",         "amount":   500.0},
+                {"date": "2026-10-16", "side": "transfer_to_rebalance", "amount":   400.0},
+                {"date": "2026-10-17", "side": "withdraw_rebalance",    "amount":   100.0},
+            ],
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", payload]
+        try:
+            mod.main()
+        except SystemExit as e:
+            assert e.code == 0, f"expected exit 0, got {e.code}"
+        finally:
+            sys.argv = old_argv
+        h_doc = json.loads(mod.HOLDINGS.read_text(encoding="utf-8"))
+        assert h_doc["cash_rebalance"] == 8300.0, f"got {h_doc}"
+        assert h_doc["cash_grid"]      == 4100.0, f"got {h_doc}"
+        assert h_doc["positions"] == []
+
+
+def test_apply_holdings_rejects_withdraw_exceeding_pool():
+    """withdraw_grid 100 from grid=0 → rejected."""
+    import importlib.util
+    import json
+    import sys
+    src = ROOT / "scripts" / "apply_holdings.py"
+    spec = importlib.util.spec_from_file_location("apply_holdings_test7", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
+        payload = json.dumps({
+            "schema": "trades-v1",
+            "trades": [
+                {"date": "2026-10-12", "side": "withdraw_grid", "amount": 100.0},
+            ],
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", payload]
+        try:
+            mod.main()
+            ok = True
+        except SystemExit as e:
+            ok = (e.code == 0)
+        finally:
+            sys.argv = old_argv
+        assert not ok, "withdraw_grid exceeding pool should be rejected"
+        assert not mod.HOLDINGS.exists()
+
+
+def test_apply_holdings_rejects_transfer_exceeding_source_pool():
+    """transfer_to_grid 1000 from rebalance=0 → rejected (atomic)."""
+    import importlib.util
+    import json
+    import sys
+    src = ROOT / "scripts" / "apply_holdings.py"
+    spec = importlib.util.spec_from_file_location("apply_holdings_test8", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
+        # pre-seed: cash_grid=100 via deposit_grid, then try to transfer 1000
+        # from rebalance=0 to grid → fail
+        payload = json.dumps({
+            "schema": "trades-v1",
+            "trades": [
+                {"date": "2026-10-12", "side": "deposit_grid", "amount": 100.0},
+                {"date": "2026-10-13", "side": "transfer_to_grid", "amount": 1000.0},
+            ],
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", payload]
+        try:
+            mod.main()
+            ok = True
+        except SystemExit as e:
+            ok = (e.code == 0)
+        finally:
+            sys.argv = old_argv
+        assert not ok, "transfer_to_grid exceeding rebalance should be rejected"
+        assert not mod.HOLDINGS.exists()
+
+
+def test_apply_holdings_rejects_legacy_deposit_side():
+    """The old single-pool `deposit` side is no longer accepted."""
+    import importlib.util
+    import json
+    import sys
+    src = ROOT / "scripts" / "apply_holdings.py"
+    spec = importlib.util.spec_from_file_location("apply_holdings_test9", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
+        payload = json.dumps({
+            "schema": "trades-v1",
+            "trades": [
+                {"date": "2026-10-12", "side": "deposit", "amount": 100.0},
+            ],
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", payload]
+        try:
+            mod.main()
+            ok = True
+        except SystemExit as e:
+            ok = (e.code == 0)
+        finally:
+            sys.argv = old_argv
+        assert not ok, "legacy `deposit` side should be rejected after pool-split"
+
+
 
 
 # -----------------------------------------------------------------------------

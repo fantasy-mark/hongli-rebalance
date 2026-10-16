@@ -122,10 +122,30 @@
     <section id="cash-editor-section">
       <h2>💰 资金管理</h2>
       <p class="muted">
-        每行一笔 <strong>入金/提现</strong>。<code>当前现金 = ¥<span id="cash-balance">?</span></code>。
-        想"入金" → 录入 <code>deposit</code>；想"提现" → 录入 <code>withdraw</code>。
-        同一表单内多笔累计后, 提现金额 > 现有现金会被前端拦截 (服务端也会二次拒绝)。
+        每行一笔 <strong>资金操作</strong>。
+        <code>当前可用: 再平衡 ¥<span id="cash-rebalance-balance">?</span> / 网格 ¥<span id="cash-grid-balance">?</span> / 总 ¥<span id="cash-total-balance">?</span></code>。
+        网格资金是<strong>虚拟</strong>的（与真实交易脱钩），但开仓/加仓/止盈会修改
+        <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
       </p>
+      <p class="muted" style="font-size:12px;">
+        6 种操作: <code>deposit_rebalance</code> / <code>deposit_grid</code> /
+        <code>withdraw_rebalance</code> / <code>withdraw_grid</code> /
+        <code>transfer_to_rebalance</code> (网格→再平衡) /
+        <code>transfer_to_grid</code> (再平衡→网格)。
+        提现/转换不足时会被前端拦截 (服务端也会二次拒绝)。
+      </p>
+
+      <table id="grid-pool-usage" style="font-size:12px; margin-bottom:0.8em;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">网格资产</th>
+            <th style="text-align:right;">已用资金 (虚拟)</th>
+            <th style="text-align:right;">均价</th>
+            <th style="text-align:right;">层数</th>
+          </tr>
+        </thead>
+        <tbody id="grid-pool-usage-tbody"></tbody>
+      </table>
 
       <table id="cash-table">
         <thead>

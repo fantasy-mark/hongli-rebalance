@@ -107,7 +107,9 @@ def build_text(r: dict) -> str:
         "",
         f"总市值:    {fmt_money(r['total']):>16}",
         f"ETF 合计:  {fmt_money(r['etf_value']):>16}",
-        f"现金:      {fmt_money(r['cash']):>16}",
+        f"再平衡现金: {fmt_money(r.get('cash_rebalance', 0)):>15}",
+        f"网格现金:   {fmt_money(r.get('cash_grid', 0)):>15}",
+        f"现金合计:   {fmt_money(r.get('cash_total', r.get('cash_rebalance', 0) + r.get('cash_grid', 0))):>15}",
         f"目标权重:  {fmt_pct(r['target_w'])}    阈值: ±{r['threshold_pp']:.1f}pp",
         "",
         "[3pp 再平衡]",
@@ -372,17 +374,22 @@ def build_html(r: dict, pages_url: str = "") -> str:
     <div style="padding:20px 24px;border-bottom:1px solid #eee;">
       <table style="width:100%;border-collapse:collapse;">
         <tr>
-          <td style="padding:6px 0;width:33%;vertical-align:top;">
+          <td style="padding:6px 0;width:25%;vertical-align:top;">
             <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">总市值</div>
             <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r['total'])}</div>
           </td>
-          <td style="padding:6px 0;width:33%;vertical-align:top;">
+          <td style="padding:6px 0;width:25%;vertical-align:top;">
             <div style="font-size:11px;color:#888;text-transform:uppercase;">ETF</div>
             <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r['etf_value'])}</div>
           </td>
-          <td style="padding:6px 0;width:33%;vertical-align:top;">
-            <div style="font-size:11px;color:#888;text-transform:uppercase;">现金</div>
-            <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r['cash'])}</div>
+          <td style="padding:6px 0;width:25%;vertical-align:top;">
+            <div style="font-size:11px;color:#888;text-transform:uppercase;">再平衡</div>
+            <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r.get('cash_rebalance', 0))}</div>
+            <div style="font-size:10px;color:#aaa;margin-top:1px;">网格 {fmt_money(r.get('cash_grid', 0))}</div>
+          </td>
+          <td style="padding:6px 0;width:25%;vertical-align:top;">
+            <div style="font-size:11px;color:#888;text-transform:uppercase;">现金合计</div>
+            <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r.get('cash_total', r.get('cash_rebalance', 0) + r.get('cash_grid', 0)))}</div>
           </td>
         </tr>
       </table>

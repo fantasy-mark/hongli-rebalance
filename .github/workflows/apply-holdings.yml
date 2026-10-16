@@ -42,7 +42,8 @@ jobs:
             t=json.load(open('data/trades.json')); \
             d=json.load(open('data/holdings.json')); \
             print('verify ok: trades=', len(t.get('trades',[])), \
-                  'holdings.cash=', d.get('cash'), \
+                  'holdings.cash_rebalance=', d.get('cash_rebalance'), \
+                  'holdings.cash_grid=', d.get('cash_grid'), \
                   'holdings.positions=', len(d.get('positions',[])))"
 
       - name: Commit and push

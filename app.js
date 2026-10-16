@@ -46,11 +46,19 @@ function renderStatus(rec) {
 
   const cls = anyAction ? 'badge-warn' : 'badge-ok';
   const txt = anyAction ? '⚠ 有操作' : '✓ 未触发';
+  // Two-pool cash display; fall back to legacy `cash` field if record is
+  // older than the pool-split migration.
+  const cashReb = Number(rec.cash_rebalance ?? rec.cash ?? 0);
+  const cashGr  = Number(rec.cash_grid ?? 0);
+  const cashTotal = Number(rec.cash_total ?? cashReb + cashGr);
   document.getElementById('status-badge').innerHTML =
     `<span class="badge ${cls}">${txt}</span> ` +
     `<span>${rec.date}</span> ` +
     `<span>总市值 <strong>¥${Math.round(rec.total).toLocaleString()}</strong></span> ` +
-    `<span class="muted">(ETF ¥${Math.round(rec.etf_value).toLocaleString()} + 现金 ¥${Math.round(rec.cash).toLocaleString()})</span>`;
+    `<span class="muted">(ETF ¥${Math.round(rec.etf_value).toLocaleString()} + ` +
+    `现金 ¥${Math.round(cashTotal).toLocaleString()} = ` +
+    `再平衡 ¥${Math.round(cashReb).toLocaleString()} + ` +
+    `网格 ¥${Math.round(cashGr).toLocaleString()})</span>`;
 }
 
 function renderCurve(history) {
@@ -297,9 +305,18 @@ let originalHoldings = null;   // last fetched snapshot for cash reference
 
 function renderEditor(holdings) {
   originalHoldings = JSON.parse(JSON.stringify(holdings));  // deep copy
-  // Show current cash at the top of the cash editor.
-  const cashEl = document.getElementById('cash-balance');
-  if (cashEl) cashEl.textContent = (holdings.cash ?? 0).toFixed(2);
+  // Show current cash at the top of the cash editor — two pools.
+  const rebalanceEl = document.getElementById('cash-rebalance-balance');
+  const gridEl      = document.getElementById('cash-grid-balance');
+  const totalEl     = document.getElementById('cash-total-balance');
+  const cashReb = Number(holdings.cash_rebalance ?? 0);
+  const cashGr  = Number(holdings.cash_grid ?? 0);
+  if (rebalanceEl) rebalanceEl.textContent = cashReb.toFixed(2);
+  if (gridEl)      gridEl.textContent      = cashGr.toFixed(2);
+  if (totalEl)     totalEl.textContent     = (cashReb + cashGr).toFixed(2);
+
+  // Render the per-asset grid capital usage table (read-only).
+  renderGridPoolUsage();
 
   // Start with ONE empty row in each section.
   const tBody = document.getElementById('trade-tbody');
@@ -312,6 +329,36 @@ function renderEditor(holdings) {
   setStatus('trade', '');
   setStatus('cash',  '');
   updateCashPreview();
+}
+
+function renderGridPoolUsage() {
+  // Read the latest grid state (loaded async by loadGridState) and
+  // populate the per-asset "已用资金" table inside the cash editor.
+  const tbody = document.getElementById('grid-pool-usage-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const state = currentGridState || {};
+  Object.entries(ETF_CATALOG).forEach(([code, name]) => {
+    const s = state[name] || null;
+    let invested = 0, avg = 0, layers = 0;
+    if (s && Array.isArray(s.entries) && s.entries.length > 0) {
+      const totalShares = s.entries.reduce((acc, e) => acc + Number(e.shares || 0), 0);
+      const totalInvested = s.entries.reduce(
+        (acc, e) => acc + Number(e.shares || 0) * Number(e.price || 0), 0,
+      );
+      invested = totalInvested;
+      avg = totalShares > 0 ? (totalInvested / totalShares) : 0;
+      layers = s.entries.length;
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${code} ${name}</td>
+      <td style="text-align:right;">¥${invested.toFixed(2)}</td>
+      <td style="text-align:right;">${layers > 0 ? '¥' + avg.toFixed(3) : '—'}</td>
+      <td style="text-align:right;">${layers}</td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
 
 function setStatus(kind, msg, cls) {
@@ -417,18 +464,33 @@ function collectTradeRows() {
 
 // ---- Cash editor (deposit / withdraw) ----
 
+// 6 valid cash sides — used by both the row template and the validator.
+const CASH_SIDES = [
+  'deposit_rebalance', 'deposit_grid',
+  'withdraw_rebalance', 'withdraw_grid',
+  'transfer_to_rebalance', 'transfer_to_grid',
+];
+const CASH_SIDE_LABELS = {
+  deposit_rebalance:     '入金→再平衡',
+  deposit_grid:          '入金→网格',
+  withdraw_rebalance:    '提现←再平衡',
+  withdraw_grid:         '提现←网格',
+  transfer_to_rebalance: '转换: 网格→再平衡',
+  transfer_to_grid:      '转换: 再平衡→网格',
+};
+
 function makeCashRow(t = {}) {
-  // Cash-row shape: {date, side, amount, note}
+  // Cash-row shape: {date, side (6 options), amount, note}
   const tr = document.createElement('tr');
   const today = new Date().toISOString().slice(0, 10);
-  const side = (t.side === 'withdraw') ? 'withdraw' : 'deposit';
+  const side = CASH_SIDES.includes(t.side) ? t.side : 'deposit_rebalance';
+  const opts = CASH_SIDES.map(s =>
+    `<option value="${s}" ${s === side ? 'selected' : ''}>${CASH_SIDE_LABELS[s]}</option>`,
+  ).join('');
   tr.innerHTML = `
     <td><input data-k="date" type="date" value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
     <td>
-      <select data-k="side" style="padding:0.2em;">
-        <option value="deposit"  ${side === 'deposit'  ? 'selected' : ''}>入金</option>
-        <option value="withdraw" ${side === 'withdraw' ? 'selected' : ''}>提现</option>
-      </select>
+      <select data-k="side" style="padding:0.2em;">${opts}</select>
     </td>
     <td><input data-k="amount" type="number" value="${t.amount ?? ''}" min="0" step="0.01" style="text-align:right;width:10em;" placeholder="¥" /></td>
     <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:18em;" /></td>
@@ -462,7 +524,7 @@ function collectCashRows() {
     const row = { side, date };
     let rowOK = true;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) rowOK = false;
-    if (!['deposit', 'withdraw'].includes(side)) rowOK = false;
+    if (!CASH_SIDES.includes(side))         rowOK = false;
     const a = parseFloat(amount);
     if (!(a > 0)) rowOK = false;
     else row.amount = a;
@@ -476,33 +538,62 @@ function collectCashRows() {
 }
 
 // ---- Cash preview (shared by both editors) ----
+//
+// Two cash pools: cash_rebalance (real ETF money) + cash_grid (virtual).
+// Each cash-row side routes its amount into one or both pools:
+//   deposit_rebalance / withdraw_rebalance → cash_rebalance only
+//   deposit_grid      / withdraw_grid      → cash_grid only
+//   transfer_to_grid  (rebalance→grid)     → -rebalance, +grid
+//   transfer_to_rebalance (grid→rebalance) → +rebalance, -grid
+// Buy/sell trades only touch cash_rebalance (per user decision: grid is
+// fully virtual; ETF trades never deduct from cash_grid).
+
+function netTradeDeltaByPool(trades) {
+  // Returns { rebalance, grid }. Buys/sells ONLY affect cash_rebalance.
+  return (trades || []).reduce((acc, t) => {
+    if (t.side === 'buy')  return { rebalance: acc.rebalance - t.shares * t.price, grid: acc.grid };
+    if (t.side === 'sell') return { rebalance: acc.rebalance + t.shares * t.price, grid: acc.grid };
+    return acc;
+  }, { rebalance: 0, grid: 0 });
+}
 
 function netTradeDelta(trades) {
-  // Sum (signed cash) for trade rows. Buys cost cash (negative), sells earn cash (positive).
-  return (trades || []).reduce((acc, t) => {
-    if (t.side === 'buy')  return acc - t.shares * t.price;
-    if (t.side === 'sell') return acc + t.shares * t.price;
-    return acc;
-  }, 0);
+  // Back-compat: total cash delta for trade rows (always = rebalance, since
+  // grid never touches ETF trades).
+  return netTradeDeltaByPool(trades).rebalance;
+}
+
+function netCashDeltaByPool(rows) {
+  // Returns { rebalance, grid }.
+  return (rows || []).reduce((acc, r) => {
+    switch (r.side) {
+      case 'deposit_rebalance':     return { rebalance: acc.rebalance + r.amount, grid: acc.grid };
+      case 'deposit_grid':          return { rebalance: acc.rebalance,            grid: acc.grid + r.amount };
+      case 'withdraw_rebalance':    return { rebalance: acc.rebalance - r.amount, grid: acc.grid };
+      case 'withdraw_grid':         return { rebalance: acc.rebalance,            grid: acc.grid - r.amount };
+      case 'transfer_to_grid':      return { rebalance: acc.rebalance - r.amount, grid: acc.grid + r.amount };
+      case 'transfer_to_rebalance': return { rebalance: acc.rebalance + r.amount, grid: acc.grid - r.amount };
+      default: return acc;
+    }
+  }, { rebalance: 0, grid: 0 });
 }
 
 function netCashDelta(rows) {
-  // Sum (signed cash) for deposit/withdraw rows. Deposits add, withdraws subtract.
-  return (rows || []).reduce((acc, r) => {
-    if (r.side === 'deposit')  return acc + r.amount;
-    if (r.side === 'withdraw') return acc - r.amount;
-    return acc;
-  }, 0);
+  // Back-compat: net signed cash (sum of rebalance + grid) — for legacy callers.
+  const d = netCashDeltaByPool(rows);
+  return d.rebalance + d.grid;
 }
 
 function getCurrentCash() {
-  return parseFloat(document.getElementById('cash-balance')?.textContent) || 0;
+  return {
+    rebalance: parseFloat(document.getElementById('cash-rebalance-balance')?.textContent) || 0,
+    grid:      parseFloat(document.getElementById('cash-grid-balance')?.textContent) || 0,
+  };
 }
 
 function updateCashPreview() {
-  // Live preview of the COMBINED effect of BOTH forms on cash.
-  // (Per user decision: same-submit batch check; here we show the worst-case
-  //  if the user hypothetically saved BOTH forms back-to-back.)
+  // Live preview of the COMBINED effect of BOTH forms on each pool.
+  // Per-pool guard: each pool must stay >= 0 (server also enforces).
   const trades = collectTradeRows();   // null on validation error → ignore
   const cash   = collectCashRows();    // null on validation error → ignore
   if (trades === null || cash === null) {
@@ -513,27 +604,37 @@ function updateCashPreview() {
     return;
   }
   const current   = getCurrentCash();
-  const tradeNet  = netTradeDelta(trades);   // negative for net buys
-  const cashNet   = netCashDelta(cash);      // positive for net deposits
-  // Trade editor preview: assume cash editor NOT yet saved → current cash baseline.
-  const tradeProj = current + tradeNet;
-  // Cash editor preview: assume trade editor NOT yet saved → current cash baseline.
-  const cashProj  = current + cashNet;
+  const tradeDelta = netTradeDeltaByPool(trades);   // only rebalance
+  const cashDelta  = netCashDeltaByPool(cash);
+
+  // Per-form projections: each form assumes the other has NOT been saved.
+  // Trade preview: cash editor not yet saved → baseline = current
+  const tradeProjReb = current.rebalance + tradeDelta.rebalance;
+  const tradeProjGr  = current.grid;
+  // Cash preview: trade editor not yet saved → baseline = current
+  const cashProjReb  = current.rebalance + cashDelta.rebalance;
+  const cashProjGr   = current.grid      + cashDelta.grid;
   // Worst-case: save both → cumulative
-  const worst     = current + tradeNet + cashNet;
+  const worstReb = current.rebalance + tradeDelta.rebalance + cashDelta.rebalance;
+  const worstGr  = current.grid      + cashDelta.grid;
 
   const tradeEl = document.getElementById('trade-cash-preview');
   tradeEl.textContent =
-    `本批次交易净流出 ¥${(-tradeNet).toFixed(2)} | 预计剩余现金 ¥${tradeProj.toFixed(2)}`;
-  tradeEl.style.color = tradeProj < 0 ? '#c0392b' : '#27ae60';
-  setSaveEnabled('trade', tradeProj >= 0);
+    `本批次交易净流出 ¥${(-tradeDelta.rebalance).toFixed(2)} | ` +
+    `预计剩余再平衡 ¥${tradeProjReb.toFixed(2)} (网格 ¥${tradeProjGr.toFixed(2)})`;
+  tradeEl.style.color = tradeProjReb < 0 ? '#c0392b' : '#27ae60';
+  setSaveEnabled('trade', tradeProjReb >= 0);
 
   const cashEl = document.getElementById('cash-cash-preview');
   cashEl.textContent =
-    `本批次资金净变动 ¥${cashNet.toFixed(2)} | 预计剩余现金 ¥${cashProj.toFixed(2)}` +
-    (worst !== cashProj ? ` (若两表单都提交: ¥${worst.toFixed(2)})` : '');
-  cashEl.style.color = cashProj < 0 ? '#c0392b' : '#27ae60';
-  setSaveEnabled('cash', cashProj >= 0);
+    `本批次资金净变动: 再平衡 ¥${cashDelta.rebalance >= 0 ? '+' : ''}${cashDelta.rebalance.toFixed(2)}, ` +
+    `网格 ¥${cashDelta.grid >= 0 ? '+' : ''}${cashDelta.grid.toFixed(2)} | ` +
+    `预计剩余: 再平衡 ¥${cashProjReb.toFixed(2)}, 网格 ¥${cashProjGr.toFixed(2)}` +
+    ((worstReb !== cashProjReb || worstGr !== cashProjGr)
+      ? ` (若两表单都提交: 再平衡 ¥${worstReb.toFixed(2)}, 网格 ¥${worstGr.toFixed(2)})`
+      : '');
+  cashEl.style.color = (cashProjReb < 0 || cashProjGr < 0) ? '#c0392b' : '#27ae60';
+  setSaveEnabled('cash', cashProjReb >= 0 && cashProjGr >= 0);
 }
 
 function setSaveEnabled(kind, enabled) {
@@ -571,15 +672,19 @@ async function submitTrades(kind) {
     return;
   }
 
-  // Defense-in-depth cash check (server also enforces).
+  // Defense-in-depth cash check (server also enforces).  Two pools:
+  // each must stay >= 0 after this batch.
   const current   = getCurrentCash();
-  const tradeNet  = netTradeDelta(trades.filter(t => t.side === 'buy' || t.side === 'sell'));
-  const cashNet   = netCashDelta(trades.filter(t => t.side === 'deposit' || t.side === 'withdraw'));
-  const projected = current + tradeNet + cashNet;
-  if (projected < 0) {
+  const tradeDelta = netTradeDeltaByPool(trades);
+  const cashDelta  = netCashDeltaByPool(trades);
+  const projectedReb = current.rebalance + tradeDelta.rebalance + cashDelta.rebalance;
+  const projectedGr  = current.grid      + cashDelta.grid;
+  if (projectedReb < 0 || projectedGr < 0) {
     statusEl.className = 'err';
-    statusEl.textContent =
-      `❌ 现金不足: 当前 ¥${current.toFixed(2)}, 本批次后预计 ¥${projected.toFixed(2)} (缺 ¥${(-projected).toFixed(2)}).`;
+    const bad = [];
+    if (projectedReb < 0) bad.push(`再平衡: 当前 ¥${current.rebalance.toFixed(2)}, 预计 ¥${projectedReb.toFixed(2)} (缺 ¥${(-projectedReb).toFixed(2)})`);
+    if (projectedGr  < 0) bad.push(`网格:   当前 ¥${current.grid.toFixed(2)}, 预计 ¥${projectedGr.toFixed(2)} (缺 ¥${(-projectedGr).toFixed(2)})`);
+    statusEl.textContent = `❌ 现金不足 — ${bad.join(' / ')}.`;
     return;
   }
 
@@ -614,7 +719,14 @@ async function submitTrades(kind) {
       // Refresh cash reference so the preview reflects the post-commit state.
       try {
         const fresh = await loadHoldings();
-        document.getElementById('cash-balance').textContent = (fresh.cash ?? 0).toFixed(2);
+        const rEl = document.getElementById('cash-rebalance-balance');
+        const gEl = document.getElementById('cash-grid-balance');
+        const tEl = document.getElementById('cash-total-balance');
+        const rN = Number(fresh.cash_rebalance ?? 0);
+        const gN = Number(fresh.cash_grid ?? 0);
+        if (rEl) rEl.textContent = rN.toFixed(2);
+        if (gEl) gEl.textContent = gN.toFixed(2);
+        if (tEl) tEl.textContent = (rN + gN).toFixed(2);
       } catch (e) { /* ignore — refresh-on-success is best-effort */ }
       // Clear form on success.
       resetForm(kind);
@@ -819,6 +931,8 @@ async function submitGridOp() {
       try {
         const fresh = await loadGridState();
         renderGridEditor(fresh);
+        // Re-render the per-asset "已用资金" table in the cash editor
+        renderGridPoolUsage();
       } catch (e) { /* ignore — refresh-on-success is best-effort */ }
     } else {
       const text = await res.text();

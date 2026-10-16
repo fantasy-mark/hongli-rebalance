@@ -25,14 +25,14 @@ hongli-rebalance/
 ├── .github/workflows/daily.yml   # 由 repository_dispatch 触发 (外部 cron 驱动)
 ├── src/
 │   ├── fetch.py                  # akshare Sina 价格拉取 (含腾讯 K 线 fallback)
-│   ├── grid.py                   # 复合网格引擎 (120 日新低 + 3% 金字塔 + 3% TP)
+│   ├── grid.py                   # 复合网格引擎 (120 日新低 + 3% 金字塔 + 3% TP, 全虚拟)
 │   ├── three_pp.py               # 3pp 再平衡回测引擎
-│   ├── record.py                 # 读 trades.json + 双策略 record + 持久化
+│   ├── record.py                 # 读 trades.json + 双策略 record + 持久化 (双池 cash_rebalance/cash_grid)
 │   ├── chart.py                  # matplotlib 渲染 grid_chart.png
-│   └── notify.py                 # SMTP 邮件摘要 (双策略段)
+│   └── notify.py                 # SMTP 邮件摘要 (双策略段, 显示 3 个 cash 字段)
 ├── data/
-│   ├── trades.json               # ← 用户维护 (真实成交账本, 唯一真相)
-│   ├── holdings.json             # ← 由 trades.json 重建 (v2 schema, 派生缓存)
+│   ├── trades.json               # ← 用户维护 (真实成交账本, 唯一真相, 8 种 side)
+│   ├── holdings.json             # ← 由 trades.json 重建 (v2 schema, 双池派生缓存)
 │   ├── history.json              # ← Action 自动追加 (每日总市值 + 网格信号)
 │   ├── grid_state.json           # ← Action 自动维护 (网格 per-asset 虚拟状态)
 │   └── grid_chart.png            # ← Action 自动渲染 (策略全景图, 嵌入 Pages)
@@ -197,11 +197,11 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
 **通过 Pages 编辑器（推荐）：** 在 `https://<user>.github.io/hongli-rebalance/`
 有 3 个独立表单：
 - **交易记录**（buy / sell） —— 每行一笔 ETF 买卖。表头：日期 / 方向 / 代码 / 数量 / 价格 / 金额 / 备注
-  金额列是只读 (自动 = 数量 × 价格)。表单实时显示「本批次交易净流出 ¥X | 预计剩余现金 ¥Y」；
-  预计现金 < 0 时「💾 保存」按钮自动禁用。
-- **资金管理**（deposit / withdraw） —— 每行一笔入金或提现。表头：日期 / 方向 / 金额 / 备注
-  顶部显示 `当前现金 = ¥<holdings.cash>`；表单实时显示本批次净变动 + 预计剩余。
-  提现后预计现金 < 0 时同样禁用保存。
+  金额列是只读 (自动 = 数量 × 价格)。表单实时显示「本批次交易净流出 ¥X | 预计剩余再平衡 ¥Y」；
+  预计再平衡 < 0 时「💾 保存」按钮自动禁用。
+- **资金管理**（6 种 cash 操作） —— 每行一笔资金操作。表头：日期 / 方向 / 金额 / 备注
+  顶部显示「当前可用: 再平衡 ¥X / 网格 ¥Y / 总 ¥Z」+ 4 个网格资产的「已用资金 (虚拟)」表。
+  6 种方向（见下方说明）。提现/转换不足时前端拦截 (服务端也会二次拒绝)。
 - **复合网格手动操作**（open / add / tp） —— 网格是**虚拟**的，不与真实交易挂钩，
   但开仓/加仓/止盈会修改 `data/grid_state.json`。表头：日期 / 资产 / 操作 / 单价 / 数量 / 金额 / 备注
   顶部显示「当前网格: 515180 待开仓 | 159937 待开仓 | ...」。操作后 30 秒内
@@ -210,11 +210,28 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
   - `add`  = 加仓 (要求 `in_cycle=true`；新单价成为 `entries[-1].price`，即"加仓参考价")
   - `tp`   = 止盈 (要求 `in_cycle=true`；按 manual 价算 realized P&L 累加到 `cum_realized`)
 
+**双池 cash 模型 (v2 schema)**：`data/holdings.json` 里 `cash` 字段被拆成两个：
+- `cash_rebalance` —— 真实现金, buy/sell/deposit_rebalance/withdraw_rebalance 路由到这里
+- `cash_grid` —— 虚拟现金, deposit_grid/withdraw_grid/transfer_* 涉及; 用于追踪"如果网格
+  资金也要"花掉, 应该有多少
+
+**6 种 cash 操作（资金管理表单的方向下拉）**:
+| 方向 | 效果 |
+|---|---|
+| `deposit_rebalance` | +amount → cash_rebalance (入金到再平衡) |
+| `deposit_grid` | +amount → cash_grid (入金到网格) |
+| `withdraw_rebalance` | -amount ← cash_rebalance (从再平衡提现) |
+| `withdraw_grid` | -amount ← cash_grid (从网格提现) |
+| `transfer_to_grid` | cash_rebalance -amount, cash_grid +amount (转换: 再平衡→网格) |
+| `transfer_to_rebalance` | cash_grid -amount, cash_rebalance +amount (转换: 网格→再平衡) |
+
+旧版单池 `deposit / withdraw` 已被废弃, 服务端会拒绝并提示使用 `deposit_rebalance` 等。
+
 三个表单各自独立保存。每个表单会一次提交一批 — 同批次内多笔累计后才做现金检查 (前端拦截 + 服务端二次拒绝)。
 
 每次保存会：
 1. 追加到 `data/trades.json`；
-2. 重算 `data/holdings.json`（schema v2 派生缓存）；
+2. 重算 `data/holdings.json`（schema v2 派生缓存, 双池）；
 3. 重跑 `daily.yml`，约 30 秒后 commit + 发邮件。
 
 **通过直接编辑 `data/trades.json`（不推荐，需要理解账本语义）：**
@@ -224,7 +241,8 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
 - 直接改 trades.json 不会自动重建 holdings.json；需要本地跑
   `python scripts/init_trades_ledger.py` 或 `apply_holdings.py` 来重建。
 - 想"清仓" → 录入一笔 `sell`，数量 = 持仓数。
-- 想"入金" → 录入一笔 `deposit`。
+- 想"入金" → 录入一笔 `deposit_rebalance`（双池模型下资金入金路由到再平衡池）。
+- 想"转换" → 录入一笔 `transfer_to_grid`（再平衡→网格虚拟池）。
 - 想"撤销" → 录入一笔反向 trade (e.g. 错的 buy 反向 sell，note 写"撤销")。
 
 ---
@@ -240,11 +258,11 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
   "_schema": "trades-v1",
   "trades": [
     {
-      "id": "2026-10-12-deposit-001",
+      "id": "2026-10-12-deposit_rebalance-001",
       "date": "2026-10-12",
-      "side": "deposit",
+      "side": "deposit_rebalance",
       "amount": 175900.60,
-      "note": "初始入金 (建仓日)"
+      "note": "初始入金 (建仓日, 路由到 rebalance 池)"
     },
     {
       "id": "2026-10-12-buy-002",
@@ -254,7 +272,14 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
       "shares": 40600,
       "price": 1.446,
       "fee": 0.0,
-      "note": "红利 ETF 易方达 建仓"
+      "note": "红利 ETF 易方达 建仓 (从 cash_rebalance 扣)"
+    },
+    {
+      "id": "2026-10-17-transfer_to_grid-001",
+      "date": "2026-10-17",
+      "side": "transfer_to_grid",
+      "amount": 5000.0,
+      "note": "从再平衡转 ¥5000 到网格虚拟池"
     }
   ]
 }
@@ -262,23 +287,25 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
 
 ### 字段表
 
-| field | buy | sell | deposit | withdraw |
-|---|---|---|---|---|
-| `id` | auto (server) | auto | auto | auto |
-| `date` (ISO) | required | required | required | required |
-| `side` | `"buy"` | `"sell"` | `"deposit"` | `"withdraw"` |
-| `code` (6 digits) | required | required | — | — |
-| `shares` (> 0) | required | required | — | — |
-| `price` (> 0) | required | required | — | — |
-| `amount` (> 0) | — | — | required | required |
-| `fee` (≥ 0, optional) | optional | optional | — | — |
-| `note` (optional) | optional | optional | optional | optional |
+| field | buy | sell | deposit_rebalance | deposit_grid | withdraw_rebalance | withdraw_grid | transfer_to_rebalance | transfer_to_grid |
+|---|---|---|---|---|---|---|---|---|
+| `id` | auto | auto | auto | auto | auto | auto | auto | auto |
+| `date` (ISO) | required | required | required | required | required | required | required | required |
+| `side` | `"buy"` | `"sell"` | `"deposit_rebalance"` | `"deposit_grid"` | `"withdraw_rebalance"` | `"withdraw_grid"` | `"transfer_to_rebalance"` | `"transfer_to_grid"` |
+| `code` (6 digits) | required | required | — | — | — | — | — | — |
+| `shares` (> 0) | required | required | — | — | — | — | — | — |
+| `price` (> 0) | required | required | — | — | — | — | — | — |
+| `amount` (> 0) | — | — | required | required | required | required | required | required |
+| `fee` (≥ 0, optional) | optional | optional | — | — | — | — | — | — |
+| `note` (optional) | optional | optional | optional | optional | optional | optional | optional | optional |
+| **Pool 路由** | rebalance − | rebalance + | rebalance + | grid + | rebalance − | grid − | rebalance +, grid − | rebalance −, grid + |
 
 - `id` 由 server 自动生成 (`<date>-<side>-<seq>`, 三位零填充)
 - `date` 必须是未来日期 ≤ today + 1 day (容忍 UTC/北京时差)
 - 不允许 oversell (卖出数量 > 当前持仓)
-- 不允许 cash 跌至 0 以下 (per 用户决策)
+- **不允许任意池跌至 0 以下** (rebalance 和 grid 各自必须 ≥ 0, per 用户决策)
 - 所有 ETF 代码必须在白名单 (515180 / 159937 / 511380 / 513300)
+- 旧版 `deposit / withdraw` 单池 side 已被废弃, 服务端拒绝并提示用 `deposit_rebalance` 等
 
 ### 首次 bootstrap
 
