@@ -315,9 +315,6 @@ function renderEditor(holdings) {
   if (gridEl)      gridEl.textContent      = cashGr.toFixed(2);
   if (totalEl)     totalEl.textContent     = (cashReb + cashGr).toFixed(2);
 
-  // Render the per-asset grid capital usage table (read-only).
-  renderGridPoolUsage();
-
   // Start with ONE empty row in each section.
   const tBody = document.getElementById('trade-tbody');
   tBody.innerHTML = '';
@@ -329,36 +326,6 @@ function renderEditor(holdings) {
   setStatus('trade', '');
   setStatus('cash',  '');
   updateCashPreview();
-}
-
-function renderGridPoolUsage() {
-  // Read the latest grid state (loaded async by loadGridState) and
-  // populate the per-asset "已用资金" table inside the cash editor.
-  const tbody = document.getElementById('grid-pool-usage-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
-  const state = currentGridState || {};
-  Object.entries(ETF_CATALOG).forEach(([code, name]) => {
-    const s = state[name] || null;
-    let invested = 0, avg = 0, layers = 0;
-    if (s && Array.isArray(s.entries) && s.entries.length > 0) {
-      const totalShares = s.entries.reduce((acc, e) => acc + Number(e.shares || 0), 0);
-      const totalInvested = s.entries.reduce(
-        (acc, e) => acc + Number(e.shares || 0) * Number(e.price || 0), 0,
-      );
-      invested = totalInvested;
-      avg = totalShares > 0 ? (totalInvested / totalShares) : 0;
-      layers = s.entries.length;
-    }
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${code} ${name}</td>
-      <td style="text-align:right;">¥${invested.toFixed(2)}</td>
-      <td style="text-align:right;">${layers > 0 ? '¥' + avg.toFixed(3) : '—'}</td>
-      <td style="text-align:right;">${layers}</td>
-    `;
-    tbody.appendChild(tr);
-  });
 }
 
 function setStatus(kind, msg, cls) {
@@ -931,8 +898,6 @@ async function submitGridOp() {
       try {
         const fresh = await loadGridState();
         renderGridEditor(fresh);
-        // Re-render the per-asset "已用资金" table in the cash editor
-        renderGridPoolUsage();
       } catch (e) { /* ignore — refresh-on-success is best-effort */ }
     } else {
       const text = await res.text();
