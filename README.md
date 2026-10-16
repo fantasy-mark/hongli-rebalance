@@ -24,16 +24,17 @@ GitHub Pages 实时展示曲线和策略全景图。
 hongli-rebalance/
 ├── .github/workflows/daily.yml   # 由 repository_dispatch 触发 (外部 cron 驱动)
 ├── src/
-│   ├── fetch.py                  # akshare Sina 价格拉取
+│   ├── fetch.py                  # akshare Sina 价格拉取 (含腾讯 K 线 fallback)
 │   ├── grid.py                   # 复合网格引擎 (120 日新低 + 3% 金字塔 + 3% TP)
 │   ├── three_pp.py               # 3pp 再平衡回测引擎
-│   ├── record.py                 # 读 holdings.xlsx + 双策略 record + 持久化
+│   ├── record.py                 # 读 trades.json + 双策略 record + 持久化
 │   ├── chart.py                  # matplotlib 渲染 grid_chart.png
 │   └── notify.py                 # SMTP 邮件摘要 (双策略段)
 ├── data/
-│   ├── holdings.xlsx             # ← 用户维护 (持仓/现金)
+│   ├── trades.json               # ← 用户维护 (真实成交账本, 唯一真相)
+│   ├── holdings.json             # ← 由 trades.json 重建 (v2 schema, 派生缓存)
 │   ├── history.json              # ← Action 自动追加 (每日总市值 + 网格信号)
-│   ├── grid_state.json           # ← Action 自动维护 (网格 per-asset 状态)
+│   ├── grid_state.json           # ← Action 自动维护 (网格 per-asset 虚拟状态)
 │   └── grid_chart.png            # ← Action 自动渲染 (策略全景图, 嵌入 Pages)
 ├── index.html / app.js / style.css  # GitHub Pages (Pages Source: / (root))
 ├── tests/test_record.py          # 纯函数单测 (record + grid + 3pp)
@@ -193,35 +194,87 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
 
 ### 6. 持仓变更流程
 
-在本地编辑 `data/holdings.xlsx`（修改数量 / 现金），
-然后：
+**通过 Pages 编辑器（推荐）：** 在 `https://<user>.github.io/hongli-rebalance/`
+的「录入交易」表格里填好每笔成交（买/卖/入金/提现），点「💾 保存」。
 
-```bash
-git add data/holdings.xlsx
-git commit -m "update holdings"
-git push
-```
+每次保存会：
+1. 追加到 `data/trades.json`；
+2. 重算 `data/holdings.json`（schema v2 派生缓存）；
+3. 重跑 `daily.yml`，约 30 秒后 commit + 发邮件。
 
-下一个外部 cron 触发周期 Action 会自动跑。
+**通过直接编辑 `data/trades.json`（不推荐，需要理解账本语义）：**
+
+- `trades.json` 是 append-only 账本，每条 trade 有 `id` / `date` / `side` /
+  `code` / `shares` / `price` / `amount` 等字段（按 side 不同）。
+- 直接改 trades.json 不会自动重建 holdings.json；需要本地跑
+  `python scripts/init_trades_ledger.py` 或 `apply_holdings.py` 来重建。
+- 想"清仓" → 录入一笔 `sell`，数量 = 持仓数。
+- 想"入金" → 录入一笔 `deposit`。
+- 想"撤销" → 录入一笔反向 trade (e.g. 错的 buy 反向 sell，note 写"撤销")。
 
 ---
 
-## 持仓 xlsx 格式
+## trades.json 格式 (trades-v1)
 
-| 列 | A | B | C |
-|---|---|---|---|
-| 第 1 行 (header) | *空* | | |
-| 第 2 行 | **现金** *(或历史用 "资产")* | `<金额>` | (空) |
-| 第 3 行 | *空* | | |
-| 第 4 行 | 名称 | 代码 | 数量 |
-| 第 5 行起 | 黄金ETF博时 | 159937 | 20600 |
-| | 红利ETF易方达 | 515180 | 122800 |
-| | 可转债ETF博时 | 511380 | 13700 |
-| | 纳斯达克ETF华夏 | 513300 | (持有数量) |
+`data/trades.json` 是真实成交账本，唯一真相 (single source of truth)。
+`data/holdings.json` 是 schema v2 派生缓存，由 `apply_holdings.py`
+每次写入时自动重建。
 
-> **"现金"** 是账户可用现金余额。
-> **总资金 = ETF 总市值 + 现金**（自动计算）。
-> "资产" 字段名已弃用，新文件请用 "现金"。
+```json
+{
+  "_schema": "trades-v1",
+  "trades": [
+    {
+      "id": "2026-10-12-deposit-001",
+      "date": "2026-10-12",
+      "side": "deposit",
+      "amount": 175900.60,
+      "note": "初始入金 (建仓日)"
+    },
+    {
+      "id": "2026-10-12-buy-002",
+      "date": "2026-10-12",
+      "side": "buy",
+      "code": "515180",
+      "shares": 40600,
+      "price": 1.446,
+      "fee": 0.0,
+      "note": "红利 ETF 易方达 建仓"
+    }
+  ]
+}
+```
+
+### 字段表
+
+| field | buy | sell | deposit | withdraw |
+|---|---|---|---|---|
+| `id` | auto (server) | auto | auto | auto |
+| `date` (ISO) | required | required | required | required |
+| `side` | `"buy"` | `"sell"` | `"deposit"` | `"withdraw"` |
+| `code` (6 digits) | required | required | — | — |
+| `shares` (> 0) | required | required | — | — |
+| `price` (> 0) | required | required | — | — |
+| `amount` (> 0) | — | — | required | required |
+| `fee` (≥ 0, optional) | optional | optional | — | — |
+| `note` (optional) | optional | optional | optional | optional |
+
+- `id` 由 server 自动生成 (`<date>-<side>-<seq>`, 三位零填充)
+- `date` 必须是未来日期 ≤ today + 1 day (容忍 UTC/北京时差)
+- 不允许 oversell (卖出数量 > 当前持仓)
+- 不允许 cash 跌至 0 以下 (per 用户决策)
+- 所有 ETF 代码必须在白名单 (515180 / 159937 / 511380 / 513300)
+
+### 首次 bootstrap
+
+`data/trades.json` 不存在时，跑：
+
+```bash
+python -X utf8 scripts/init_trades_ledger.py
+```
+
+会读取 `data/holdings.json` 当前状态 + 2026-10-12 收盘价，
+生成 1 条 `deposit` + N 条 `buy` (每只持仓 1 条)，写回两份文件。
 
 ---
 
@@ -264,8 +317,8 @@ python -m src.notify
 - 网格止损 (已评估无效, 丢弃 — 见 `hongli/memory/rebalance-stop-loss-evaluated.md`)
 - 多组合对比 / 沪深300 基准叠加
 - 微信/钉钉 推送 (已选邮件)
-- 网页可视化编辑持仓
 - 用户鉴权 (Pages 默认 public)
+- Trade 编辑/删除 UI — 账本是 append-only，纠错通过反向 trade 实现
 
 ---
 

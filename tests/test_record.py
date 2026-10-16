@@ -661,23 +661,27 @@ def test_notify_qdii_unheld_low_premium_advises_buildable():
 
 
 def test_apply_holdings_happy_path():
-    """scripts/apply_holdings.py writes a valid holdings.json when given a clean payload."""
+    """scripts/apply_holdings.py accepts a clean trades-v1 payload and writes
+    both data/trades.json and data/holdings.json."""
     import json
     import sys
     with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
         src = ROOT / "scripts" / "apply_holdings.py"
         payload = json.dumps({
-            "rows": [
-                {"name": "X", "code": "515180", "shares": 1000},
-                {"name": "Y", "code": "159937", "shares": 2000.5},
+            "schema": "trades-v1",
+            "trades": [
+                {"date": "2026-10-12", "side": "deposit", "amount": 10000.0},
+                {"date": "2026-10-13", "side": "buy", "code": "515180",
+                 "shares": 1000, "price": 5.0},
             ],
-            "cash": 1234.5,
         })
         import importlib.util
         spec = importlib.util.spec_from_file_location("apply_holdings_test", src)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        mod.HOLDINGS = Path(td) / "holdings.json"
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
         old_argv = sys.argv
         sys.argv = ["apply_holdings.py", payload]
         try:
@@ -686,11 +690,18 @@ def test_apply_holdings_happy_path():
             assert e.code == 0, f"expected exit 0, got {e.code}"
         finally:
             sys.argv = old_argv
-        d = json.loads(mod.HOLDINGS.read_text(encoding="utf-8"))
-        assert d["cash"] == 1234.5
-        assert len(d["positions"]) == 2
-        assert d["positions"][0]["code"] == "515180"
-        assert d["positions"][1]["shares"] == 2000.5  # float preserved
+        # trades.json
+        td_doc = json.loads(mod.TRADES.read_text(encoding="utf-8"))
+        assert td_doc["_schema"] == "trades-v1"
+        assert len(td_doc["trades"]) == 2
+        # holdings.json (rebuilt)
+        h_doc = json.loads(mod.HOLDINGS.read_text(encoding="utf-8"))
+        assert h_doc["_schema"] == "v2"
+        # 10000 deposit - 5000 buy = 5000 cash, 1000 shares of 515180
+        assert h_doc["cash"] == 5000.0
+        assert len(h_doc["positions"]) == 1
+        assert h_doc["positions"][0]["code"] == "515180"
+        assert h_doc["positions"][0]["shares"] == 1000
 
 
 def test_apply_holdings_rejects_bad_code():
@@ -703,10 +714,13 @@ def test_apply_holdings_rejects_bad_code():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     with tempfile.TemporaryDirectory() as td:
-        mod.HOLDINGS = Path(td) / "holdings.json"
+        td = Path(td)
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
         payload = json.dumps({
-            "rows": [{"name": "X", "code": "999999", "shares": 1}],
-            "cash": 0,
+            "schema": "trades-v1",
+            "trades": [{"date": "2026-10-13", "side": "buy",
+                        "code": "999999", "shares": 1, "price": 1.0}],
         })
         old_argv = sys.argv
         sys.argv = ["apply_holdings.py", payload]
@@ -718,11 +732,193 @@ def test_apply_holdings_rejects_bad_code():
         finally:
             sys.argv = old_argv
         assert not ok, "expected non-zero exit for bad code"
-        assert not mod.HOLDINGS.exists(), "file should not be written on failure"
+        assert not mod.HOLDINGS.exists(), "holdings.json should not be written on failure"
+        assert not mod.TRADES.exists(),   "trades.json should not be written on failure"
+
+
+def test_apply_holdings_rejects_legacy_rows_payload():
+    """Old {rows, cash} payload is hard-rejected with a clear message."""
+    import importlib.util
+    import json
+    import sys
+    src = ROOT / "scripts" / "apply_holdings.py"
+    spec = importlib.util.spec_from_file_location("apply_holdings_test", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
+        payload = json.dumps({
+            "rows": [{"code": "515180", "shares": 1}],
+            "cash": 100,
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", payload]
+        try:
+            mod.main()
+            ok = True
+        except SystemExit as e:
+            ok = (e.code == 0)
+        finally:
+            sys.argv = old_argv
+        assert not ok, "legacy rows payload should be rejected"
+        assert not mod.HOLDINGS.exists()
+
+
+def test_apply_holdings_rejects_negative_cash():
+    """A buy that would push cash < 0 is rejected."""
+    import importlib.util
+    import json
+    import sys
+    src = ROOT / "scripts" / "apply_holdings.py"
+    spec = importlib.util.spec_from_file_location("apply_holdings_test", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
+        payload = json.dumps({
+            "schema": "trades-v1",
+            "trades": [
+                {"date": "2026-10-12", "side": "deposit", "amount": 100.0},
+                {"date": "2026-10-13", "side": "buy",
+                 "code": "515180", "shares": 1000, "price": 1.0},
+            ],
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", payload]
+        try:
+            mod.main()
+            ok = True
+        except SystemExit as e:
+            ok = (e.code == 0)
+        finally:
+            sys.argv = old_argv
+        assert not ok, "buy that pushes cash negative should be rejected"
+        assert not mod.HOLDINGS.exists()
+
+
+def test_apply_holdings_rejects_oversell():
+    """A sell exceeding current shares is rejected."""
+    import importlib.util
+    import json
+    import sys
+    src = ROOT / "scripts" / "apply_holdings.py"
+    spec = importlib.util.spec_from_file_location("apply_holdings_test", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        mod.TRADES   = td / "trades.json"
+        mod.HOLDINGS = td / "holdings.json"
+        payload = json.dumps({
+            "schema": "trades-v1",
+            "trades": [
+                {"date": "2026-10-12", "side": "deposit", "amount": 1000.0},
+                {"date": "2026-10-13", "side": "buy",
+                 "code": "515180", "shares": 100, "price": 1.0},
+                {"date": "2026-10-14", "side": "sell",
+                 "code": "515180", "shares": 999, "price": 1.5},
+            ],
+        })
+        old_argv = sys.argv
+        sys.argv = ["apply_holdings.py", payload]
+        try:
+            mod.main()
+            ok = True
+        except SystemExit as e:
+            ok = (e.code == 0)
+        finally:
+            sys.argv = old_argv
+        assert not ok, "oversell should be rejected"
+
+
+# -----------------------------------------------------------------------------
+# Trade-ledger tests (data/trades.json)
+# -----------------------------------------------------------------------------
+
+def test_load_trades_missing_returns_empty():
+    """Missing trades.json → [] (not an error)."""
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "trades.json"
+        record.TRADES = path
+        assert record.load_trades() == []
+
+
+def test_load_trades_unreadable_returns_empty():
+    """Corrupt JSON → [] (warning printed, not an error)."""
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "trades.json"
+        path.write_text("not-json{", encoding="utf-8")
+        record.TRADES = path
+        assert record.load_trades() == []
+
+
+def test_apply_trade_buy_increments_shares_decrements_cash():
+    state = {"cash": 10000.0, "positions": {}}
+    record.apply_trade(state, {
+        "side": "buy", "code": "515180", "shares": 1000, "price": 1.40, "fee": 0.0,
+    })
+    assert state["cash"] == round(10000 - 1000 * 1.40, 2) == 8600.0
+    assert state["positions"]["515180"] == 1000
+
+
+def test_apply_trade_sell_rejects_oversell_raises():
+    state = {"cash": 0.0, "positions": {"515180": 100.0}}
+    raised = False
+    try:
+        record.apply_trade(state, {
+            "side": "sell", "code": "515180", "shares": 200, "price": 1.50,
+        })
+    except ValueError as ex:
+        raised = True
+        assert "oversell" in str(ex) and "515180" in str(ex)
+    assert raised, "expected ValueError for oversell"
+
+
+def test_rebuild_holdings_from_trades_deposit_only_yields_initial_state():
+    """One deposit → cash = amount, positions empty."""
+    trades = [{"side": "deposit", "date": "2026-10-12", "amount": 175900.60}]
+    positions, cash = record.rebuild_holdings_from_trades(trades, as_of_date="2026-10-12")
+    assert cash == 175900.60
+    assert positions == []
+
+
+def test_rebuild_holdings_from_trades_chains_buy_sell_deposit_withdraw():
+    """Replay: deposit 10000, buy 1000@10, sell 200@12, withdraw 500.
+    Expected: cash = 10000 - 10000 + 2400 - 500 = 1900
+              515180 shares = 800
+    """
+    trades = [
+        {"side": "deposit", "date": "2026-10-12", "amount": 10000.0},
+        {"side": "buy",     "date": "2026-10-13", "code": "515180",
+         "shares": 1000, "price": 10.0, "fee": 0.0},
+        {"side": "sell",    "date": "2026-10-14", "code": "515180",
+         "shares": 200, "price": 12.0, "fee": 0.0},
+        {"side": "withdraw","date": "2026-10-15", "amount": 500.0},
+    ]
+    positions, cash = record.rebuild_holdings_from_trades(trades, as_of_date="2026-10-15")
+    assert cash == round(10000 - 10000 + 2400 - 500, 2) == 1900.0
+    assert len(positions) == 1
+    assert positions[0]["code"] == "515180"
+    assert positions[0]["shares"] == 800.0
+
+
+def test_rebuild_holdings_from_trades_as_of_date_inclusive():
+    """Trades after as_of_date are skipped."""
+    trades = [
+        {"side": "deposit", "date": "2026-10-12", "amount": 1000.0},
+        {"side": "deposit", "date": "2026-10-15", "amount": 500.0},
+    ]
+    _, cash = record.rebuild_holdings_from_trades(trades, as_of_date="2026-10-13")
+    assert cash == 1000.0   # second deposit is after 10-13, skipped
 
 
 def test_main():
-    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    fns = [v for k, v in sorted(globals().items())
+           if k.startswith("test_") and k != "test_main" and callable(v)]
     fails = 0
     for fn in fns:
         try:
@@ -737,4 +933,4 @@ def test_main():
 
 
 if __name__ == "__main__":
-    main()
+    test_main()

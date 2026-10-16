@@ -2,13 +2,19 @@ name: Apply Holdings Update
 
 # Triggered by the GitHub Pages editor — see index.html form.
 # Payload: { event_type: "update_holdings",
-#            client_payload: { rows: [{name,code,shares}, ...], cash: number } }
+#            client_payload: { schema: "trades-v1",
+#                              trades: [{date, side, code?, shares?, price?,
+#                                        amount?, note?}, ...] } }
+#
+# The editor posts *real trades* (buy/sell/deposit/withdraw) rather than
+# an absolute snapshot. apply_holdings.py appends to data/trades.json and
+# rebuilds data/holdings.json as a derived cache.
 on:
   repository_dispatch:
     types: [update_holdings]
 
 permissions:
-  contents: write   # commit data/holdings.json back
+  contents: write   # commit data/trades.json + data/holdings.json back
 
 jobs:
   apply:
@@ -32,19 +38,23 @@ jobs:
         # Defensive read-back: fail loudly if the file is now invalid JSON
         # (would block the next record.py run).
         run: |
-          python -c "import json; d=json.load(open('data/holdings.json')); \
-            print('verify ok:', d.get('cash'), len(d.get('positions',[])))"
+          python -c "import json; \
+            t=json.load(open('data/trades.json')); \
+            d=json.load(open('data/holdings.json')); \
+            print('verify ok: trades=', len(t.get('trades',[])), \
+                  'holdings.cash=', d.get('cash'), \
+                  'holdings.positions=', len(d.get('positions',[])))"
 
       - name: Commit and push
         run: |
           git config user.name  "holdings-bot[bot]"
           git config user.email "holdings-bot@users.noreply.github.com"
-          if git diff --quiet data/holdings.json; then
+          if git diff --quiet data/trades.json data/holdings.json; then
             echo "no changes; skipping commit"
             exit 0
           fi
-          git add data/holdings.json
-          git commit -m "holdings: user edit via Pages ($(date -u +%FT%TZ))"
+          git add data/trades.json data/holdings.json
+          git commit -m "trades: user edit via Pages ($(date -u +%FT%TZ))"
           git push
 
       - name: Re-trigger daily record

@@ -39,19 +39,29 @@
     </section>
 
     <section id="editor-section">
-      <h2>✏️ 编辑持仓</h2>
+      <h2>✏️ 录入交易</h2>
       <p class="muted">
-        修改后点击「💾 保存」会触发 <code>apply-holdings</code> Action,
-        约 30 秒后 commit 到仓库, 邮件会基于新持仓重发. 数据源:
-        <a href="data/holdings.json" target="_blank">data/holdings.json</a>
+        录入<strong>真实成交</strong>。每次保存会：
+        1) 追加到 <a href="data/trades.json" target="_blank"><code>data/trades.json</code></a>；
+        2) 重算 <a href="data/holdings.json" target="_blank"><code>data/holdings.json</code></a>（现金 + 各 ETF 数量）；
+        3) 重跑 <code>daily.yml</code>，约 30 秒后 commit + 发邮件。
+      </p>
+      <p class="muted" style="font-size:12px;">
+        想"清仓" → 录入一笔 <code>sell</code>，数量 = 持仓数。
+        想"入金" → 录入一笔 <code>deposit</code>。
+        <code>buy/sell</code> 启用 代码/数量/价格；<code>deposit/withdraw</code> 启用 金额。
       </p>
 
       <table id="holdings-table">
         <thead>
           <tr>
-            <th style="text-align:left;">名称</th>
+            <th style="text-align:left;">日期</th>
+            <th style="text-align:left;">方向</th>
             <th style="text-align:left;">代码</th>
             <th style="text-align:right;">数量</th>
+            <th style="text-align:right;">价格</th>
+            <th style="text-align:right;">金额</th>
+            <th style="text-align:left;">备注</th>
             <th></th>
           </tr>
         </thead>
@@ -60,10 +70,7 @@
 
       <div class="editor-actions">
         <button type="button" id="add-row-btn" class="btn-secondary">+ 加一行</button>
-        <button type="button" id="reset-btn" class="btn-secondary">↺ 重置</button>
-        <span class="muted" style="margin-left: 1em;">现金 (CNY):</span>
-        <input type="number" id="cash-input" step="0.01" min="0"
-               style="width: 8em; padding: 0.3em; margin-left: 0.3em;" />
+        <button type="button" id="reset-btn" class="btn-secondary">↺ 清空表单</button>
         <button type="button" id="save-btn" class="btn-primary"
                 style="margin-left: 1.5em;">💾 保存</button>
       </div>

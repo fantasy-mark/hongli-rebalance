@@ -297,30 +297,59 @@ let originalHoldings = null;   // last fetched snapshot for "reset"
 
 function renderEditor(holdings) {
   originalHoldings = JSON.parse(JSON.stringify(holdings));  // deep copy
+  // Start with ONE empty trade row, ready to be filled in.
   const tbody = document.getElementById('holdings-tbody');
   tbody.innerHTML = '';
-  for (const p of holdings.positions) {
-    tbody.appendChild(makeRow(p));
-  }
-  document.getElementById('cash-input').value = holdings.cash ?? 0;
+  tbody.appendChild(makeRow());
   document.getElementById('save-status').textContent = '';
   document.getElementById('save-status').className = 'muted';
 }
 
-function makeRow(p = { name: '', code: '', shares: 0 }) {
+function makeRow(t = {}) {
+  // Trade-row shape: {date, side, code, shares, price, amount, note}
   const tr = document.createElement('tr');
+  const today = new Date().toISOString().slice(0, 10);
+  const side = t.side || 'buy';
   tr.innerHTML = `
-    <td><input data-k="name"   type="text"   value="${escapeAttr(p.name)}" placeholder="名称" /></td>
+    <td><input data-k="date"   type="date"   value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
     <td>
-      <input data-k="code"   type="text"   list="etf-codes" value="${escapeAttr(p.code)}"
-             placeholder="6 位代码" maxlength="6" pattern="\\d{6}" />
+      <select data-k="side" style="padding:0.2em;">
+        <option value="buy"      ${side === 'buy'      ? 'selected' : ''}>买入</option>
+        <option value="sell"     ${side === 'sell'     ? 'selected' : ''}>卖出</option>
+        <option value="deposit"  ${side === 'deposit'  ? 'selected' : ''}>入金</option>
+        <option value="withdraw" ${side === 'withdraw' ? 'selected' : ''}>提现</option>
+      </select>
+    </td>
+    <td>
+      <input data-k="code" type="text" list="etf-codes"
+             value="${escapeAttr(t.code || '')}"
+             placeholder="6 位代码" maxlength="6" pattern="\\d{6}" style="width:6em;" />
       <datalist id="etf-codes">
         ${Object.entries(ETF_CATALOG).map(([c, n]) => `<option value="${c}">${n}</option>`).join('')}
       </datalist>
     </td>
-    <td><input data-k="shares" type="number" value="${p.shares ?? 0}" min="0" step="1" style="text-align:right;" /></td>
+    <td><input data-k="shares" type="number" value="${t.shares ?? ''}" min="0" step="1" style="text-align:right;width:7em;" placeholder="股数" /></td>
+    <td><input data-k="price"  type="number" value="${t.price  ?? ''}" min="0" step="0.0001" style="text-align:right;width:7em;" placeholder="¥" /></td>
+    <td><input data-k="amount" type="number" value="${t.amount ?? ''}" min="0" step="0.01" style="text-align:right;width:7em;" placeholder="¥" /></td>
+    <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:12em;" /></td>
     <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
   `;
+  // Wire up side change → enable/disable fields.
+  const sideSel = tr.querySelector('[data-k="side"]');
+  const codeInp = tr.querySelector('[data-k="code"]');
+  const shInp   = tr.querySelector('[data-k="shares"]');
+  const pxInp   = tr.querySelector('[data-k="price"]');
+  const amtInp  = tr.querySelector('[data-k="amount"]');
+  function applySideState() {
+    const s = sideSel.value;
+    const isCash = (s === 'deposit' || s === 'withdraw');
+    codeInp.disabled = isCash;  if (isCash) codeInp.value = '';
+    shInp.disabled   = isCash;  if (isCash) shInp.value   = '';
+    pxInp.disabled   = isCash;  if (isCash) pxInp.value   = '';
+    amtInp.disabled  = !isCash; if (!isCash) amtInp.value = '';
+  }
+  applySideState();
+  sideSel.addEventListener('change', applySideState);
   tr.querySelector('.row-del-btn').addEventListener('click', () => tr.remove());
   return tr;
 }
@@ -331,16 +360,50 @@ function escapeAttr(s) {
   }[c]));
 }
 
-function collectRows() {
-  const rows = [...document.querySelectorAll('#holdings-tbody tr')].map(tr => {
-    const get = k => tr.querySelector(`[data-k="${k}"]`).value;
-    return {
-      name:   get('name').trim(),
-      code:   get('code').trim(),
-      shares: parseFloat(get('shares')) || 0,
-    };
-  }).filter(r => r.code);   // drop rows with empty code
-  return rows;
+function collectTrades() {
+  // Walk every row; return validated trade objects (skip fully-blank rows).
+  // Mark rows red on validation failure and return null to abort submit.
+  const trs = [...document.querySelectorAll('#holdings-tbody tr')];
+  let ok = true;
+  const out = [];
+  trs.forEach((tr) => {
+    const get = k => (tr.querySelector(`[data-k="${k}"]`) || {}).value || '';
+    const side = get('side').trim();
+    const date = get('date').trim();
+    const code = get('code').trim();
+    const shares = get('shares').trim();
+    const price = get('price').trim();
+    const amount = get('amount').trim();
+    const note = get('note').trim();
+    // Skip fully-blank rows.
+    if (!side && !date && !code && !shares && !price && !amount && !note) return;
+
+    const trade = { side, date, note };
+    const isCash = (side === 'deposit' || side === 'withdraw');
+    let rowOK = true;
+
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { rowOK = false; }
+    if (!['buy', 'sell', 'deposit', 'withdraw'].includes(side)) { rowOK = false; }
+
+    if (isCash) {
+      const a = parseFloat(amount);
+      if (!(a > 0)) rowOK = false;
+      else trade.amount = a;
+    } else {
+      if (!/^\d{6}$/.test(code)) rowOK = false;
+      else trade.code = code;
+      const s = parseFloat(shares);
+      const p = parseFloat(price);
+      if (!(s > 0)) rowOK = false; else trade.shares = s;
+      if (!(p > 0)) rowOK = false; else trade.price = p;
+    }
+    if (note) trade.note = note;
+
+    tr.style.outline = rowOK ? '' : '2px solid #c0392b';
+    if (!rowOK) ok = false;
+    if (rowOK) out.push(trade);
+  });
+  return ok ? out : null;
 }
 
 async function loadHoldings() {
@@ -352,25 +415,20 @@ async function loadHoldings() {
 async function saveHoldings() {
   const status = document.getElementById('save-status');
   const btn = document.getElementById('save-btn');
-  const rows = collectRows();
-  const cash = parseFloat(document.getElementById('cash-input').value) || 0;
-
-  // Client-side validation (server re-validates too)
-  for (const r of rows) {
-    if (!/^\d{6}$/.test(r.code)) {
-      status.className = 'err';
-      status.textContent = `❌ 代码必须是 6 位数字: "${r.code}"`;
-      return;
-    }
-    if (r.shares < 0) {
-      status.className = 'err';
-      status.textContent = `❌ 数量不能为负: ${r.code}`;
-      return;
-    }
-  }
-  if (cash < 0) {
+  const trades = collectTrades();
+  if (trades === null) {
     status.className = 'err';
-    status.textContent = '❌ 现金不能为负';
+    status.textContent = '❌ 表格有红色高亮的行, 请检查必填字段 (日期/方向/代码/数量/价格 或 金额).';
+    return;
+  }
+  if (trades.length === 0) {
+    status.className = 'err';
+    status.textContent = '❌ 表格为空, 请先点「+ 加一行」录入交易.';
+    return;
+  }
+  if (trades.length > 20) {
+    status.className = 'err';
+    status.textContent = '❌ 单次最多 20 笔交易, 当前 ' + trades.length + ' 笔.';
     return;
   }
 
@@ -396,12 +454,12 @@ async function saveHoldings() {
       },
       body: JSON.stringify({
         event_type: 'update_holdings',
-        client_payload: { rows, cash },
+        client_payload: { schema: 'trades-v1', trades },
       }),
     });
     if (res.status === 204 || res.ok) {
       status.className = 'ok';
-      status.textContent = '✅ 已提交. Action 约 30 秒后 commit 完成, 邮件会基于新持仓重发. 刷新页面查看新数据.';
+      status.textContent = '✅ 已提交 ' + trades.length + ' 笔交易. Action 约 30 秒后 commit 完成, 邮件会基于新持仓重发. 刷新页面查看新数据.';
     } else {
       const text = await res.text();
       if (res.status === 401 || res.status === 403) {
@@ -426,7 +484,13 @@ function initEditor() {
     document.getElementById('holdings-tbody').appendChild(makeRow());
   });
   document.getElementById('reset-btn').addEventListener('click', () => {
-    if (originalHoldings) renderEditor(originalHoldings);
+    // "Clear form" — wipe all rows back to a single empty one. We no longer
+    // "reset to original holdings" because holdings.json is now a derived
+    // cache; the canonical source is trades.json, editable by adding
+    // compensating trades if needed.
+    const tbody = document.getElementById('holdings-tbody');
+    tbody.innerHTML = '';
+    tbody.appendChild(makeRow());
   });
   document.getElementById('save-btn').addEventListener('click', saveHoldings);
 

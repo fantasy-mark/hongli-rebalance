@@ -27,7 +27,8 @@ from . import grid as grid_mod
 from .fetch import latest, fetch_qdii_premium, fetch_kline_history
 
 ROOT = Path(__file__).resolve().parent.parent
-HOLDINGS = ROOT / "data" / "holdings.json"   # v2: plain JSON (was holdings.xlsx)
+HOLDINGS = ROOT / "data" / "holdings.json"   # v2: derived cache of trades.json
+TRADES = ROOT / "data" / "trades.json"       # canonical trade ledger
 HISTORY = ROOT / "data" / "history.json"
 GRID_STATE = ROOT / "data" / "grid_state.json"
 GRID_CHART = ROOT / "data" / "grid_chart.png"
@@ -96,6 +97,108 @@ def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float]:
             continue
         holdings.append({"name": name, "code": code, "shares": shares})
     return holdings, cash
+
+
+# -----------------------------------------------------------------------------
+# Trade ledger (data/trades.json) — canonical source for cash + positions[].shares
+# -----------------------------------------------------------------------------
+
+def load_trades(json_path: Path | None = None) -> list[dict]:
+    """Return the trades list from data/trades.json. Returns [] if missing/unreadable.
+
+    Each trade is one of:
+        {side: "deposit" | "withdraw", date, amount, [note]}
+        {side: "buy" | "sell",         date, code, shares, price, [fee], [note]}
+    `id` is auto-assigned by the editor; we do not require it here.
+    """
+    if json_path is None:
+        json_path = TRADES
+    if not json_path.exists():
+        return []
+    try:
+        doc = json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception as ex:
+        print(f"WARN trades.json unreadable: {ex}", file=sys.stderr)
+        return []
+    trades = doc.get("trades", [])
+    return [t for t in trades if isinstance(t, dict)]
+
+
+def apply_trade(state: dict, trade: dict) -> None:
+    """Mutate `state` in place: state = {"cash": float, "positions": {code: shares}}.
+
+    Rounds cash to 2 dp after each trade. Raises ValueError on unknown side
+    or oversell (positions < 0). This is defense in depth — `apply_holdings.py`
+    pre-validates, but `record.py` should also be safe to call on any trade.
+    """
+    side = trade["side"]
+    if side == "deposit":
+        state["cash"] += float(trade["amount"])
+    elif side == "withdraw":
+        state["cash"] -= float(trade["amount"])
+    elif side == "buy":
+        code = str(trade["code"])
+        sh = float(trade["shares"])
+        px = float(trade["price"])
+        fee = float(trade.get("fee", 0.0))
+        state["positions"][code] = state["positions"].get(code, 0.0) + sh
+        state["cash"] -= sh * px + fee
+    elif side == "sell":
+        code = str(trade["code"])
+        sh = float(trade["shares"])
+        px = float(trade["price"])
+        fee = float(trade.get("fee", 0.0))
+        held = state["positions"].get(code, 0.0)
+        if held < sh - 1e-9:
+            raise ValueError(
+                f"oversell {code}: held={held:.4f}, sell={sh:.4f}")
+        state["positions"][code] = held - sh
+        state["cash"] += sh * px - fee
+    else:
+        raise ValueError(f"unknown side: {side!r}")
+    state["cash"] = round(state["cash"], 2)
+    for c in list(state["positions"].keys()):
+        state["positions"][c] = round(state["positions"][c], 2)
+        if state["positions"][c] <= 0:
+            del state["positions"][c]
+
+
+def rebuild_holdings_from_trades(
+    trades: list[dict],
+    as_of_date: str | None = None,
+    name_lookup: dict[str, str] | None = None,
+) -> Tuple[list[dict], float]:
+    """Replay `trades` chronologically; return (positions, cash).
+
+    Only includes codes with shares > 0 in the returned positions list.
+    `as_of_date` (ISO yyyy-mm-dd) is inclusive — trades dated after it are
+    skipped. `name_lookup` defaults to ETF_DEFS names.
+    """
+    if name_lookup is None:
+        name_lookup = {code: v[2] for code, v in ETF_DEFS.items()}
+    state: dict = {"cash": 0.0, "positions": {}}
+    seen_codes: list[str] = []
+
+    # Sort by (date, original_index) so same-day trades play in append order.
+    indexed = list(enumerate(trades))
+    indexed.sort(key=lambda kv: (kv[1].get("date", ""), kv[0]))
+
+    for _, t in indexed:
+        if as_of_date and t.get("date", "") > as_of_date:
+            continue
+        side = t.get("side")
+        code = t.get("code")
+        if side in ("buy", "sell") and code not in seen_codes:
+            seen_codes.append(code)
+        apply_trade(state, t)
+
+    positions = [
+        {"name": name_lookup.get(c, c), "code": c,
+         "shares": state["positions"][c]}
+        for c in seen_codes
+        if state["positions"].get(c, 0.0) > 0
+    ]
+    return positions, state["cash"]
 
 
 def _read_holdings_legacy_xlsx(xlsx_path: Path) -> Tuple[list[dict], float]:
@@ -325,12 +428,33 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
 
 def main() -> None:
     today = datetime.date.today().isoformat()
-    holdings, cash = read_holdings()
-    if not holdings:
-        print("ERROR holdings.xlsx has no positions", file=sys.stderr)
-        sys.exit(1)
 
-    positions, etf_total, errors = fetch_positions(holdings)
+    # 1) Universe of codes = holdings.json (cheap registry of what the user
+    #    wants tracked).  Shares here are STALE — we only use the code list.
+    raw_holdings, _legacy_cash = read_holdings()
+
+    # 2) Real positions + cash from the trade ledger.  This is the
+    #    canonical source for shares/cash in the daily snapshot.
+    trades = load_trades()
+    positions, cash = rebuild_holdings_from_trades(trades, as_of_date=today)
+
+    # 3) Defensive fallback: empty trades (the bootstrap moment before
+    #    scripts/init_trades_ledger.py has been run).  In that case fall
+    #    back to whatever shares are in holdings.json so the snapshot
+    #    still produces a meaningful daily record.
+    if not positions:
+        if not raw_holdings:
+            print("ERROR no positions (trades.json empty and holdings.json empty)",
+                  file=sys.stderr)
+            sys.exit(1)
+        positions = [
+            {"name": h["name"], "code": h["code"], "shares": h["shares"]}
+            for h in raw_holdings
+        ]
+        print("WARN trades.json empty; falling back to holdings.json shares",
+              file=sys.stderr)
+
+    positions, etf_total, errors = fetch_positions(positions)
     for code, msg in errors:
         print(f"WARN {code}: {msg}", file=sys.stderr)
     if not positions:

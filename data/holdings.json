@@ -1,22 +1,22 @@
 {
-  "_schema": "v1",
-  "_comment": "持仓配置. 增删 ETF 直接编辑 positions; cash 是现金 (CNY).",
-  "cash": 652,
+  "_schema": "v2",
+  "_comment": "REBUILT from data/trades.json. 编辑持仓请用页面交易表单 (会同时更新 trades.json); 直接改这个文件会被下一次 apply-holdings 覆盖.",
+  "cash": 652.0,
   "positions": [
     {
       "name": "红利ETF易方达",
       "code": "515180",
-      "shares": 40600
+      "shares": 40600.0
     },
     {
       "name": "黄金ETF博时",
       "code": "159937",
-      "shares": 6900
+      "shares": 6900.0
     },
     {
       "name": "可转债ETF博时",
       "code": "511380",
-      "shares": 4500
+      "shares": 4500.0
     }
   ]
 }

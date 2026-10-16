@@ -1,0 +1,43 @@
+{
+  "_schema": "trades-v1",
+  "_comment": "Append-only trade ledger. Source of truth for cash and positions[].shares. Do not reorder; corrections are new entries.",
+  "trades": [
+    {
+      "id": "2026-10-12-deposit-001",
+      "date": "2026-10-12",
+      "side": "deposit",
+      "amount": 175900.6,
+      "note": "初始入金 (back-derived from holdings.json × 2026-10-12 close + cash=¥652.00)"
+    },
+    {
+      "id": "2026-10-12-buy-002",
+      "date": "2026-10-12",
+      "side": "buy",
+      "code": "515180",
+      "shares": 40600,
+      "price": 1.446,
+      "fee": 0.0,
+      "note": "红利ETF易方达 建仓买入 @ 2026-10-12 close"
+    },
+    {
+      "id": "2026-10-12-buy-003",
+      "date": "2026-10-12",
+      "side": "buy",
+      "code": "159937",
+      "shares": 6900,
+      "price": 8.565,
+      "fee": 0.0,
+      "note": "黄金ETF博时 建仓买入 @ 2026-10-12 close"
+    },
+    {
+      "id": "2026-10-12-buy-004",
+      "date": "2026-10-12",
+      "side": "buy",
+      "code": "511380",
+      "shares": 4500,
+      "price": 12.765,
+      "fee": 0.0,
+      "note": "可转债ETF博时 建仓买入 @ 2026-10-12 close"
+    }
+  ]
+}
