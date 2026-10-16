@@ -293,31 +293,53 @@ const ETF_CATALOG = {
   "513300": "纳斯达克ETF华夏",
 };
 
-let originalHoldings = null;   // last fetched snapshot for "reset"
+let originalHoldings = null;   // last fetched snapshot for cash reference
 
 function renderEditor(holdings) {
   originalHoldings = JSON.parse(JSON.stringify(holdings));  // deep copy
-  // Start with ONE empty trade row, ready to be filled in.
-  const tbody = document.getElementById('holdings-tbody');
-  tbody.innerHTML = '';
-  tbody.appendChild(makeRow());
-  document.getElementById('save-status').textContent = '';
-  document.getElementById('save-status').className = 'muted';
+  // Show current cash at the top of the cash editor.
+  const cashEl = document.getElementById('cash-balance');
+  if (cashEl) cashEl.textContent = (holdings.cash ?? 0).toFixed(2);
+
+  // Start with ONE empty row in each section.
+  const tBody = document.getElementById('trade-tbody');
+  tBody.innerHTML = '';
+  tBody.appendChild(makeTradeRow());
+  const cBody = document.getElementById('cash-tbody');
+  cBody.innerHTML = '';
+  cBody.appendChild(makeCashRow());
+
+  setStatus('trade', '');
+  setStatus('cash',  '');
+  updateCashPreview();
 }
 
-function makeRow(t = {}) {
-  // Trade-row shape: {date, side, code, shares, price, amount, note}
+function setStatus(kind, msg, cls) {
+  const el = document.getElementById(kind + '-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.className = cls || 'muted';
+}
+
+function escapeAttr(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+// ---- Trade editor (buy / sell) ----
+
+function makeTradeRow(t = {}) {
+  // Trade-row shape: {date, side, code, shares, price, amount(=shares*price read-only), note}
   const tr = document.createElement('tr');
   const today = new Date().toISOString().slice(0, 10);
-  const side = t.side || 'buy';
+  const side = (t.side === 'sell') ? 'sell' : 'buy';
   tr.innerHTML = `
-    <td><input data-k="date"   type="date"   value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
+    <td><input data-k="date" type="date" value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
     <td>
       <select data-k="side" style="padding:0.2em;">
-        <option value="buy"      ${side === 'buy'      ? 'selected' : ''}>买入</option>
-        <option value="sell"     ${side === 'sell'     ? 'selected' : ''}>卖出</option>
-        <option value="deposit"  ${side === 'deposit'  ? 'selected' : ''}>入金</option>
-        <option value="withdraw" ${side === 'withdraw' ? 'selected' : ''}>提现</option>
+        <option value="buy"  ${side === 'buy'  ? 'selected' : ''}>买入</option>
+        <option value="sell" ${side === 'sell' ? 'selected' : ''}>卖出</option>
       </select>
     </td>
     <td>
@@ -330,40 +352,36 @@ function makeRow(t = {}) {
     </td>
     <td><input data-k="shares" type="number" value="${t.shares ?? ''}" min="0" step="1" style="text-align:right;width:7em;" placeholder="股数" /></td>
     <td><input data-k="price"  type="number" value="${t.price  ?? ''}" min="0" step="0.0001" style="text-align:right;width:7em;" placeholder="¥" /></td>
-    <td><input data-k="amount" type="number" value="${t.amount ?? ''}" min="0" step="0.01" style="text-align:right;width:7em;" placeholder="¥" /></td>
+    <td><span data-k="amount-readout" class="muted" style="display:inline-block;width:7em;text-align:right;">—</span></td>
     <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:12em;" /></td>
     <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
   `;
-  // Wire up side change → enable/disable fields.
-  const sideSel = tr.querySelector('[data-k="side"]');
-  const codeInp = tr.querySelector('[data-k="code"]');
-  const shInp   = tr.querySelector('[data-k="shares"]');
-  const pxInp   = tr.querySelector('[data-k="price"]');
-  const amtInp  = tr.querySelector('[data-k="amount"]');
-  function applySideState() {
-    const s = sideSel.value;
-    const isCash = (s === 'deposit' || s === 'withdraw');
-    codeInp.disabled = isCash;  if (isCash) codeInp.value = '';
-    shInp.disabled   = isCash;  if (isCash) shInp.value   = '';
-    pxInp.disabled   = isCash;  if (isCash) pxInp.value   = '';
-    amtInp.disabled  = !isCash; if (!isCash) amtInp.value = '';
-  }
-  applySideState();
-  sideSel.addEventListener('change', applySideState);
-  tr.querySelector('.row-del-btn').addEventListener('click', () => tr.remove());
+  // 实时刷新 read-only 金额 + 现金预览
+  const updateAmount = () => {
+    const sh = parseFloat(tr.querySelector('[data-k="shares"]').value) || 0;
+    const px = parseFloat(tr.querySelector('[data-k="price"]').value)  || 0;
+    const readout = tr.querySelector('[data-k="amount-readout"]');
+    if (sh > 0 && px > 0) {
+      readout.textContent = '¥' + (sh * px).toFixed(2);
+    } else {
+      readout.textContent = '—';
+    }
+    updateCashPreview();
+  };
+  tr.querySelector('[data-k="shares"]').addEventListener('input', updateAmount);
+  tr.querySelector('[data-k="price"]').addEventListener('input',  updateAmount);
+  tr.querySelector('[data-k="side"]').addEventListener('change',  updateCashPreview);
+  tr.querySelector('.row-del-btn').addEventListener('click', () => {
+    tr.remove();
+    updateCashPreview();
+  });
   return tr;
 }
 
-function escapeAttr(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
-
-function collectTrades() {
-  // Walk every row; return validated trade objects (skip fully-blank rows).
-  // Mark rows red on validation failure and return null to abort submit.
-  const trs = [...document.querySelectorAll('#holdings-tbody tr')];
+function collectTradeRows() {
+  // Returns array of validated trade {side, date, code, shares, price, note}
+  // or null if any non-blank row is invalid (rows are marked red).
+  const trs = [...document.querySelectorAll('#trade-tbody tr')];
   let ok = true;
   const out = [];
   trs.forEach((tr) => {
@@ -372,31 +390,22 @@ function collectTrades() {
     const date = get('date').trim();
     const code = get('code').trim();
     const shares = get('shares').trim();
-    const price = get('price').trim();
-    const amount = get('amount').trim();
-    const note = get('note').trim();
-    // Skip fully-blank rows.
-    if (!side && !date && !code && !shares && !price && !amount && !note) return;
+    const price  = get('price').trim();
+    const note   = get('note').trim();
+    // Skip rows where the user hasn't entered any of the required trade
+    // fields yet. (date defaults to today so we don't include it.)
+    if (!code && !shares && !price && !note) return;
 
-    const trade = { side, date, note };
-    const isCash = (side === 'deposit' || side === 'withdraw');
+    const trade = { side, date };
     let rowOK = true;
-
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { rowOK = false; }
-    if (!['buy', 'sell', 'deposit', 'withdraw'].includes(side)) { rowOK = false; }
-
-    if (isCash) {
-      const a = parseFloat(amount);
-      if (!(a > 0)) rowOK = false;
-      else trade.amount = a;
-    } else {
-      if (!/^\d{6}$/.test(code)) rowOK = false;
-      else trade.code = code;
-      const s = parseFloat(shares);
-      const p = parseFloat(price);
-      if (!(s > 0)) rowOK = false; else trade.shares = s;
-      if (!(p > 0)) rowOK = false; else trade.price = p;
-    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) rowOK = false;
+    if (!['buy', 'sell'].includes(side))    rowOK = false;
+    if (!/^\d{6}$/.test(code))              rowOK = false;
+    else trade.code = code;
+    const s = parseFloat(shares);
+    const p = parseFloat(price);
+    if (!(s > 0)) rowOK = false; else trade.shares = s;
+    if (!(p > 0)) rowOK = false; else trade.price  = p;
     if (note) trade.note = note;
 
     tr.style.outline = rowOK ? '' : '2px solid #c0392b';
@@ -406,44 +415,185 @@ function collectTrades() {
   return ok ? out : null;
 }
 
+// ---- Cash editor (deposit / withdraw) ----
+
+function makeCashRow(t = {}) {
+  // Cash-row shape: {date, side, amount, note}
+  const tr = document.createElement('tr');
+  const today = new Date().toISOString().slice(0, 10);
+  const side = (t.side === 'withdraw') ? 'withdraw' : 'deposit';
+  tr.innerHTML = `
+    <td><input data-k="date" type="date" value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
+    <td>
+      <select data-k="side" style="padding:0.2em;">
+        <option value="deposit"  ${side === 'deposit'  ? 'selected' : ''}>入金</option>
+        <option value="withdraw" ${side === 'withdraw' ? 'selected' : ''}>提现</option>
+      </select>
+    </td>
+    <td><input data-k="amount" type="number" value="${t.amount ?? ''}" min="0" step="0.01" style="text-align:right;width:10em;" placeholder="¥" /></td>
+    <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:18em;" /></td>
+    <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
+  `;
+  tr.querySelector('[data-k="amount"]').addEventListener('input', updateCashPreview);
+  tr.querySelector('[data-k="side"]').addEventListener('change',  updateCashPreview);
+  tr.querySelector('.row-del-btn').addEventListener('click', () => {
+    tr.remove();
+    updateCashPreview();
+  });
+  return tr;
+}
+
+function collectCashRows() {
+  // Returns array of validated cash rows {side, date, amount, note}
+  // or null if any non-blank row is invalid.
+  const trs = [...document.querySelectorAll('#cash-tbody tr')];
+  let ok = true;
+  const out = [];
+  trs.forEach((tr) => {
+    const get = k => (tr.querySelector(`[data-k="${k}"]`) || {}).value || '';
+    const side   = get('side').trim();
+    const date   = get('date').trim();
+    const amount = get('amount').trim();
+    const note   = get('note').trim();
+    // Skip rows where the user hasn't entered an amount yet — the date
+    // defaults to today so a "blank" row is detected by missing amount/note.
+    if (!amount && !note) return;
+
+    const row = { side, date };
+    let rowOK = true;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) rowOK = false;
+    if (!['deposit', 'withdraw'].includes(side)) rowOK = false;
+    const a = parseFloat(amount);
+    if (!(a > 0)) rowOK = false;
+    else row.amount = a;
+    if (note) row.note = note;
+
+    tr.style.outline = rowOK ? '' : '2px solid #c0392b';
+    if (!rowOK) ok = false;
+    if (rowOK) out.push(row);
+  });
+  return ok ? out : null;
+}
+
+// ---- Cash preview (shared by both editors) ----
+
+function netTradeDelta(trades) {
+  // Sum (signed cash) for trade rows. Buys cost cash (negative), sells earn cash (positive).
+  return (trades || []).reduce((acc, t) => {
+    if (t.side === 'buy')  return acc - t.shares * t.price;
+    if (t.side === 'sell') return acc + t.shares * t.price;
+    return acc;
+  }, 0);
+}
+
+function netCashDelta(rows) {
+  // Sum (signed cash) for deposit/withdraw rows. Deposits add, withdraws subtract.
+  return (rows || []).reduce((acc, r) => {
+    if (r.side === 'deposit')  return acc + r.amount;
+    if (r.side === 'withdraw') return acc - r.amount;
+    return acc;
+  }, 0);
+}
+
+function getCurrentCash() {
+  return parseFloat(document.getElementById('cash-balance')?.textContent) || 0;
+}
+
+function updateCashPreview() {
+  // Live preview of the COMBINED effect of BOTH forms on cash.
+  // (Per user decision: same-submit batch check; here we show the worst-case
+  //  if the user hypothetically saved BOTH forms back-to-back.)
+  const trades = collectTradeRows();   // null on validation error → ignore
+  const cash   = collectCashRows();    // null on validation error → ignore
+  if (trades === null || cash === null) {
+    document.getElementById('trade-cash-preview').textContent = '';
+    document.getElementById('cash-cash-preview').textContent  = '';
+    setSaveEnabled('trade', true);
+    setSaveEnabled('cash',  true);
+    return;
+  }
+  const current   = getCurrentCash();
+  const tradeNet  = netTradeDelta(trades);   // negative for net buys
+  const cashNet   = netCashDelta(cash);      // positive for net deposits
+  // Trade editor preview: assume cash editor NOT yet saved → current cash baseline.
+  const tradeProj = current + tradeNet;
+  // Cash editor preview: assume trade editor NOT yet saved → current cash baseline.
+  const cashProj  = current + cashNet;
+  // Worst-case: save both → cumulative
+  const worst     = current + tradeNet + cashNet;
+
+  const tradeEl = document.getElementById('trade-cash-preview');
+  tradeEl.textContent =
+    `本批次交易净流出 ¥${(-tradeNet).toFixed(2)} | 预计剩余现金 ¥${tradeProj.toFixed(2)}`;
+  tradeEl.style.color = tradeProj < 0 ? '#c0392b' : '#27ae60';
+  setSaveEnabled('trade', tradeProj >= 0);
+
+  const cashEl = document.getElementById('cash-cash-preview');
+  cashEl.textContent =
+    `本批次资金净变动 ¥${cashNet.toFixed(2)} | 预计剩余现金 ¥${cashProj.toFixed(2)}` +
+    (worst !== cashProj ? ` (若两表单都提交: ¥${worst.toFixed(2)})` : '');
+  cashEl.style.color = cashProj < 0 ? '#c0392b' : '#27ae60';
+  setSaveEnabled('cash', cashProj >= 0);
+}
+
+function setSaveEnabled(kind, enabled) {
+  const btn = document.getElementById(kind + '-save-btn');
+  if (btn) btn.disabled = !enabled;
+}
+
+// ---- HTTP submission (shared) ----
+
 async function loadHoldings() {
   const res = await fetch(HOLDINGS_URL, { cache: 'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status} loading ${HOLDINGS_URL}`);
   return await res.json();
 }
 
-async function saveHoldings() {
-  const status = document.getElementById('save-status');
-  const btn = document.getElementById('save-btn');
-  const trades = collectTrades();
+async function submitTrades(kind) {
+  // kind ∈ {'trade', 'cash'}
+  const trades = (kind === 'trade') ? collectTradeRows() : collectCashRows();
+  const statusEl = document.getElementById(kind + '-status');
+  const btn = document.getElementById(kind + '-save-btn');
+
   if (trades === null) {
-    status.className = 'err';
-    status.textContent = '❌ 表格有红色高亮的行, 请检查必填字段 (日期/方向/代码/数量/价格 或 金额).';
+    statusEl.className = 'err';
+    statusEl.textContent = '❌ 表格有红色高亮的行, 请检查必填字段.';
     return;
   }
   if (trades.length === 0) {
-    status.className = 'err';
-    status.textContent = '❌ 表格为空, 请先点「+ 加一行」录入交易.';
+    statusEl.className = 'err';
+    statusEl.textContent = '❌ 表格为空, 请先点「+ 加一行」录入交易.';
     return;
   }
   if (trades.length > 20) {
-    status.className = 'err';
-    status.textContent = '❌ 单次最多 20 笔交易, 当前 ' + trades.length + ' 笔.';
+    statusEl.className = 'err';
+    statusEl.textContent = '❌ 单次最多 20 笔交易, 当前 ' + trades.length + ' 笔.';
     return;
   }
 
-  // Auth check
+  // Defense-in-depth cash check (server also enforces).
+  const current   = getCurrentCash();
+  const tradeNet  = netTradeDelta(trades.filter(t => t.side === 'buy' || t.side === 'sell'));
+  const cashNet   = netCashDelta(trades.filter(t => t.side === 'deposit' || t.side === 'withdraw'));
+  const projected = current + tradeNet + cashNet;
+  if (projected < 0) {
+    statusEl.className = 'err';
+    statusEl.textContent =
+      `❌ 现金不足: 当前 ¥${current.toFixed(2)}, 本批次后预计 ¥${projected.toFixed(2)} (缺 ¥${(-projected).toFixed(2)}).`;
+    return;
+  }
+
   const pat = getPat();
   if (!pat) {
     promptForPat();
-    status.className = 'err';
-    status.textContent = '❌ 需要先设置 GitHub PAT (页面顶部的提示).';
+    statusEl.className = 'err';
+    statusEl.textContent = '❌ 需要先设置 GitHub PAT (页面顶部的提示).';
     return;
   }
 
   btn.disabled = true;
-  status.className = 'muted';
-  status.textContent = '提交中…';
+  statusEl.className = 'muted';
+  statusEl.textContent = '提交中…';
 
   try {
     const res = await fetch(DISPATCH_URL, {
@@ -458,49 +608,66 @@ async function saveHoldings() {
       }),
     });
     if (res.status === 204 || res.ok) {
-      status.className = 'ok';
-      status.textContent = '✅ 已提交 ' + trades.length + ' 笔交易. Action 约 30 秒后 commit 完成, 邮件会基于新持仓重发. 刷新页面查看新数据.';
+      statusEl.className = 'ok';
+      statusEl.textContent =
+        `✅ 已提交 ${trades.length} 笔交易. Action 约 30 秒后 commit 完成, 邮件会基于新持仓重发. 刷新页面查看新数据.`;
+      // Refresh cash reference so the preview reflects the post-commit state.
+      try {
+        const fresh = await loadHoldings();
+        document.getElementById('cash-balance').textContent = (fresh.cash ?? 0).toFixed(2);
+      } catch (e) { /* ignore — refresh-on-success is best-effort */ }
+      // Clear form on success.
+      resetForm(kind);
     } else {
       const text = await res.text();
       if (res.status === 401 || res.status === 403) {
-        status.className = 'err';
-        status.textContent = `❌ HTTP ${res.status} 认证失败 — PAT 无效/过期/或没勾选 Contents:Write. 顶部点「设置 PAT」重试.`;
+        statusEl.className = 'err';
+        statusEl.textContent = `❌ HTTP ${res.status} 认证失败 — PAT 无效/过期/或没勾选 Contents:Write. 顶部点「设置 PAT」重试.`;
         updatePatBadge();
       } else {
-        status.className = 'err';
-        status.textContent = `❌ 提交失败: HTTP ${res.status} — ${text.slice(0, 200)}`;
+        statusEl.className = 'err';
+        statusEl.textContent = `❌ 提交失败: HTTP ${res.status} — ${text.slice(0, 200)}`;
       }
     }
   } catch (e) {
-    status.className = 'err';
-    status.textContent = `❌ 网络错误: ${e.message}`;
+    statusEl.className = 'err';
+    statusEl.textContent = `❌ 网络错误: ${e.message}`;
   } finally {
-    btn.disabled = false;
+    // Don't re-enable if cash check would still fail; let updateCashPreview decide.
+    updateCashPreview();
   }
 }
 
+function resetForm(kind) {
+  const tbody = document.getElementById((kind === 'trade' ? 'trade' : 'cash') + '-tbody');
+  tbody.innerHTML = '';
+  tbody.appendChild(kind === 'trade' ? makeTradeRow() : makeCashRow());
+  updateCashPreview();
+}
+
 function initEditor() {
-  document.getElementById('add-row-btn').addEventListener('click', () => {
-    document.getElementById('holdings-tbody').appendChild(makeRow());
+  // Trade editor
+  document.getElementById('trade-add-row-btn').addEventListener('click', () => {
+    document.getElementById('trade-tbody').appendChild(makeTradeRow());
+    updateCashPreview();
   });
-  document.getElementById('reset-btn').addEventListener('click', () => {
-    // "Clear form" — wipe all rows back to a single empty one. We no longer
-    // "reset to original holdings" because holdings.json is now a derived
-    // cache; the canonical source is trades.json, editable by adding
-    // compensating trades if needed.
-    const tbody = document.getElementById('holdings-tbody');
-    tbody.innerHTML = '';
-    tbody.appendChild(makeRow());
+  document.getElementById('trade-reset-btn').addEventListener('click', () => resetForm('trade'));
+  document.getElementById('trade-save-btn').addEventListener('click',  () => submitTrades('trade'));
+
+  // Cash editor
+  document.getElementById('cash-add-row-btn').addEventListener('click', () => {
+    document.getElementById('cash-tbody').appendChild(makeCashRow());
+    updateCashPreview();
   });
-  document.getElementById('save-btn').addEventListener('click', saveHoldings);
+  document.getElementById('cash-reset-btn').addEventListener('click', () => resetForm('cash'));
+  document.getElementById('cash-save-btn').addEventListener('click',  () => submitTrades('cash'));
 
   // Load initial state
   loadHoldings()
     .then(renderEditor)
     .catch(e => {
-      const s = document.getElementById('save-status');
-      s.className = 'err';
-      s.textContent = `加载失败: ${e.message}`;
+      setStatus('trade', `加载失败: ${e.message}`, 'err');
+      setStatus('cash',  `加载失败: ${e.message}`, 'err');
     });
 
   updatePatBadge();

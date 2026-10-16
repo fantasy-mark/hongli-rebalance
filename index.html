@@ -38,21 +38,18 @@
       <div id="history-table"></div>
     </section>
 
-    <section id="editor-section">
-      <h2>✏️ 录入交易</h2>
+    <section id="trade-editor-section">
+      <h2>📈 交易记录</h2>
       <p class="muted">
-        录入<strong>真实成交</strong>。每次保存会：
-        1) 追加到 <a href="data/trades.json" target="_blank"><code>data/trades.json</code></a>；
-        2) 重算 <a href="data/holdings.json" target="_blank"><code>data/holdings.json</code></a>（现金 + 各 ETF 数量）；
-        3) 重跑 <code>daily.yml</code>，约 30 秒后 commit + 发邮件。
-      </p>
-      <p class="muted" style="font-size:12px;">
+        每行一笔 <strong>ETF 买入/卖出</strong>。保存后会追加到
+        <a href="data/trades.json" target="_blank"><code>data/trades.json</code></a>，
+        重算 <a href="data/holdings.json" target="_blank"><code>data/holdings.json</code></a>，
+        重跑 <code>daily.yml</code> 约 30 秒后 commit + 发邮件。
         想"清仓" → 录入一笔 <code>sell</code>，数量 = 持仓数。
-        想"入金" → 录入一笔 <code>deposit</code>。
-        <code>buy/sell</code> 启用 代码/数量/价格；<code>deposit/withdraw</code> 启用 金额。
+        同一表单内累计金额 > 当前现金会被前端拦截 (服务端也会二次拒绝)。
       </p>
 
-      <table id="holdings-table">
+      <table id="trade-table">
         <thead>
           <tr>
             <th style="text-align:left;">日期</th>
@@ -65,17 +62,50 @@
             <th></th>
           </tr>
         </thead>
-        <tbody id="holdings-tbody"></tbody>
+        <tbody id="trade-tbody"></tbody>
       </table>
 
       <div class="editor-actions">
-        <button type="button" id="add-row-btn" class="btn-secondary">+ 加一行</button>
-        <button type="button" id="reset-btn" class="btn-secondary">↺ 清空表单</button>
-        <button type="button" id="save-btn" class="btn-primary"
+        <button type="button" id="trade-add-row-btn" class="btn-secondary">+ 加一行</button>
+        <button type="button" id="trade-reset-btn" class="btn-secondary">↺ 清空表单</button>
+        <span class="muted" style="margin-left:1em;" id="trade-cash-preview"></span>
+        <button type="button" id="trade-save-btn" class="btn-primary"
                 style="margin-left: 1.5em;">💾 保存</button>
       </div>
 
-      <p id="save-status" class="muted" style="margin-top: 1em;"></p>
+      <p id="trade-status" class="muted" style="margin-top: 1em;"></p>
+    </section>
+
+    <section id="cash-editor-section">
+      <h2>💰 资金管理</h2>
+      <p class="muted">
+        每行一笔 <strong>入金/提现</strong>。<code>当前现金 = ¥<span id="cash-balance">?</span></code>。
+        想"入金" → 录入 <code>deposit</code>；想"提现" → 录入 <code>withdraw</code>。
+        同一表单内多笔累计后, 提现金额 > 现有现金会被前端拦截 (服务端也会二次拒绝)。
+      </p>
+
+      <table id="cash-table">
+        <thead>
+          <tr>
+            <th style="text-align:left;">日期</th>
+            <th style="text-align:left;">方向</th>
+            <th style="text-align:right;">金额</th>
+            <th style="text-align:left;">备注</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="cash-tbody"></tbody>
+      </table>
+
+      <div class="editor-actions">
+        <button type="button" id="cash-add-row-btn" class="btn-secondary">+ 加一行</button>
+        <button type="button" id="cash-reset-btn" class="btn-secondary">↺ 清空表单</button>
+        <span class="muted" style="margin-left:1em;" id="cash-cash-preview"></span>
+        <button type="button" id="cash-save-btn" class="btn-primary"
+                style="margin-left: 1.5em;">💾 保存</button>
+      </div>
+
+      <p id="cash-status" class="muted" style="margin-top: 1em;"></p>
     </section>
   </main>
 
