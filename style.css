@@ -78,3 +78,18 @@ td.warn { color: #c00; font-weight: bold; }
 td.ok { color: #2c7a2c; }
 
 footer { text-align: center; padding: 1em; }
+
+/* Cash pool cards (再平衡 / 网格 / 总) */
+.cash-pool-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8em; margin: 0.4em 0 0.6em; }
+.cash-card { background: #f8f9fa; border: 1px solid #e9ecef; border-left-width: 3px; border-radius: 6px; padding: 0.8em 1em; }
+.cash-card-label { font-size: 0.78em; color: #888; font-weight: 600; letter-spacing: 0.04em; }
+.cash-card-amount { font-size: 1.45em; font-weight: 700; color: #2c5f8d; margin: 0.15em 0 0.1em; font-variant-numeric: tabular-nums; }
+.cash-card-sub { font-size: 0.78em; color: #888; font-variant-numeric: tabular-nums; }
+.cash-card-rebalance { border-left-color: #2c5f8d; }
+.cash-card-grid { border-left-color: #c29438; }
+.cash-card-grid .cash-card-amount { color: #c29438; }
+.cash-card-total { border-left-color: #155724; }
+.cash-card-total .cash-card-amount { color: #155724; }
+@media (max-width: 600px) {
+  .cash-pool-cards { grid-template-columns: 1fr; }
+}

@@ -1,6 +1,12 @@
 // 稳健再平衡追踪页
 // fetch history.json from the same repo (relative URL works on GitHub Pages).
 
+// Module-level handle to the most recent record (date + etf_value). Set by
+// main() after history.json loads; read by initEditor() / renderEditor()
+// since the two are independent entry points invoked in sequence at the
+// bottom of this file.
+let latestRec = null;
+
 async function main() {
   let history = [];
   try {
@@ -24,6 +30,7 @@ async function main() {
 
   history.sort((a, b) => a.date.localeCompare(b.date));
   const latest = history[history.length - 1];
+  latestRec = latest;  // expose to renderEditor (called from initEditor)
 
   renderStatus(latest);
   renderCurve(history);
@@ -303,17 +310,28 @@ const ETF_CATALOG = {
 
 let originalHoldings = null;   // last fetched snapshot for cash reference
 
-function renderEditor(holdings) {
+// Cached ETF value (from the latest record). Refreshed on load + after save.
+// Used by renderEditor + post-save refresh to keep the "再平衡" card consistent.
+let latestEtfValue = 0;
+
+function renderEditor(holdings, latestRec) {
   originalHoldings = JSON.parse(JSON.stringify(holdings));  // deep copy
-  // Show current cash at the top of the cash editor — two pools.
-  const rebalanceEl = document.getElementById('cash-rebalance-balance');
-  const gridEl      = document.getElementById('cash-grid-balance');
-  const totalEl     = document.getElementById('cash-total-balance');
+  // Show current cash at the top of the cash editor — two pools, plus the
+  // ETF position value (latest day) folded into the "再平衡" card.
+  const rebalanceEl  = document.getElementById('cash-rebalance-balance');
+  const rebalanceSub = document.getElementById('cash-rebalance-sub');
+  const gridEl       = document.getElementById('cash-grid-balance');
+  const totalEl      = document.getElementById('cash-total-balance');
   const cashReb = Number(holdings.cash_rebalance ?? 0);
   const cashGr  = Number(holdings.cash_grid ?? 0);
-  if (rebalanceEl) rebalanceEl.textContent = cashReb.toFixed(2);
-  if (gridEl)      gridEl.textContent      = cashGr.toFixed(2);
-  if (totalEl)     totalEl.textContent     = (cashReb + cashGr).toFixed(2);
+  latestEtfValue = Number(latestRec?.etf_value ?? 0);
+  const rebalanceTotal = latestEtfValue + cashReb;
+  const total          = rebalanceTotal + cashGr;
+  if (rebalanceEl)  rebalanceEl.textContent  = `¥${rebalanceTotal.toFixed(2)}`;
+  if (rebalanceSub) rebalanceSub.textContent =
+    `ETF ¥${latestEtfValue.toFixed(2)} + 现金 ¥${cashReb.toFixed(2)}`;
+  if (gridEl)       gridEl.textContent       = `¥${cashGr.toFixed(2)}`;
+  if (totalEl)      totalEl.textContent      = `¥${total.toFixed(2)}`;
 
   // Start with ONE empty row in each section.
   const tBody = document.getElementById('trade-tbody');
@@ -552,9 +570,13 @@ function netCashDelta(rows) {
 }
 
 function getCurrentCash() {
+  // Read the BASELINE from originalHoldings, NOT the displayed card. The
+  // rebalance card shows ETF + cash combined for display; the trade/cash
+  // preview math must use the raw cash_rebalance baseline.
+  const h = originalHoldings || {};
   return {
-    rebalance: parseFloat(document.getElementById('cash-rebalance-balance')?.textContent) || 0,
-    grid:      parseFloat(document.getElementById('cash-grid-balance')?.textContent) || 0,
+    rebalance: Number(h.cash_rebalance ?? 0),
+    grid:      Number(h.cash_grid      ?? 0),
   };
 }
 
@@ -684,16 +706,23 @@ async function submitTrades(kind) {
       statusEl.textContent =
         `✅ 已提交 ${trades.length} 笔交易. Action 约 30 秒后 commit 完成, 邮件会基于新持仓重发. 刷新页面查看新数据.`;
       // Refresh cash reference so the preview reflects the post-commit state.
+      // Re-render the cards with the new cash balances; ETF value stays
+      // the same until the next daily Action re-computes history.json.
       try {
         const fresh = await loadHoldings();
-        const rEl = document.getElementById('cash-rebalance-balance');
-        const gEl = document.getElementById('cash-grid-balance');
-        const tEl = document.getElementById('cash-total-balance');
+        originalHoldings = JSON.parse(JSON.stringify(fresh));
+        const rEl  = document.getElementById('cash-rebalance-balance');
+        const rsEl = document.getElementById('cash-rebalance-sub');
+        const gEl  = document.getElementById('cash-grid-balance');
+        const tEl  = document.getElementById('cash-total-balance');
         const rN = Number(fresh.cash_rebalance ?? 0);
-        const gN = Number(fresh.cash_grid ?? 0);
-        if (rEl) rEl.textContent = rN.toFixed(2);
-        if (gEl) gEl.textContent = gN.toFixed(2);
-        if (tEl) tEl.textContent = (rN + gN).toFixed(2);
+        const gN = Number(fresh.cash_grid      ?? 0);
+        const rebalanceTotal = latestEtfValue + rN;
+        const total          = rebalanceTotal + gN;
+        if (rEl)  rEl.textContent  = `¥${rebalanceTotal.toFixed(2)}`;
+        if (rsEl) rsEl.textContent = `ETF ¥${latestEtfValue.toFixed(2)} + 现金 ¥${rN.toFixed(2)}`;
+        if (gEl)  gEl.textContent  = `¥${gN.toFixed(2)}`;
+        if (tEl)  tEl.textContent  = `¥${total.toFixed(2)}`;
       } catch (e) { /* ignore — refresh-on-success is best-effort */ }
       // Clear form on success.
       resetForm(kind);
@@ -950,7 +979,7 @@ function initEditor() {
 
   // Load initial state
   loadHoldings()
-    .then(renderEditor)
+    .then(h => renderEditor(h, latestRec))
     .catch(e => {
       setStatus('trade', `加载失败: ${e.message}`, 'err');
       setStatus('cash',  `加载失败: ${e.message}`, 'err');

@@ -121,10 +121,28 @@
 
     <section id="cash-editor-section">
       <h2>💰 资金管理</h2>
-      <p class="muted">
+      <div class="cash-pool-cards">
+        <div class="cash-card cash-card-rebalance">
+          <div class="cash-card-label">再平衡</div>
+          <div class="cash-card-amount" id="cash-rebalance-balance">¥0.00</div>
+          <div class="cash-card-sub" id="cash-rebalance-sub">ETF ¥0 + 现金 ¥0</div>
+        </div>
+        <div class="cash-card cash-card-grid">
+          <div class="cash-card-label">网格 (虚拟)</div>
+          <div class="cash-card-amount" id="cash-grid-balance">¥0.00</div>
+          <div class="cash-card-sub">与真实交易脱钩</div>
+        </div>
+        <div class="cash-card cash-card-total">
+          <div class="cash-card-label">总</div>
+          <div class="cash-card-amount" id="cash-total-balance">¥0.00</div>
+          <div class="cash-card-sub">再平衡 + 网格</div>
+        </div>
+      </div>
+      <p class="muted" style="font-size:12px; margin-top:0.4em;">
         每行一笔 <strong>资金操作</strong>。
-        <code>当前可用: 再平衡 ¥<span id="cash-rebalance-balance">?</span> / 网格 ¥<span id="cash-grid-balance">?</span> / 总 ¥<span id="cash-total-balance">?</span></code>。
-        网格资金是<strong>虚拟</strong>的（与真实交易脱钩），但开仓/加仓/止盈会修改
+        再平衡 = ETF 持仓市值 + 再平衡现金 (可立即买卖的资产总盘);
+        网格是<strong>虚拟</strong>的（不与真实交易挂钩），
+        但开仓/加仓/止盈会修改
         <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
       </p>
       <p class="muted" style="font-size:12px;">
