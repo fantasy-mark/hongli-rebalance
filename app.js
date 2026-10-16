@@ -131,6 +131,16 @@ function renderLatest(rec) {
     let sigClass = 'ok', sigText = '— 持有';
     if (sig === 'buy') { sigClass = 'warn'; sigText = '⚠ 买入'; }
     else if (sig === 'sell') { sigClass = 'ok'; sigText = '✓ 止盈'; }
+    // 距下次触发: 待机=距开仓(距窗口最低), 持仓=距止盈
+    const trigPct = s.trigger_pct ?? 0;
+    const trigKind = s.trigger_kind || 'open';
+    const trigPrefix = trigKind === 'tp' ? '距止盈' : '距开仓';
+    let trigClass = 'ok';
+    if (trigKind === 'tp' && trigPct <= 0.5) trigClass = 'warn';
+    if (trigKind === 'open') {
+      if (trigPct <= 0.5) trigClass = 'warn';
+      else if (trigPct <= 2.0) trigClass = 'warn';
+    }
     return `<tr>
       <td>${s.name}</td>
       <td class="${sigClass}">${sigText}</td>
@@ -138,6 +148,7 @@ function renderLatest(rec) {
       <td>¥${s.avg_cost.toFixed(3)}</td>
       <td>¥${s.price.toFixed(3)}</td>
       <td class="${s.unrealized_pnl >= 0 ? 'ok' : 'warn'}">${s.return_pct >= 0 ? '+' : ''}${s.return_pct.toFixed(2)}%</td>
+      <td class="${trigClass}">${trigPrefix} ${trigPct >= 0 ? '+' : ''}${trigPct.toFixed(2)}%</td>
     </tr>`;
   }).join('');
 
@@ -161,7 +172,7 @@ function renderLatest(rec) {
     <table>
       <thead>
         <tr>
-          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>浮盈%</th>
+          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>浮盈%</th><th>距下次触发</th>
         </tr>
       </thead>
       <tbody>${gridRows}</tbody>

@@ -157,17 +157,23 @@ def build_text(r: dict) -> str:
     if grid_signals:
         lines += [
             "[复合网格]  120 日新低 + 3% 加仓 + 3% 止盈",
-            f"{'名称':<14}{'信号':>8}{'层数':>5}{'均价':>10}{'现价':>10}{'浮盈%':>8}",
-            "-" * 62,
+            f"{'名称':<14}{'信号':>8}{'层数':>5}{'均价':>10}{'现价':>10}{'浮盈%':>8}{'距下次触发':>13}",
+            "-" * 75,
         ]
         for s in grid_signals:
             sig_label = fmt_signal(s.get("signal"))
+            trig = s.get("trigger_pct", 0.0)
+            kind = s.get("trigger_kind", "open")
+            if kind == "tp":
+                trig_label = f"距止盈 {trig:+.2f}%"
+            else:
+                trig_label = f"距开仓 {trig:+.2f}%"
             lines.append(
                 f"{s['name']:<14}{sig_label:>8}{s['num_buys']:>5}"
-                f"{s['avg_cost']:>10.3f}{s['price']:>10.3f}{s['return_pct']:>+7.2f}%"
+                f"{s['avg_cost']:>10.3f}{s['price']:>10.3f}{s['return_pct']:>+7.2f}%{trig_label:>13}"
             )
         lines += [
-            "-" * 62,
+            "-" * 75,
             f"加仓额(本笔): ¥{grid_signals[0]['layer_yuan']:,.0f}  "
             f"= ¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%",
             "",
@@ -215,6 +221,23 @@ def _grid_row(s: dict) -> str:
         f'background:{badge_color};color:#fff;font-size:12px;font-weight:600;">{badge_text}</span>'
     )
     ret_color = COLOR_OK if s["unrealized_pnl"] >= 0 else COLOR_WARN
+    # "距下次触发" 一栏:
+    #   待机 → 现价相对窗口最低的距离 (越大越安全)
+    #   持仓 → 现价相对止盈位的距离 (越小越接近清仓)
+    trigger_pct = s.get("trigger_pct", 0.0)
+    trigger_kind = s.get("trigger_kind", "open")
+    if trigger_kind == "tp":
+        if trigger_pct <= 0.5:
+            trig_color = COLOR_WARN; trig_label = f"近止盈 {-trigger_pct:+.2f}%"
+        else:
+            trig_color = "#666"; trig_label = f"距止盈 {trigger_pct:+.2f}%"
+    else:
+        if trigger_pct <= 0.5:
+            trig_color = COLOR_WARN; trig_label = f"近开仓 {-trigger_pct:+.2f}%"
+        elif trigger_pct <= 2.0:
+            trig_color = "#E67E22"; trig_label = f"距开仓 {trigger_pct:+.2f}%"
+        else:
+            trig_color = COLOR_OK; trig_label = f"距开仓 {trigger_pct:+.2f}%"
     return (
         f'<tr>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};font-weight:600;">{s["name"]}</td>'
@@ -223,6 +246,7 @@ def _grid_row(s: dict) -> str:
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{s["avg_cost"]:.3f}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">¥{s["price"]:.3f}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{ret_color};font-weight:600;">{s["return_pct"]:+.2f}%</td>'
+        f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{trig_color};font-weight:600;">{trig_label}</td>'
         f'</tr>'
     )
 
@@ -318,6 +342,7 @@ def build_html(r: dict, pages_url: str = "") -> str:
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">均价</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">现价</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">浮盈%</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">距下次触发</th>
           </tr>
         </thead>
         <tbody>{grid_rows}</tbody>

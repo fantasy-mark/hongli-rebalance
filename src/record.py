@@ -284,6 +284,28 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
         )
         new_state[name] = new_asset_state
         snap = grid_mod.asset_snapshot(new_asset_state, float(price))
+        # Compute "distance to next trigger":
+        # - in_cycle=True  → 距离止盈位 (first_buy × 1.03) 还有多远
+        # - in_cycle=False → 距离开仓位 (窗口最低) 还有多远
+        if snap["in_cycle"]:
+            entries = new_asset_state.get("entries", [])
+            first_buy = entries[0]["price"] if entries else 0.0
+            tp_target = first_buy * (1 + grid_mod.GRID_TP_PCT / 100) if first_buy else 0.0
+            if tp_target > 0 and price > 0:
+                trigger_pct = (tp_target - price) / price * 100
+                trigger_kind = "tp"
+            else:
+                trigger_pct = 0.0
+                trigger_kind = "tp"
+        else:
+            window = new_asset_state.get("last_prices", [])
+            wmin = min(window) if window else None
+            if wmin and price > 0:
+                trigger_pct = (price - wmin) / wmin * 100
+                trigger_kind = "open"
+            else:
+                trigger_pct = 0.0
+                trigger_kind = "open"
         signals.append({
             "name": name,
             "price": round(float(price), 4),
@@ -295,6 +317,8 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
             "current_value": snap["current_value"],
             "unrealized_pnl": snap["unrealized_pnl"],
             "return_pct": snap["return_pct"],
+            "trigger_pct": round(trigger_pct, 2),
+            "trigger_kind": trigger_kind,
         })
     return new_state, signals
 
