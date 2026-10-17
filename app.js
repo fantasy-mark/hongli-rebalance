@@ -311,27 +311,42 @@ const ETF_CATALOG = {
 let originalHoldings = null;   // last fetched snapshot for cash reference
 
 // Cached ETF value (from the latest record). Refreshed on load + after save.
-// Used by renderEditor + post-save refresh to keep the "再平衡" card consistent.
+// Used by renderEditor + post-save refresh to keep the table consistent.
 let latestEtfValue = 0;
+
+// Sum of (entry shares × current price) across all in-cycle grid assets.
+// Pure display helper — does NOT touch cash_grid (which is tracked separately).
+function computeGridMarketValue(gridState, latestRec) {
+  if (!gridState || !latestRec?.positions) return 0;
+  const priceByName = {};
+  for (const p of latestRec.positions) priceByName[p.name] = Number(p.price || 0);
+  let total = 0;
+  for (const name in gridState) {
+    const s = gridState[name];
+    if (!s || !Array.isArray(s.entries) || !s.in_cycle) continue;
+    const px = priceByName[name] || 0;
+    for (const e of s.entries) total += Number(e.shares || 0) * px;
+  }
+  return total;
+}
 
 function renderEditor(holdings, latestRec) {
   originalHoldings = JSON.parse(JSON.stringify(holdings));  // deep copy
-  // Show current cash at the top of the cash editor — two pools, plus the
-  // ETF position value (latest day) folded into the "再平衡" card.
-  const rebalanceEl  = document.getElementById('cash-rebalance-balance');
-  const rebalanceSub = document.getElementById('cash-rebalance-sub');
-  const gridEl       = document.getElementById('cash-grid-balance');
-  const totalEl      = document.getElementById('cash-total-balance');
+  // Two-pool × (市值 / 余额) table at the top of the cash editor.
+  // 再平衡: 市值 = ETF 持仓市值, 余额 = cash_rebalance
+  // 网格:   市值 = 网格虚拟仓位的当前价估值, 余额 = cash_grid
+  const rMarketEl = document.getElementById('cash-rebalance-market');
+  const rBalEl    = document.getElementById('cash-rebalance-balance');
+  const gMarketEl = document.getElementById('cash-grid-market');
+  const gBalEl    = document.getElementById('cash-grid-balance');
   const cashReb = Number(holdings.cash_rebalance ?? 0);
   const cashGr  = Number(holdings.cash_grid ?? 0);
   latestEtfValue = Number(latestRec?.etf_value ?? 0);
-  const rebalanceTotal = latestEtfValue + cashReb;
-  const total          = rebalanceTotal + cashGr;
-  if (rebalanceEl)  rebalanceEl.textContent  = `¥${rebalanceTotal.toFixed(2)}`;
-  if (rebalanceSub) rebalanceSub.textContent =
-    `ETF ¥${latestEtfValue.toFixed(2)} + 现金 ¥${cashReb.toFixed(2)}`;
-  if (gridEl)       gridEl.textContent       = `¥${cashGr.toFixed(2)}`;
-  if (totalEl)      totalEl.textContent      = `¥${total.toFixed(2)}`;
+  const gridMarket = computeGridMarketValue(currentGridState, latestRec);
+  if (rMarketEl) rMarketEl.textContent = `¥${latestEtfValue.toFixed(2)}`;
+  if (rBalEl)    rBalEl.textContent    = `¥${cashReb.toFixed(2)}`;
+  if (gMarketEl) gMarketEl.textContent = `¥${gridMarket.toFixed(2)}`;
+  if (gBalEl)    gBalEl.textContent    = `¥${cashGr.toFixed(2)}`;
 
   // Start with ONE empty row in each section.
   const tBody = document.getElementById('trade-tbody');
@@ -706,23 +721,23 @@ async function submitTrades(kind) {
       statusEl.textContent =
         `✅ 已提交 ${trades.length} 笔交易. Action 约 30 秒后 commit 完成, 邮件会基于新持仓重发. 刷新页面查看新数据.`;
       // Refresh cash reference so the preview reflects the post-commit state.
-      // Re-render the cards with the new cash balances; ETF value stays
-      // the same until the next daily Action re-computes history.json.
+      // Re-render the 4 cells of the cash pool table; ETF market value
+      // and grid market value stay constant until the next daily Action
+      // re-computes history.json / grid_state.json.
       try {
         const fresh = await loadHoldings();
         originalHoldings = JSON.parse(JSON.stringify(fresh));
-        const rEl  = document.getElementById('cash-rebalance-balance');
-        const rsEl = document.getElementById('cash-rebalance-sub');
-        const gEl  = document.getElementById('cash-grid-balance');
-        const tEl  = document.getElementById('cash-total-balance');
+        const rMarketEl = document.getElementById('cash-rebalance-market');
+        const rBalEl    = document.getElementById('cash-rebalance-balance');
+        const gMarketEl = document.getElementById('cash-grid-market');
+        const gBalEl    = document.getElementById('cash-grid-balance');
         const rN = Number(fresh.cash_rebalance ?? 0);
         const gN = Number(fresh.cash_grid      ?? 0);
-        const rebalanceTotal = latestEtfValue + rN;
-        const total          = rebalanceTotal + gN;
-        if (rEl)  rEl.textContent  = `¥${rebalanceTotal.toFixed(2)}`;
-        if (rsEl) rsEl.textContent = `ETF ¥${latestEtfValue.toFixed(2)} + 现金 ¥${rN.toFixed(2)}`;
-        if (gEl)  gEl.textContent  = `¥${gN.toFixed(2)}`;
-        if (tEl)  tEl.textContent  = `¥${total.toFixed(2)}`;
+        if (rMarketEl) rMarketEl.textContent = `¥${latestEtfValue.toFixed(2)}`;
+        if (rBalEl)    rBalEl.textContent    = `¥${rN.toFixed(2)}`;
+        if (gMarketEl) gMarketEl.textContent =
+          `¥${computeGridMarketValue(currentGridState, latestRec).toFixed(2)}`;
+        if (gBalEl)    gBalEl.textContent    = `¥${gN.toFixed(2)}`;
       } catch (e) { /* ignore — refresh-on-success is best-effort */ }
       // Clear form on success.
       resetForm(kind);
@@ -773,6 +788,14 @@ function renderGridEditor(state) {
   tbody.appendChild(makeGridRow());
   setStatus('grid', '');
   refreshGridPreview();
+  // Refresh the cash-management table's "网格 市值" cell now that
+  // currentGridState is available. If renderEditor hasn't run yet
+  // (timing), the cell stays at its default ¥0.00 and will be filled
+  // on the next renderEditor call (e.g. after the next save).
+  const gMarketEl = document.getElementById('cash-grid-market');
+  if (gMarketEl && latestRec) {
+    gMarketEl.textContent = `¥${computeGridMarketValue(currentGridState, latestRec).toFixed(2)}`;
+  }
 }
 
 function refreshGridPreview() {

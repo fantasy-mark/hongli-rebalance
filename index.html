@@ -121,27 +121,32 @@
 
     <section id="cash-editor-section">
       <h2>💰 资金管理</h2>
-      <div class="cash-pool-cards">
-        <div class="cash-card cash-card-rebalance">
-          <div class="cash-card-label">再平衡</div>
-          <div class="cash-card-amount" id="cash-rebalance-balance">¥0.00</div>
-          <div class="cash-card-sub" id="cash-rebalance-sub">ETF ¥0 + 现金 ¥0</div>
-        </div>
-        <div class="cash-card cash-card-grid">
-          <div class="cash-card-label">网格 (虚拟)</div>
-          <div class="cash-card-amount" id="cash-grid-balance">¥0.00</div>
-          <div class="cash-card-sub">与真实交易脱钩</div>
-        </div>
-        <div class="cash-card cash-card-total">
-          <div class="cash-card-label">总</div>
-          <div class="cash-card-amount" id="cash-total-balance">¥0.00</div>
-          <div class="cash-card-sub">再平衡 + 网格</div>
-        </div>
-      </div>
+      <table class="cash-pool-table">
+        <thead>
+          <tr>
+            <th style="text-align:left;">池</th>
+            <th style="text-align:right;">市值</th>
+            <th style="text-align:right;">余额</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th style="text-align:left;">再平衡</th>
+            <td style="text-align:right;" id="cash-rebalance-market">¥0.00</td>
+            <td style="text-align:right;" id="cash-rebalance-balance">¥0.00</td>
+          </tr>
+          <tr>
+            <th style="text-align:left;">网格 (虚拟)</th>
+            <td style="text-align:right;" id="cash-grid-market">¥0.00</td>
+            <td style="text-align:right;" id="cash-grid-balance">¥0.00</td>
+          </tr>
+        </tbody>
+      </table>
       <p class="muted" style="font-size:12px; margin-top:0.4em;">
         每行一笔 <strong>资金操作</strong>。
-        再平衡 = ETF 持仓市值 + 再平衡现金 (可立即买卖的资产总盘);
-        网格是<strong>虚拟</strong>的（不与真实交易挂钩），
+        市值 = 已持仓 (再平衡: ETF 持仓; 网格: in_cycle 虚拟仓位的当前价估值)；
+        余额 = 可立即动用的现金 (再平衡: 真实现金; 网格: 虚拟现金)；
+        两者分别独立。 网格是<strong>虚拟</strong>的（不与真实交易挂钩），
         但开仓/加仓/止盈会修改
         <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
       </p>
