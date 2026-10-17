@@ -314,6 +314,29 @@ let originalHoldings = null;   // last fetched snapshot for cash reference
 // Used by renderEditor + post-save refresh to keep the table consistent.
 let latestEtfValue = 0;
 
+// The 3-asset equal-weight rebalance strategy. Only these codes count toward
+// the "再平衡 市值" cell; the QDII (513300) is grid-only and excluded.
+const REBALANCE_CODES = new Set(["515180", "159937", "511380"]);
+
+// Market value of the rebalance strategy: sum of (holdings.positions shares
+// × latestRec.positions price) restricted to REBALANCE_CODES. Computed from
+// holdings (source of truth) rather than latestRec.etf_value (a stored total
+// from the last daily Action) so the cell stays in sync with the user's
+// just-edited holdings.json, even before the next daily action re-runs.
+function computeRebalanceMarketValue(holdings, latestRec) {
+  if (!holdings?.positions || !latestRec?.positions) return 0;
+  const priceByCode = {};
+  for (const p of latestRec.positions) priceByCode[p.code] = Number(p.price || 0);
+  let total = 0;
+  for (const pos of holdings.positions) {
+    if (!REBALANCE_CODES.has(pos.code)) continue;
+    const shares = Number(pos.shares || 0);
+    const px = priceByCode[pos.code] || 0;
+    total += shares * px;
+  }
+  return total;
+}
+
 // Sum of (entry shares × current price) across all in-cycle grid assets.
 // Pure display helper — does NOT touch cash_grid (which is tracked separately).
 function computeGridMarketValue(gridState, latestRec) {
@@ -343,7 +366,7 @@ function renderEditor(holdings, latestRec) {
   const cashGr  = Number(holdings.cash_grid ?? 0);
   latestEtfValue = Number(latestRec?.etf_value ?? 0);
   const gridMarket = computeGridMarketValue(currentGridState, latestRec);
-  if (rMarketEl) rMarketEl.textContent = `¥${latestEtfValue.toFixed(2)}`;
+  if (rMarketEl) rMarketEl.textContent = `¥${computeRebalanceMarketValue(holdings, latestRec).toFixed(2)}`;
   if (rBalEl)    rBalEl.textContent    = `¥${cashReb.toFixed(2)}`;
   if (gMarketEl) gMarketEl.textContent = `¥${gridMarket.toFixed(2)}`;
   if (gBalEl)    gBalEl.textContent    = `¥${cashGr.toFixed(2)}`;
@@ -733,7 +756,7 @@ async function submitTrades(kind) {
         const gBalEl    = document.getElementById('cash-grid-balance');
         const rN = Number(fresh.cash_rebalance ?? 0);
         const gN = Number(fresh.cash_grid      ?? 0);
-        if (rMarketEl) rMarketEl.textContent = `¥${latestEtfValue.toFixed(2)}`;
+        if (rMarketEl) rMarketEl.textContent = `¥${computeRebalanceMarketValue(fresh, latestRec).toFixed(2)}`;
         if (rBalEl)    rBalEl.textContent    = `¥${rN.toFixed(2)}`;
         if (gMarketEl) gMarketEl.textContent =
           `¥${computeGridMarketValue(currentGridState, latestRec).toFixed(2)}`;
