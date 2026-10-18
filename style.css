@@ -89,6 +89,26 @@ footer { text-align: center; padding: 1em; }
 .cash-pool-table tbody tr:last-child td { border-bottom: 0; }
 .cash-pool-table tbody th { width: 7em; }
 
+/* "资产" column: one chip per ETF.  Chips wrap so long lists don't
+   expand the table. */
+.cash-pool-table .assets-cell { text-align: left; line-height: 1.7; }
+.cash-pool-table .asset-tag {
+  display: inline-block;
+  background: #eef2f7;
+  color: #2c5f8d;
+  border-radius: 3px;
+  padding: 0.1em 0.55em;
+  margin: 0.08em 0.3em 0.08em 0;
+  font-size: 0.85em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* "合计" row: visually distinct — heavier top border, slightly muted
+   text so the eye reads it as a summary, not a peer of 再平衡/网格. */
+.cash-pool-table tr.total-row th { border-top: 2px solid #adb5bd; color: #555; }
+.cash-pool-table tr.total-row td { border-top: 2px solid #adb5bd; color: #555; font-weight: 600; }
+
 /* Nested editor sections (3pp 再平衡 / 复合网格 under 交易记录) */
 main section.nested {
   background: #fafbfc;
