@@ -36,6 +36,11 @@ async function main() {
   renderCurve(history);
   renderChart();   // 缓存破坏: 给 grid_chart.png 加时间戳
   renderLatest(latest);
+  // Race-condition backfill: renderEditor is gated on latestRec to
+  // avoid writing ¥0.00 when loadHoldings() wins the race.  But if
+  // loadHoldings() finished first, originalHoldings is already set
+  // and the 市值 cells are still empty — fill them in now.
+  if (originalHoldings) renderCashPoolSummary(latestRec, originalHoldings);
 }
 
 function renderChart() {
@@ -410,7 +415,18 @@ function renderEditor(holdings, latestRec) {
   // Two-pool × (市值 / 余额) table at the top of the cash editor, plus
   // an 资产 column (ETFs in each pool) and a 合计 row (sum of both).
   latestEtfValue = Number(latestRec?.etf_value ?? 0);
-  renderCashPoolSummary(latestRec, holdings);
+  // Race-condition guard: initEditor()'s loadHoldings() fetch usually
+  // wins over main()'s history.json fetch (holdings.json is much
+  // smaller), so this callback often runs with latestRec still null.
+  // Calling renderCashPoolSummary(null, ...) would write ¥0.00 into the
+  // 3pp再平衡 市值 / 复合网格 市值 cells and stay there until the next
+  // refresh — main() sets latestRec a moment later but doesn't re-trigger
+  // this function.  Mirror the same guard renderGridEditor uses: only
+  // populate the market-value cells when latestRec is actually loaded.
+  // main() will follow up with a renderCashPoolSummary(latestRec,
+  // originalHoldings) once history.json arrives, so the cells get
+  // filled in shortly after — just not with a flash of 0 in between.
+  if (latestRec) renderCashPoolSummary(latestRec, holdings);
 
   // Start with ONE empty card in each section.
   const tList = document.getElementById('trade-list');
