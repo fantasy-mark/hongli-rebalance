@@ -4,9 +4,10 @@ Layout (2 stacked subplots, shared x-axis):
   Top:    N ETF buy-and-hold + 3pp rebalance + 网格 ROI (%, log scale)
   Bottom: 网格 资金占用 堆叠 (per-asset ¥)
 
-N is derived dynamically from `data/holdings.xlsx` (whichever ETFs the
+N is derived dynamically from `data/holdings.json` (whichever ETFs the
 user currently holds, codes must be registered in `src.record.ETF_DEFS`).
 This keeps the chart in sync when the user adds/removes/swaps ETFs.
+(.xlsx is only a legacy bootstrap fallback in `read_holdings()`.)
 
 Font handling: tries msyh (Windows), simhei, then any CJK font found on
 the system. On GitHub Actions (Linux, no Microsoft fonts), the script
@@ -49,7 +50,7 @@ ROOT = Path(__file__).resolve().parent.parent
 HISTORY = ROOT / "data" / "history.json"
 GRID_STATE = ROOT / "data" / "grid_state.json"
 OUT_PNG = ROOT / "data" / "grid_chart.png"
-START = "2020-11-05"     # 纳斯达克ETF 上市日, 4 资产公共起点
+START = "2020-11-05"     # 纳斯达克ETF 上市日, 4 资产公共起点 (3 rebalance + 1 grid-only)
 END_FALLBACK = pd.Timestamp.today().strftime("%Y-%m-%d")
 
 INITIAL_3PP_CAPITAL = 200_000.0
@@ -72,10 +73,11 @@ EXTRA_PALETTE = [
 def _load_chart_assets() -> list[tuple[str, str, str]]:
     """Resolve (name, sina, eastmoney) for the user's current holdings.
 
-    Reads `data/holdings.xlsx` and joins with `src.record.ETF_DEFS` (which
-    is the registry of known codes with their sina/eastmoney symbols).
-    Falls back to the full ETF_DEFS when xlsx is unreadable — e.g. in
-    tests or if the user is rendering the chart before record.py has run.
+    Reads `data/holdings.json` (via `src.record.read_holdings()`) and joins
+    with `src.record.ETF_DEFS` (which is the registry of known codes with
+    their sina/eastmoney symbols). Falls back to the full ETF_DEFS when
+    the holdings file is unreadable — e.g. in tests or if the user is
+    rendering the chart before record.py has run.
     """
     try:
         from src.record import read_holdings, ETF_DEFS
@@ -91,7 +93,7 @@ def _load_chart_assets() -> list[tuple[str, str, str]]:
                       file=sys.stderr)
                 continue
             sina, em, name, _qdii = ETF_DEFS[code]
-            # Keep the user's display name from xlsx, fall back to registry.
+            # Keep the user's display name from holdings.json, fall back to registry.
             display = h["name"] or name
             out.append((display, sina, em))
             seen.add(code)

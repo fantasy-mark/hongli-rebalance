@@ -265,7 +265,9 @@ def test_read_holdings_xlsx_fallback_when_json_missing():
 
 
 def test_evaluate_with_cash_affects_weights():
-    # 4 资产生产配置: 4 个等权 ETF, 总值 = 4*100 = 400.
+    # 4-asset test fixture (NOT the production rebalance config — production
+    # is 3-asset, see app.js:REBALANCE_CODES; this test just exercises the
+    # generic n-asset math). 4 个等权 ETF, 总值 = 4*100 = 400.
     # target_w = 1/4 = 0.25, 每个 weight = 0.25, 不触发.
     positions = [
         {"name": "A", "code": "1", "shares": 1, "price": 100, "value": 100, "date": "x"},

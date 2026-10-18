@@ -47,9 +47,21 @@ INITIAL_DATE = "2026-10-12"
 
 
 def read_holdings(path: Path) -> tuple[list[dict], float]:
-    """Parse data/holdings.json. Returns (positions, cash)."""
+    """Parse data/holdings.json. Returns (positions, cash).
+
+    Accepts both v1 (single `cash` field) and v2 (two-pool `cash_rebalance`
+    + `cash_grid`) schemas. The bootstrap routes the rebalance-pool total
+    into the synthesized `deposit_rebalance` so the replay produces the
+    same state as the current holdings file.
+    """
     doc = json.loads(path.read_text(encoding="utf-8"))
-    cash = float(doc.get("cash", 0) or 0)
+    # v2 schema: sum both pools (grid pool is virtual; for the bootstrap
+    # the "deposit" represents total cash put in).
+    if "cash_rebalance" in doc or "cash_grid" in doc:
+        cash = float(doc.get("cash_rebalance", 0) or 0) + float(doc.get("cash_grid", 0) or 0)
+    else:
+        # v1 fallback (legacy single-pool holdings).
+        cash = float(doc.get("cash", 0) or 0)
     positions: list[dict] = []
     for p in doc.get("positions", []):
         if not isinstance(p, dict):
@@ -174,9 +186,9 @@ def main() -> None:
     except ValueError:
         rel_t, rel_h = TRADES, HOLDINGS
     print(f"OK wrote {rel_t}: {len(trades)} trades "
-          f"(1 deposit ¥{deposit_amount:,.2f} + {len(breakdown)} buys)")
-    print(f"OK wrote {rel_h}: schema v2, cash=¥{cash:,.2f}, "
-          f"{len(positions)} positions")
+          f"(1 deposit_rebalance ¥{deposit_amount:,.2f} + {len(breakdown)} buys)")
+    print(f"OK wrote {rel_h}: schema v2, cash_rebalance=¥{cash:,.2f}, "
+          f"cash_grid=¥0.00, {len(positions)} positions")
 
 
 if __name__ == "__main__":

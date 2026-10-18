@@ -450,7 +450,7 @@ def build_record(today: str, positions: list[dict],
 
 def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
                       pool_value: float, recent_min: float) -> tuple[dict, list[dict]]:
-    """Advance grid state for all 3 assets, returning (new_state, signals)."""
+    """Advance grid state for all 4 assets, returning (new_state, signals)."""
     layer = grid_mod.layer_yuan(pool_value, recent_min)
     new_state: dict = {}
     signals: list[dict] = []

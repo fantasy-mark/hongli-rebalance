@@ -571,7 +571,7 @@ function collectTradeRows() {
   return ok ? out : null;
 }
 
-// ---- Cash editor (deposit / withdraw) ----
+// ---- Cash editor (6 cash sides across 2 pools) ----
 
 // 6 valid cash sides — used by both the row template and the validator.
 const CASH_SIDES = [

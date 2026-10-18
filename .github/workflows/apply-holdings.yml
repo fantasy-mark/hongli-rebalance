@@ -6,9 +6,11 @@ name: Apply Holdings Update
 #                              trades: [{date, side, code?, shares?, price?,
 #                                        amount?, note?}, ...] } }
 #
-# The editor posts *real trades* (buy/sell/deposit/withdraw) rather than
-# an absolute snapshot. apply_holdings.py appends to data/trades.json and
-# rebuilds data/holdings.json as a derived cache.
+# The editor posts *real trades* (8 valid sides total — buy, sell,
+# deposit_rebalance, deposit_grid, withdraw_rebalance, withdraw_grid,
+# transfer_to_rebalance, transfer_to_grid) rather than an absolute
+# snapshot. apply_holdings.py appends to data/trades.json and rebuilds
+# data/holdings.json (schema v2, two cash pools) as a derived cache.
 on:
   repository_dispatch:
     types: [update_holdings]

@@ -1,11 +1,15 @@
 """Compound (pyramid) grid engine + daily-state advancement.
 
 Rules (per asset, independent):
-  - Trigger: today's close < min(close of past `lookback` days) → start a
-    new cycle, buying `layer_yuan` worth.
+  - Trigger: today's price < min(price of past `lookback` days) → start a
+    new cycle, buying `layer_yuan` worth. The "price" passed in by
+    record.py is the day's K-line LOW (intraday) so the trigger can fire
+    on an intraday dip even if the close is above yesterday's close;
+    `advance_one_day` itself is price-agnostic — any monotonic series
+    works.
   - Pyramid: while in a cycle, every additional `step_pct` % drop from
     the LAST buy price adds another `layer_yuan` layer.
-  - Take-profit: when close >= avg_cost * (1 + tp_pct/100), sell ALL
+  - Take-profit: when price >= avg_cost * (1 + tp_pct/100), sell ALL
     shares, lock in realized P&L, then wait for the next trigger.
 
 Layer sizing:
@@ -195,7 +199,10 @@ def advance_one_day(
     Args:
         state:        asset state dict (mutated and returned).
         date_str:     ISO date string for today.
-        price:        today's close.
+        price:        today's price. The daily caller (record.py) passes
+                      the K-line LOW so an intraday dip can fire the
+                      trigger even if the close is above yesterday's
+                      close; this function is price-agnostic.
         layer_yuan_value: pre-computed buy amount for today (¥).
         lookback/step_pct/tp_pct: strategy parameters.
 

@@ -41,13 +41,13 @@ def append_failure_extras(text: str, html: str, run_url: str) -> tuple[str, str]
         f"查看日志: {run_url}\n\n"
         "常见原因:\n"
         "  - akshare 网络问题 (重试通常能恢复)\n"
-        "  - data/holdings.xlsx 格式错 (确认 \"现金\" + 名称/代码/数量列)\n"
+        "  - data/holdings.json 格式错 (确认 _schema/cash_rebalance/cash_grid/positions)\n"
         "  - 当天非交易日 + akshare 历史数据缺失\n"
     )
     extra_html = (
         f'<div style="padding:14px 24px;background:#fff8e1;font-size:13px;color:#5d4037;border-top:1px solid #ffe082;">'
         f'<strong>查看日志:</strong> <a href="{run_url}" style="color:#0d6efd;">{run_url}</a><br>'
-        f'<span style="color:#888;">常见原因: akshare 网络 · xlsx 格式错 · 非交易日</span>'
+        f'<span style="color:#888;">常见原因: akshare 网络 · holdings.json 格式错 · 非交易日</span>'
         f'</div>'
     )
     # Insert before the footer ("— 自动化 GitHub Actions 发送")

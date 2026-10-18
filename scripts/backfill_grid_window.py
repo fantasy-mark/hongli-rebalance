@@ -1,15 +1,26 @@
 """One-shot backfill of grid_state.json's last_prices window using K-line lows.
 
-The grid state JSON was bootstrapped under the old A-rule (single
-"last_120d_min" scalar). After switching to the C-rule (rolling 120-day
-window), the new `last_prices` queue was filled with only the most recent
-2 days, which causes false triggers: any 1-day dip looks like a "new
-120-day low" when the window is short.
+History: grid_state.json was originally persisted with a single
+"last_120d_min" scalar (old schema). The current live rule uses a
+rolling 120-day window of past K-line lows (the trigger is
+`price < min(last_prices)`, see src/grid.py:advance_one_day). After
+the schema switch, the new `last_prices` queue was bootstrapped with
+only the most recent ~2 days of data, which causes false triggers
+(any 1-day dip looks like a "new 120-day low" when the window is short).
 
 This script fetches the actual past GRID_LOOKBACK K-line LOWS (matches
 同花顺/通达信 stock-software numbers) for each asset and rewrites
 `last_prices` in data/grid_state.json. Existing in-cycle entries are
 cleared so the live rule re-evaluates from a clean window.
+
+WARNING: this is a one-shot script with a hard-coded end date
+(`today = 2026-10-16` below). Re-running with the date unchanged is
+safe; updating the date and re-running will rewrite the window to
+end on the new date, which is usually NOT what you want (the live
+rule appends today's price each run — manually re-pushing past K-lines
+can desync the rolling window). Run ONCE, locally, after the schema
+switch. If the live rule ever needs re-seeding, write a new script
+that respects the daily append semantics.
 
 Run:
     python scripts/backfill_grid_window.py

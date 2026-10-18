@@ -1,9 +1,16 @@
 """3-asset equal-weight rebalance engine (port from hongli verify_3pp_strategy).
 
+Note: despite the filename "three_pp", this engine is **price-agnostic**
+about the asset count — `run_backtest` operates on whatever columns are
+in the input DataFrame. The production rebalance path in record.py:evaluate
+uses 3 assets (黄金/红利/可转债, see app.js:REBALANCE_CODES) and 纳指
+(513300) is grid-only. The 4-asset variant is used by research scripts
+(analyze_4_assets.py, compare_4pp_strategies.py) for backtest comparison.
+
 Strategy:
   - Day 0: 全部 initial_cash 现金
-  - Assets: 3 ETFs (黄金/红利/可转债) at 1/3 each
-  - Per day: if any |weight - 1/3| > THRESHOLD_PP → snap ALL back to 1/3
+  - Assets: arbitrary (1/n target weight per column in `prices`)
+  - Per day: if any |weight - 1/n| > THRESHOLD_PP → snap ALL back to 1/n
   - Else: do nothing (let weights drift)
 
 This is a SIMPLIFIED, full-snap-back variant of run_strategy() in
@@ -12,7 +19,7 @@ backtest_equal_weight_rebalance. The Action uses this for two purposes:
   2. full backtest for chart rendering (called by chart.py)
 
 Inputs:
-  prices: DataFrame of 3 ETF closes, aligned (inner join, dropna)
+  prices: DataFrame of ETF closes, aligned (inner join, dropna)
   initial_cash: starting ¥ (default 200,000 to match the v1 history)
 
 Outputs:
@@ -22,7 +29,6 @@ Outputs:
 from __future__ import annotations
 
 import os
-from typing import Tuple
 
 import pandas as pd
 
@@ -30,13 +36,16 @@ CASH = 200_000.0
 TARGET_W = 1.0 / 3
 THRESHOLD_PP = float(os.environ.get("THRESHOLD_PP", "3.0"))
 
+# Registry of all 4 ETFs the project tracks (3 rebalance + 1 grid-only QDII).
+# Not used by `run_backtest` itself (it takes whatever columns the caller
+# passes); kept here as a single source of truth for research scripts that
+# need a known code/name list.
 ASSETS = [
     ("黄金ETF博时", "sz159937", "159937"),
     ("红利ETF易方达", "sh515180", "515180"),
     ("可转债ETF博时", "sh511380", "511380"),
-    ("纳斯达克ETF华夏", "sh513300", "513300"),    # 2020-11-05 上市
+    ("纳斯达克ETF华夏", "sh513300", "513300"),    # 2020-11-05 上市, grid-only
 ]
-ASSET_NAMES = [n for n, _, _ in ASSETS]
 
 
 def _max_drawdown(series: pd.Series) -> float:
@@ -59,8 +68,8 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
         prices: DataFrame of aligned closes (any column names), indexed by date.
         initial_cash: starting capital ¥.
         target_w: target weight per asset. Default = 1/len(prices.columns).
-                  Pass an explicit value (e.g. 0.25 for 4-asset, ±3pp tolerance)
-                  to override.
+                  Pass an explicit value to override (e.g. 0.333 for 3-asset
+                  strict equal-weight, 0.4 for a tilted 2-of-5 backtest, etc.).
 
     Returns:
         Dict with series, rebalances, final, cagr, max_dd, sharpe, n_rebalances.
@@ -124,33 +133,3 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
         "rebalances": rebalances,
         "series": series,
     }
-
-
-def evaluate_today(positions: list[dict], cash: float) -> Tuple[float, list[float], bool, list[dict]]:
-    """One-shot rebalance check for today's snapshot (used by record.py).
-
-    Args:
-        positions: list of {"name", "code", "shares", "price", "value", ...}
-        cash: total cash balance (¥).
-
-    Returns:
-        (total, weights, triggered, plan)
-        plan = [{"name", "code", "current_value", "target_value", "delta_value"}, ...]
-    """
-    total = sum(p["value"] for p in positions) + cash
-    n = len(positions)
-    target_w = 1.0 / n if n > 0 else 0.0
-    weights = [p["value"] / total if total > 0 else 0.0 for p in positions]
-    triggered = any(abs(w - target_w) * 100 > THRESHOLD_PP for w in weights)
-    plan: list[dict] = []
-    if triggered and total > 0:
-        for p, w in zip(positions, weights):
-            target_value = total * target_w
-            plan.append({
-                "name": p["name"],
-                "code": p["code"],
-                "current_value": round(p["value"], 2),
-                "target_value": round(target_value, 2),
-                "delta_value": round(target_value - p["value"], 2),
-            })
-    return total, weights, triggered, plan

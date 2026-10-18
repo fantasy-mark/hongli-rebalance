@@ -1,10 +1,11 @@
 # 稳健再平衡 · 自动监控
 
-等权 4 资产 (黄金ETF博时 + 红利ETF易方达 + 可转债ETF博时 + 纳斯达克ETF华夏) 双策略监控：
+等权 3 资产 (黄金ETF博时 + 红利ETF易方达 + 可转债ETF博时) 再平衡 + 4 资产 (含 纳斯达克ETF华夏) 网格 双策略监控：
 
-1. **4pp 再平衡** —— 任何 ETF 权重偏离 1/4 超过 3pp → 触发全调仓 (snap-back)
+1. **3pp 再平衡** —— 任何 ETF 权重偏离 1/3 超过 3pp → 触发全调仓 (snap-back)
+   (纳指 513300 网格-only，不参与再平衡)
 2. **复合网格 (pyramid grid)** —— 120 日新低 + 3% 加仓金字塔 + 3% 止盈；
-   加仓金额 = ¥10,000 底仓 + 4pp 池子近 3 年浮盈 × 5%
+   加仓金额 = ¥10,000 底仓 + 3pp 池子近 3 年浮盈 × 5%
 
 每日 9:00 (北京时间) 由外部 cron 服务
 (推荐 [console.cron-job.org](https://console.cron-job.org/)) 通过
@@ -51,9 +52,9 @@ hongli-rebalance/
 ```
 console.cron-job.org (北京 9:00) → POST repository_dispatch
   ↓
-record.py: fetch 4 ETF 价格 + 读 holdings.xlsx
+record.py: fetch 4 ETF 价格 + 读 holdings.json
   ↓
-4pp: 计算 total / weights / triggered (snapshot)
+3pp: 计算 total / weights / triggered (snapshot)
   ↓
 grid: 读 grid_state.json → 推进 4 个资产的状态 → 写回
   ↓
@@ -72,14 +73,15 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
 
 ## 策略细节
 
-### 4pp 再平衡
+### 3pp 再平衡
 
-- **目标权重**: 1/4 each (黄金 / 红利 / 可转债 / 纳指 各 25%)
-- **触发**: 任一 ETF 权重偏离 1/4 > 3pp → 全部 snap-back 到 1/4
+- **目标权重**: 1/3 each (黄金 / 红利 / 可转债 各 33.3%)
+- **触发**: 任一 ETF 权重偏离 1/3 > 3pp → 全部 snap-back 到 1/3
 - **信号**: `record.triggered = True` 时, `plan` 字段给出每个 ETF 的
   target_value / current_value / delta_value (供券商调仓参考)
-- **3pp → 4pp 升级原因**: 4 资产下 `target_w = 1/n` 动态化, 加纳指后 CAGR
-  +3.28pp / MaxDD -4.32pp (回测 2020-11-05 → 2026-10-13)
+- **纳指 (513300) 不参与再平衡**: 仅作为网格策略的第 4 资产 (grid-only)，
+  由 `REBALANCE_CODES` (app.js) 显式排除。`target_w = 1/n` 在 evaluate() 中
+  动态化 (1/3 for rebalance / 1/4 for grid)，所以加纳指不影响再平衡逻辑。
 
 ### 复合网格 (per-asset, independent)
 
@@ -92,7 +94,7 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
   - 回测 (2020-04 → 2026-10, 3 ETF): first_buy 比 avg_cost 多赚 +33.9% 网格 PnL,
     CAGR 多 +0.27pp, MaxDD 不变。
 - **加仓金额**: `layer_yuan = ¥10,000 + max(pool - recent_min, 0) × 5%`
-  - `pool` = 当前 4pp 总市值
+  - `pool` = 当前 3pp 总市值 (ETF + cash_rebalance + cash_grid)
   - `recent_min` = 过去 756 交易日 (3 年) pool 最低值
   - 浮盈 0 时买底仓 ¥10k; 浮盈 ¥10 万时买 ¥15k; 浮盈 ¥50 万时买 ¥35k
 - **状态持久化**: `data/grid_state.json` —— 每天 commit 后跨 Action run 保留
@@ -107,7 +109,7 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
 
 - 每日 Action 跑完后用 matplotlib 服务端渲染 (150 dpi)
 - 包含两部分:
-  - **上子图**: 6 条线对数 Y 轴 — 4 ETF 持有不动、4pp 净值、网格 ROI
+  - **上子图**: 5 条线对数 Y 轴 — 3 ETF (再平衡) + 纳指 (grid-only) 持有不动、3pp 净值、网格 ROI
   - **下子图**: 堆叠面积 — 每个 ETF 当前网格在用资金
 - GitHub Pages 通过 `<img id="grid-chart" src="data/grid_chart.png?t=...">`
   嵌入；`?t=Date.now()` 强制每次访问都重新拉图
@@ -318,7 +320,7 @@ python -X utf8 scripts/init_trades_ledger.py
 ```
 
 会读取 `data/holdings.json` 当前状态 + 2026-10-12 收盘价，
-生成 1 条 `deposit` + N 条 `buy` (每只持仓 1 条)，写回两份文件。
+生成 1 条 `deposit_rebalance` + N 条 `buy` (每只持仓 1 条)，写回两份文件。
 
 ---
 
@@ -338,7 +340,7 @@ python -X utf8 scripts/init_trades_ledger.py
 cd C:\Users\Administrator\project\hongli-rebalance
 pip install -r requirements.txt        # akshare pandas openpyxl requests matplotlib
 
-# 跑单测 (无网络, 17 个测试)
+# 跑单测 (无网络, 63 个测试)
 python -m tests.test_record
 
 # 跑一次 record (会拉真实价格, 需要网络; 写 history.json + grid_state.json + grid_chart.png)
