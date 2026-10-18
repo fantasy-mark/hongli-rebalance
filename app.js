@@ -161,6 +161,7 @@ function renderLatest(rec) {
       <td>${s.num_buys}</td>
       <td>¥${s.avg_cost.toFixed(3)}</td>
       <td>¥${s.price.toFixed(3)}</td>
+      <td>${s.in_cycle ? '¥' + Math.round(s.current_value).toLocaleString() : '—'}</td>
       <td class="${s.unrealized_pnl >= 0 ? 'ok' : 'warn'}">${s.return_pct >= 0 ? '+' : ''}${s.return_pct.toFixed(2)}%</td>
       <td class="${trigClass}">${trigPrefix} ${trigPct >= 0 ? '+' : ''}${trigPct.toFixed(2)}%</td>
     </tr>`;
@@ -186,7 +187,7 @@ function renderLatest(rec) {
     <table>
       <thead>
         <tr>
-          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>浮盈%</th><th>距下次触发</th>
+          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>市值</th><th>浮盈%</th><th>距下次触发</th>
         </tr>
       </thead>
       <tbody>${gridRows}</tbody>
@@ -299,37 +300,33 @@ let latestEtfValue = 0;
 // the "再平衡 市值" cell; the QDII (513300) is grid-only and excluded.
 const REBALANCE_CODES = new Set(["515180", "159937", "511380"]);
 
-// Market value of the rebalance strategy: sum of (holdings.positions shares
-// × latestRec.positions price) restricted to REBALANCE_CODES. Computed from
-// holdings (source of truth) rather than latestRec.etf_value (a stored total
-// from the last daily Action) so the cell stays in sync with the user's
-// just-edited holdings.json, even before the next daily action re-runs.
-function computeRebalanceMarketValue(holdings, latestRec) {
-  if (!holdings?.positions || !latestRec?.positions) return 0;
-  const priceByCode = {};
-  for (const p of latestRec.positions) priceByCode[p.code] = Number(p.price || 0);
+// Both 资金管理 市值 cells read from the SAME data that 最新持仓's tables
+// display (latestRec = the last record in history.json).  This guarantees
+// the cash table's "市值" row can never disagree with the snapshot the
+// user sees above — the 3pp row's value column and the compound-grid row's
+// (new) 市值 column.
+//
+// Trade-off: after a manual trade/grid op, holdings.json / grid_state.json
+// are updated immediately, but the 资金管理 市值 cell only updates after
+// the next daily.yml re-runs (which is when latestRec is refreshed).  This
+// is intentional — the user is asking for consistency with the displayed
+// 最新持仓, not "freshest possible".
+function computeRebalanceMarketValue(latestRec) {
+  if (!latestRec?.positions) return 0;
   let total = 0;
-  for (const pos of holdings.positions) {
-    if (!REBALANCE_CODES.has(pos.code)) continue;
-    const shares = Number(pos.shares || 0);
-    const px = priceByCode[pos.code] || 0;
-    total += shares * px;
+  for (const p of latestRec.positions) {
+    if (!REBALANCE_CODES.has(p.code)) continue;
+    total += Number(p.value || 0);
   }
   return total;
 }
 
-// Sum of (entry shares × current price) across all in-cycle grid assets.
-// Pure display helper — does NOT touch cash_grid (which is tracked separately).
-function computeGridMarketValue(gridState, latestRec) {
-  if (!gridState || !latestRec?.positions) return 0;
-  const priceByName = {};
-  for (const p of latestRec.positions) priceByName[p.name] = Number(p.price || 0);
+function computeGridMarketValue(latestRec) {
+  const signals = latestRec?.grid_signals || [];
   let total = 0;
-  for (const name in gridState) {
-    const s = gridState[name];
-    if (!s || !Array.isArray(s.entries) || !s.in_cycle) continue;
-    const px = priceByName[name] || 0;
-    for (const e of s.entries) total += Number(e.shares || 0) * px;
+  for (const s of signals) {
+    if (!s.in_cycle) continue;
+    total += Number(s.current_value || 0);
   }
   return total;
 }
@@ -346,8 +343,8 @@ function renderEditor(holdings, latestRec) {
   const cashReb = Number(holdings.cash_rebalance ?? 0);
   const cashGr  = Number(holdings.cash_grid ?? 0);
   latestEtfValue = Number(latestRec?.etf_value ?? 0);
-  const gridMarket = computeGridMarketValue(currentGridState, latestRec);
-  if (rMarketEl) rMarketEl.textContent = `¥${computeRebalanceMarketValue(holdings, latestRec).toFixed(2)}`;
+  const gridMarket = computeGridMarketValue(latestRec);
+  if (rMarketEl) rMarketEl.textContent = `¥${computeRebalanceMarketValue(latestRec).toFixed(2)}`;
   if (rBalEl)    rBalEl.textContent    = `¥${cashReb.toFixed(2)}`;
   if (gMarketEl) gMarketEl.textContent = `¥${gridMarket.toFixed(2)}`;
   if (gBalEl)    gBalEl.textContent    = `¥${cashGr.toFixed(2)}`;
@@ -737,10 +734,10 @@ async function submitTrades(kind) {
         const gBalEl    = document.getElementById('cash-grid-balance');
         const rN = Number(fresh.cash_rebalance ?? 0);
         const gN = Number(fresh.cash_grid      ?? 0);
-        if (rMarketEl) rMarketEl.textContent = `¥${computeRebalanceMarketValue(fresh, latestRec).toFixed(2)}`;
+        if (rMarketEl) rMarketEl.textContent = `¥${computeRebalanceMarketValue(latestRec).toFixed(2)}`;
         if (rBalEl)    rBalEl.textContent    = `¥${rN.toFixed(2)}`;
         if (gMarketEl) gMarketEl.textContent =
-          `¥${computeGridMarketValue(currentGridState, latestRec).toFixed(2)}`;
+          `¥${computeGridMarketValue(latestRec).toFixed(2)}`;
         if (gBalEl)    gBalEl.textContent    = `¥${gN.toFixed(2)}`;
       } catch (e) { /* ignore — refresh-on-success is best-effort */ }
       // Clear form on success.
@@ -792,13 +789,14 @@ function renderGridEditor(state) {
   tbody.appendChild(makeGridRow());
   setStatus('grid', '');
   refreshGridPreview();
-  // Refresh the cash-management table's "网格 市值" cell now that
-  // currentGridState is available. If renderEditor hasn't run yet
-  // (timing), the cell stays at its default ¥0.00 and will be filled
-  // on the next renderEditor call (e.g. after the next save).
+  // Refresh the cash-management table's "网格 市值" cell.  Both cells
+  // read from latestRec (the same data shown in 最新持仓's tables) so
+  // the 资金管理 row can never disagree with the displayed snapshot.
+  const rMarketEl = document.getElementById('cash-rebalance-market');
   const gMarketEl = document.getElementById('cash-grid-market');
-  if (gMarketEl && latestRec) {
-    gMarketEl.textContent = `¥${computeGridMarketValue(currentGridState, latestRec).toFixed(2)}`;
+  if (latestRec) {
+    if (rMarketEl) rMarketEl.textContent = `¥${computeRebalanceMarketValue(latestRec).toFixed(2)}`;
+    if (gMarketEl) gMarketEl.textContent = `¥${computeGridMarketValue(latestRec).toFixed(2)}`;
   }
 }
 
