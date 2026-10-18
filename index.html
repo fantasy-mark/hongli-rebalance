@@ -46,6 +46,7 @@
           同一表单内累计金额 > 当前现金会被前端拦截 (服务端也会二次拒绝)。
         </p>
 
+        <div class="table-wrap">
         <table id="trade-table">
           <thead>
             <tr>
@@ -61,6 +62,7 @@
           </thead>
           <tbody id="trade-tbody"></tbody>
         </table>
+        </div>
 
         <div class="editor-actions">
           <button type="button" id="trade-add-row-btn" class="btn-secondary">+ 加一行</button>
@@ -89,6 +91,7 @@
           <code>tp</code> = 止盈 (要求 <code>in_cycle=true</code>，按 manual 价算 realized P&L 累加到 <code>cum_realized</code>)。
         </p>
 
+        <div class="table-wrap">
         <table id="grid-table">
           <thead>
             <tr>
@@ -104,6 +107,7 @@
           </thead>
           <tbody id="grid-tbody"></tbody>
         </table>
+        </div>
 
         <div class="editor-actions">
           <button type="button" id="grid-add-row-btn" class="btn-secondary">+ 加一行</button>
@@ -156,6 +160,7 @@
         提现/转换不足时会被前端拦截 (服务端也会二次拒绝)。
       </p>
 
+      <div class="table-wrap">
       <table id="cash-table">
         <thead>
           <tr>
@@ -168,6 +173,7 @@
         </thead>
         <tbody id="cash-tbody"></tbody>
       </table>
+      </div>
 
       <div class="editor-actions">
         <button type="button" id="cash-add-row-btn" class="btn-secondary">+ 加一行</button>

@@ -95,14 +95,27 @@ main section.nested {
   margin: 1em 0;
   padding: 0.8em 1.2em;
   border-radius: 6px;
-  border-left: 3px solid #3498db;
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
-main section.nested-rebalance { border-left-color: #3498db; }
-main section.nested-grid      { border-left-color: #e67e22; }
 main section.nested h3 {
   margin-top: 0;
   font-size: 1.05em;
   color: #444;
   font-weight: 600;
 }
+
+/* Editor tables can exceed main width when form controls (date inputs,
+   long-option selects) push the natural width past 100%.  Wrap each
+   editor table in this div to allow horizontal scroll without
+   expanding <body> and triggering a page-wide horizontal scrollbar. */
+.table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  /* Add a subtle fade on the right edge to hint that content scrolls. */
+  background: linear-gradient(to right, #fafbfc 30%, rgba(250,251,252,0)) 0 0 / 12px 100% no-repeat,
+              linear-gradient(to left,  #fafbfc 30%, rgba(250,251,252,0)) 100% 0 / 12px 100% no-repeat,
+              radial-gradient(farthest-side at 0 50%, rgba(0,0,0,0.06), rgba(0,0,0,0)) 0 0 / 12px 100% no-repeat,
+              radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,0.06), rgba(0,0,0,0)) 100% 0 / 12px 100% no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+.table-wrap table { min-width: 100%; }
