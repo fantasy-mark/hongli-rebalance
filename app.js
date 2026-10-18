@@ -396,10 +396,10 @@ function renderEditor(holdings, latestRec) {
   latestEtfValue = Number(latestRec?.etf_value ?? 0);
   renderCashPoolSummary(latestRec, holdings);
 
-  // Start with ONE empty row in each section.
-  const tBody = document.getElementById('trade-tbody');
-  tBody.innerHTML = '';
-  tBody.appendChild(makeTradeRow());
+  // Start with ONE empty card in each section.
+  const tList = document.getElementById('trade-list');
+  tList.innerHTML = '';
+  tList.appendChild(makeTradeCard());
   const cBody = document.getElementById('cash-tbody');
   cBody.innerHTML = '';
   cBody.appendChild(makeCashRow());
@@ -424,86 +424,97 @@ function escapeAttr(s) {
 
 // ---- Trade editor (buy / sell) ----
 
-function makeTradeRow(t = {}) {
-  // Trade-row shape: {date, side, code, shares, price, amount(=shares*price read-only), note}
-  const tr = document.createElement('tr');
+// Trade-op options for the unified 操作 dropdown.  Same shape as GRID_OPS
+// so both editors render identical card layouts.
+const TRADE_OPS = { buy: '买入', sell: '卖出' };
+
+// Build one trade card (multi-line div).  Shape mirrors makeGridCard:
+//   line 1: 日期, 资产 (dropdown), 操作 (dropdown), [del]
+//   line 2: 数量, 价格, 金额(read-only)
+//   line 3: 备注 (full width)
+// The JSON output preserves the historical "side" key for trades-v1
+// (collected as data-k="op" in the UI, mapped to "side" in collectTradeRows).
+function makeTradeCard(t = {}) {
+  const card = document.createElement('div');
+  card.className = 'trade-card';
   const today = new Date().toISOString().slice(0, 10);
-  const side = (t.side === 'sell') ? 'sell' : 'buy';
-  tr.innerHTML = `
-    <td><input data-k="date" type="date" value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
-    <td>
-      <select data-k="side" style="padding:0.2em;">
-        <option value="buy"  ${side === 'buy'  ? 'selected' : ''}>买入</option>
-        <option value="sell" ${side === 'sell' ? 'selected' : ''}>卖出</option>
-      </select>
-    </td>
-    <td>
-      <input data-k="code" type="text" list="etf-codes"
-             value="${escapeAttr(t.code || '')}"
-             placeholder="6 位代码" maxlength="6" pattern="\\d{6}" style="width:6em;" />
-      <datalist id="etf-codes">
-        ${Object.entries(ETF_CATALOG).map(([c, n]) => `<option value="${c}">${n}</option>`).join('')}
-      </datalist>
-    </td>
-    <td><input data-k="shares" type="number" value="${t.shares ?? ''}" min="0" step="1" style="text-align:right;width:7em;" placeholder="股数" /></td>
-    <td><input data-k="price"  type="number" value="${t.price  ?? ''}" min="0" step="0.0001" style="text-align:right;width:7em;" placeholder="¥" /></td>
-    <td><span data-k="amount-readout" class="muted" style="display:inline-block;width:7em;text-align:right;">—</span></td>
-    <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:8em;" /></td>
-    <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
+  // Default to first asset in catalog so 资产 always has a value (trade
+  // historically used a free-form 6-digit code; unifying to a dropdown
+  // simplifies the UI and matches grid; user can extend ETF_CATALOG).
+  const firstCode = Object.keys(ETF_CATALOG)[0];
+  const code = (t.code && t.code in ETF_CATALOG) ? t.code : firstCode;
+  const op = TRADE_OPS[t.side] ? t.side : 'buy';
+  card.innerHTML = `
+    <div class="card-line">
+      <label>日期 <input data-k="date" type="date" value="${escapeAttr(t.date || today)}" /></label>
+      <label>资产 <select data-k="code">
+        ${Object.entries(ETF_CATALOG).map(([c, n]) =>
+          `<option value="${c}" ${c === code ? 'selected' : ''}>${c} ${n}</option>`).join('')}
+      </select></label>
+      <label>操作 <select data-k="op">
+        ${Object.entries(TRADE_OPS).map(([v, label]) =>
+          `<option value="${v}" ${v === op ? 'selected' : ''}>${label}</option>`).join('')}
+      </select></label>
+      <button type="button" class="row-del-btn" title="删除该行">✕</button>
+    </div>
+    <div class="card-line">
+      <label>数量 <input data-k="shares" type="number" min="0" step="1" value="${t.shares ?? ''}" placeholder="股数" /></label>
+      <label>价格 <input data-k="price"  type="number" min="0" step="0.0001" value="${t.price ?? ''}" placeholder="¥" /></label>
+      <span class="muted">金额 <span data-k="amount-readout" class="amount-readout">—</span></span>
+    </div>
+    <div class="card-line">
+      <label class="grow">备注 <input data-k="note" type="text" value="${escapeAttr(t.note || '')}" placeholder="备注" /></label>
+    </div>
   `;
-  // 实时刷新 read-only 金额 + 现金预览
   const updateAmount = () => {
-    const sh = parseFloat(tr.querySelector('[data-k="shares"]').value) || 0;
-    const px = parseFloat(tr.querySelector('[data-k="price"]').value)  || 0;
-    const readout = tr.querySelector('[data-k="amount-readout"]');
-    if (sh > 0 && px > 0) {
-      readout.textContent = '¥' + (sh * px).toFixed(2);
-    } else {
-      readout.textContent = '—';
-    }
+    const sh = parseFloat(card.querySelector('[data-k="shares"]').value) || 0;
+    const px = parseFloat(card.querySelector('[data-k="price"]').value)  || 0;
+    const readout = card.querySelector('[data-k="amount-readout"]');
+    readout.textContent = (sh > 0 && px > 0) ? '¥' + (sh * px).toFixed(2) : '—';
     updateCashPreview();
   };
-  tr.querySelector('[data-k="shares"]').addEventListener('input', updateAmount);
-  tr.querySelector('[data-k="price"]').addEventListener('input',  updateAmount);
-  tr.querySelector('[data-k="side"]').addEventListener('change',  updateCashPreview);
-  tr.querySelector('.row-del-btn').addEventListener('click', () => {
-    tr.remove();
+  card.querySelector('[data-k="shares"]').addEventListener('input', updateAmount);
+  card.querySelector('[data-k="price"]').addEventListener('input',  updateAmount);
+  card.querySelector('[data-k="op"]').addEventListener('change',    updateCashPreview);
+  card.querySelector('.row-del-btn').addEventListener('click', () => {
+    card.remove();
     updateCashPreview();
   });
-  return tr;
+  return card;
 }
 
 function collectTradeRows() {
   // Returns array of validated trade {side, date, code, shares, price, note}
-  // or null if any non-blank row is invalid (rows are marked red).
-  const trs = [...document.querySelectorAll('#trade-tbody tr')];
+  // or null if any non-blank card is invalid (cards are marked red).
+  // The unified form uses data-k="op" for the 操作 dropdown; the JSON
+  // payload preserves the historical "side" key for trades-v1 compat.
+  const cards = [...document.querySelectorAll('#trade-list .trade-card')];
   let ok = true;
   const out = [];
-  trs.forEach((tr) => {
-    const get = k => (tr.querySelector(`[data-k="${k}"]`) || {}).value || '';
-    const side = get('side').trim();
-    const date = get('date').trim();
-    const code = get('code').trim();
+  cards.forEach((card) => {
+    const get = k => (card.querySelector(`[data-k="${k}"]`) || {}).value || '';
+    const op    = get('op').trim();
+    const date  = get('date').trim();
+    const code  = get('code').trim();
     const shares = get('shares').trim();
     const price  = get('price').trim();
     const note   = get('note').trim();
-    // Skip rows where the user hasn't entered any of the required trade
-    // fields yet. (date defaults to today so we don't include it.)
-    if (!code && !shares && !price && !note) return;
+    // Skip cards where the user hasn't entered any of the required trade
+    // fields yet. (date + code default so we don't include them.)
+    if (!shares && !price && !note) return;
 
-    const trade = { side, date };
+    const trade = { side: op, date, code };
     let rowOK = true;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) rowOK = false;
-    if (!['buy', 'sell'].includes(side))    rowOK = false;
-    if (!/^\d{6}$/.test(code))              rowOK = false;
-    else trade.code = code;
+    if (!TRADE_OPS[op])                      rowOK = false;
+    if (!(code in ETF_CATALOG))              rowOK = false;
     const s = parseFloat(shares);
     const p = parseFloat(price);
     if (!(s > 0)) rowOK = false; else trade.shares = s;
     if (!(p > 0)) rowOK = false; else trade.price  = p;
     if (note) trade.note = note;
 
-    tr.style.outline = rowOK ? '' : '2px solid #c0392b';
+    card.classList.toggle('invalid', !rowOK);
     if (!rowOK) ok = false;
     if (rowOK) out.push(trade);
   });
@@ -800,9 +811,15 @@ async function submitTrades(kind) {
 }
 
 function resetForm(kind) {
-  const tbody = document.getElementById((kind === 'trade' ? 'trade' : 'cash') + '-tbody');
-  tbody.innerHTML = '';
-  tbody.appendChild(kind === 'trade' ? makeTradeRow() : makeCashRow());
+  if (kind === 'trade') {
+    const list = document.getElementById('trade-list');
+    list.innerHTML = '';
+    list.appendChild(makeTradeCard());
+  } else {
+    const tbody = document.getElementById('cash-tbody');
+    tbody.innerHTML = '';
+    tbody.appendChild(makeCashRow());
+  }
   updateCashPreview();
 }
 
@@ -821,9 +838,9 @@ async function loadGridState() {
 
 function renderGridEditor(state) {
   currentGridState = state;
-  const tbody = document.getElementById('grid-tbody');
-  tbody.innerHTML = '';
-  tbody.appendChild(makeGridRow());
+  const list = document.getElementById('grid-list');
+  list.innerHTML = '';
+  list.appendChild(makeGridCard());
   setStatus('grid', '');
   refreshGridPreview();
   // Refresh the cash-management summary table.  Market-value cells read
@@ -857,60 +874,62 @@ function refreshGridPreview() {
   el.textContent = `当前网格: ${parts.join(' | ')}`;
 }
 
-function makeGridRow(t = {}) {
-  const tr = document.createElement('tr');
+function makeGridCard(t = {}) {
+  const card = document.createElement('div');
+  card.className = 'trade-card';
   const today = new Date().toISOString().slice(0, 10);
   const op = GRID_OPS[t.op] ? t.op : 'add';
-  // Default code = first asset in catalog
   const firstCode = Object.keys(ETF_CATALOG)[0];
   const code = (t.code && t.code in ETF_CATALOG) ? t.code : firstCode;
-  tr.innerHTML = `
-    <td><input data-k="date" type="date" value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
-    <td>
-      <select data-k="code" style="padding:0.2em;">
+  card.innerHTML = `
+    <div class="card-line">
+      <label>日期 <input data-k="date" type="date" value="${escapeAttr(t.date || today)}" /></label>
+      <label>资产 <select data-k="code">
         ${Object.entries(ETF_CATALOG).map(([c, n]) =>
-          `<option value="${c}" ${c === code ? 'selected' : ''}>${n}</option>`).join('')}
-      </select>
-    </td>
-    <td>
-      <select data-k="op" style="padding:0.2em;">
+          `<option value="${c}" ${c === code ? 'selected' : ''}>${c} ${n}</option>`).join('')}
+      </select></label>
+      <label>操作 <select data-k="op">
         ${Object.entries(GRID_OPS).map(([v, label]) =>
           `<option value="${v}" ${v === op ? 'selected' : ''}>${label}</option>`).join('')}
-      </select>
-    </td>
-    <td><input data-k="price"  type="number" value="${t.price  ?? ''}" min="0" step="0.0001" style="text-align:right;width:8em;" placeholder="¥" /></td>
-    <td><input data-k="shares" type="number" value="${t.shares ?? ''}" min="0" step="1" style="text-align:right;width:7em;" placeholder="股" /></td>
-    <td><span data-k="amount-readout" class="muted" style="display:inline-block;width:8em;text-align:right;">—</span></td>
-    <td><input data-k="note" type="text" value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:8em;" /></td>
-    <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
+      </select></label>
+      <button type="button" class="row-del-btn" title="删除该行">✕</button>
+    </div>
+    <div class="card-line">
+      <label>数量 <input data-k="shares" type="number" min="0" step="1" value="${t.shares ?? ''}" placeholder="股" /></label>
+      <label>价格 <input data-k="price"  type="number" min="0" step="0.0001" value="${t.price ?? ''}" placeholder="¥" /></label>
+      <span class="muted">金额 <span data-k="amount-readout" class="amount-readout">—</span></span>
+    </div>
+    <div class="card-line">
+      <label class="grow">备注 <input data-k="note" type="text" value="${escapeAttr(t.note || '')}" placeholder="备注" /></label>
+    </div>
   `;
   const updateAmount = () => {
-    const px = parseFloat(tr.querySelector('[data-k="price"]').value)  || 0;
-    const sh = parseFloat(tr.querySelector('[data-k="shares"]').value) || 0;
-    const ro = tr.querySelector('[data-k="amount-readout"]');
+    const px = parseFloat(card.querySelector('[data-k="price"]').value)  || 0;
+    const sh = parseFloat(card.querySelector('[data-k="shares"]').value) || 0;
+    const ro = card.querySelector('[data-k="amount-readout"]');
     ro.textContent = (px > 0 && sh > 0) ? '¥' + (px * sh).toFixed(2) : '—';
   };
-  tr.querySelector('[data-k="price"]').addEventListener('input',  updateAmount);
-  tr.querySelector('[data-k="shares"]').addEventListener('input', updateAmount);
-  tr.querySelector('.row-del-btn').addEventListener('click', () => tr.remove());
-  return tr;
+  card.querySelector('[data-k="price"]').addEventListener('input',  updateAmount);
+  card.querySelector('[data-k="shares"]').addEventListener('input', updateAmount);
+  card.querySelector('.row-del-btn').addEventListener('click', () => card.remove());
+  return card;
 }
 
 function collectGridRows() {
   // Returns array of validated ops {date, code, op, price, shares, note}
-  // or null if any non-blank row is invalid.
-  const trs = [...document.querySelectorAll('#grid-tbody tr')];
+  // or null if any non-blank card is invalid.
+  const cards = [...document.querySelectorAll('#grid-list .trade-card')];
   let ok = true;
   const out = [];
-  trs.forEach((tr) => {
-    const get = k => (tr.querySelector(`[data-k="${k}"]`) || {}).value || '';
+  cards.forEach((card) => {
+    const get = k => (card.querySelector(`[data-k="${k}"]`) || {}).value || '';
     const date   = get('date').trim();
     const code   = get('code').trim();
     const op     = get('op').trim();
     const price  = get('price').trim();
     const shares = get('shares').trim();
     const note   = get('note').trim();
-    // Skip fully-blank rows (date defaults to today, so check op/price/note)
+    // Skip fully-blank cards (date + code default; check op/price/note)
     if (!op && !price && !shares && !note) return;
 
     const row = { date, code, op };
@@ -928,7 +947,7 @@ function collectGridRows() {
     }
     if (note) row.note = note;
 
-    tr.style.outline = rowOK ? '' : '2px solid #c0392b';
+    card.classList.toggle('invalid', !rowOK);
     if (!rowOK) ok = false;
     if (rowOK) out.push(row);
   });
@@ -1008,15 +1027,15 @@ async function submitGridOp() {
 }
 
 function resetGridForm() {
-  const tbody = document.getElementById('grid-tbody');
-  tbody.innerHTML = '';
-  tbody.appendChild(makeGridRow());
+  const list = document.getElementById('grid-list');
+  list.innerHTML = '';
+  list.appendChild(makeGridCard());
 }
 
 function initEditor() {
   // Trade editor
   document.getElementById('trade-add-row-btn').addEventListener('click', () => {
-    document.getElementById('trade-tbody').appendChild(makeTradeRow());
+    document.getElementById('trade-list').appendChild(makeTradeCard());
     updateCashPreview();
   });
   document.getElementById('trade-reset-btn').addEventListener('click', () => resetForm('trade'));
@@ -1032,7 +1051,7 @@ function initEditor() {
 
   // Grid editor (manual open/add/tp)
   document.getElementById('grid-add-row-btn').addEventListener('click', () => {
-    document.getElementById('grid-tbody').appendChild(makeGridRow());
+    document.getElementById('grid-list').appendChild(makeGridCard());
   });
   document.getElementById('grid-reset-btn').addEventListener('click', resetGridForm);
   document.getElementById('grid-save-btn').addEventListener('click',  submitGridOp);

@@ -46,23 +46,7 @@
           同一表单内累计金额 > 当前现金会被前端拦截 (服务端也会二次拒绝)。
         </p>
 
-        <div class="table-wrap">
-        <table id="trade-table">
-          <thead>
-            <tr>
-              <th style="text-align:left;">日期</th>
-              <th style="text-align:left;">方向</th>
-              <th style="text-align:left;">代码</th>
-              <th style="text-align:right;">数量</th>
-              <th style="text-align:right;">价格</th>
-              <th style="text-align:right;">金额</th>
-              <th style="text-align:left;">备注</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="trade-tbody"></tbody>
-        </table>
-        </div>
+        <div id="trade-list" class="trade-list"></div>
 
         <div class="editor-actions">
           <button type="button" id="trade-add-row-btn" class="btn-secondary">+ 加一行</button>
@@ -91,23 +75,7 @@
           <code>tp</code> = 止盈 (要求 <code>in_cycle=true</code>，按 manual 价算 realized P&L 累加到 <code>cum_realized</code>)。
         </p>
 
-        <div class="table-wrap">
-        <table id="grid-table">
-          <thead>
-            <tr>
-              <th style="text-align:left;">日期</th>
-              <th style="text-align:left;">资产</th>
-              <th style="text-align:left;">操作</th>
-              <th style="text-align:right;">单价 (¥)</th>
-              <th style="text-align:right;">数量 (股)</th>
-              <th style="text-align:right;">金额 (¥)</th>
-              <th style="text-align:left;">备注</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="grid-tbody"></tbody>
-        </table>
-        </div>
+        <div id="grid-list" class="trade-list"></div>
 
         <div class="editor-actions">
           <button type="button" id="grid-add-row-btn" class="btn-secondary">+ 加一行</button>

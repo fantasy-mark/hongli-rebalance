@@ -139,3 +139,54 @@ main section.nested h3 {
   background-attachment: local, local, scroll, scroll;
 }
 .table-wrap table { min-width: 100%; }
+
+/* Card-based editor (3pp 再平衡 + 复合网格):
+   Each trade/op is a multi-line card.  Replaces the wide single-row
+   table layout, so no horizontal scroll is needed.  Both editors share
+   the same shape: 3 lines — (header | values | note) — with the same
+   field set, only the 操作 options differ. */
+.trade-list { display: flex; flex-direction: column; gap: 0.6em; margin: 0.5em 0 1em; }
+.trade-card {
+  background: #fff;
+  border: 1px solid #e3e6ea;
+  border-radius: 6px;
+  padding: 0.65em 0.9em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+  transition: outline-color 0.15s;
+}
+.trade-card.invalid { outline: 2px solid #c0392b; }
+.trade-card .card-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em 1em;
+  align-items: center;
+}
+.trade-card .card-line label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-size: 0.92em;
+  color: #555;
+  white-space: nowrap;
+}
+.trade-card .card-line label.grow { flex: 1 1 12em; min-width: 12em; }
+.trade-card .card-line input,
+.trade-card .card-line select {
+  font: inherit;
+  padding: 0.25em 0.45em;
+  border: 1px solid #d0d4d9;
+  border-radius: 3px;
+  background: #fcfcfd;
+}
+.trade-card .card-line input[type="number"] { text-align: right; }
+.trade-card .card-line input[type="date"] { width: 9em; }
+.trade-card .card-line input[type="text"][data-k="note"] { flex: 1; min-width: 14em; }
+.trade-card .amount-readout { color: #888; font-size: 0.9em; }
+.trade-card .row-del-btn {
+  background: #fee; color: #c0392b; border: 1px solid #fcc;
+  padding: 0.2em 0.6em; border-radius: 3px; cursor: pointer; font-size: 0.95em;
+  margin-left: auto;
+}
+.trade-card .row-del-btn:hover { background: #fdd; }
