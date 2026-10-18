@@ -33,56 +33,13 @@
       <div id="latest-detail"></div>
     </section>
 
-    <section id="grid-editor-section">
-      <h2>🎯 复合网格手动操作</h2>
-      <p class="muted">
-        网格是<strong>虚拟</strong>的（不与真实交易挂钩），但开仓/加仓/止盈会修改
-        <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
-        操作后:
-        1) 立即重跑 <code>daily.yml</code>，约 30 秒后 history + chart + 邮件同步更新;
-        2) <strong>加仓参考价 = <code>entries[-1].price</code></strong>，即新加的这一笔价格，
-        下次自动加仓触发也用它（与自动路径一致）。
-      </p>
-      <p class="muted" style="font-size:12px;">
-        <code>open</code> = 强制开仓 (要求 <code>in_cycle=false</code>)；
-        <code>add</code> = 加仓 (要求 <code>in_cycle=true</code>)；
-        <code>tp</code> = 止盈 (要求 <code>in_cycle=true</code>，按 manual 价算 realized P&L 累加到 <code>cum_realized</code>)。
-      </p>
-
-      <table id="grid-table">
-        <thead>
-          <tr>
-            <th style="text-align:left;">日期</th>
-            <th style="text-align:left;">资产</th>
-            <th style="text-align:left;">操作</th>
-            <th style="text-align:right;">单价 (¥)</th>
-            <th style="text-align:right;">数量 (股)</th>
-            <th style="text-align:right;">金额 (¥)</th>
-            <th style="text-align:left;">备注</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="grid-tbody"></tbody>
-      </table>
-
-      <div class="editor-actions">
-        <button type="button" id="grid-add-row-btn" class="btn-secondary">+ 加一行</button>
-        <button type="button" id="grid-reset-btn" class="btn-secondary">↺ 清空表单</button>
-        <span class="muted" style="margin-left:1em;" id="grid-preview"></span>
-        <button type="button" id="grid-save-btn" class="btn-primary"
-                style="margin-left: 1.5em;">💾 保存</button>
-      </div>
-
-      <p id="grid-status" class="muted" style="margin-top: 1em;"></p>
-    </section>
-
-    <section>
-      <h2>历史明细</h2>
-      <div id="history-table"></div>
+    <section id="rebalance-domain" class="domain-marker domain-rebalance">
+      <h2>⚖️ 3pp 再平衡</h2>
+      <p class="muted">真实现金 + ETF 持仓 · 阈值 ±3pp 触发再平衡</p>
     </section>
 
     <section id="trade-editor-section">
-      <h2>📈 交易记录</h2>
+      <h3>📈 交易记录</h3>
       <p class="muted">
         每行一笔 <strong>ETF 买入/卖出</strong>。保存后会追加到
         <a href="data/trades.json" target="_blank"><code>data/trades.json</code></a>，
@@ -120,7 +77,7 @@
     </section>
 
     <section id="cash-editor-section">
-      <h2>💰 资金管理</h2>
+      <h3>💰 资金管理</h3>
       <table class="cash-pool-table">
         <thead>
           <tr>
@@ -180,6 +137,54 @@
       </div>
 
       <p id="cash-status" class="muted" style="margin-top: 1em;"></p>
+    </section>
+
+    <section id="grid-domain" class="domain-marker domain-grid">
+      <h2>🎯 复合网格</h2>
+      <p class="muted">虚拟操作 · 不与真实交易挂钩</p>
+    </section>
+
+    <section id="grid-editor-section">
+      <h3>手动操作</h3>
+      <p class="muted">
+        网格是<strong>虚拟</strong>的（不与真实交易挂钩），但开仓/加仓/止盈会修改
+        <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
+        操作后:
+        1) 立即重跑 <code>daily.yml</code>，约 30 秒后 history + chart + 邮件同步更新;
+        2) <strong>加仓参考价 = <code>entries[-1].price</code></strong>，即新加的这一笔价格，
+        下次自动加仓触发也用它（与自动路径一致）。
+      </p>
+      <p class="muted" style="font-size:12px;">
+        <code>open</code> = 强制开仓 (要求 <code>in_cycle=false</code>)；
+        <code>add</code> = 加仓 (要求 <code>in_cycle=true</code>)；
+        <code>tp</code> = 止盈 (要求 <code>in_cycle=true</code>，按 manual 价算 realized P&L 累加到 <code>cum_realized</code>)。
+      </p>
+
+      <table id="grid-table">
+        <thead>
+          <tr>
+            <th style="text-align:left;">日期</th>
+            <th style="text-align:left;">资产</th>
+            <th style="text-align:left;">操作</th>
+            <th style="text-align:right;">单价 (¥)</th>
+            <th style="text-align:right;">数量 (股)</th>
+            <th style="text-align:right;">金额 (¥)</th>
+            <th style="text-align:left;">备注</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="grid-tbody"></tbody>
+      </table>
+
+      <div class="editor-actions">
+        <button type="button" id="grid-add-row-btn" class="btn-secondary">+ 加一行</button>
+        <button type="button" id="grid-reset-btn" class="btn-secondary">↺ 清空表单</button>
+        <span class="muted" style="margin-left:1em;" id="grid-preview"></span>
+        <button type="button" id="grid-save-btn" class="btn-primary"
+                style="margin-left: 1.5em;">💾 保存</button>
+      </div>
+
+      <p id="grid-status" class="muted" style="margin-top: 1em;"></p>
     </section>
   </main>
 

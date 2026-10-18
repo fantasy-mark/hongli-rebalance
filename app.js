@@ -36,7 +36,6 @@ async function main() {
   renderCurve(history);
   renderChart();   // 缓存破坏: 给 grid_chart.png 加时间戳
   renderLatest(latest);
-  renderTable(history);
 }
 
 function renderChart() {
@@ -193,24 +192,6 @@ function renderLatest(rec) {
       <tbody>${gridRows}</tbody>
     </table>
     ` : ''}
-  `;
-}
-
-function renderTable(history) {
-  const rows = history.slice().reverse().map(r =>
-    `<tr>
-      <td>${r.date}</td>
-      <td>¥${Math.round(r.total).toLocaleString()}</td>
-      <td class="${r.triggered ? 'warn' : 'ok'}">${r.triggered ? '⚠ 触发' : '✓'}</td>
-    </tr>`
-  ).join('');
-  document.getElementById('history-table').innerHTML = `
-    <table>
-      <thead>
-        <tr><th>日期</th><th>总市值</th><th>信号</th></tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
   `;
 }
 
