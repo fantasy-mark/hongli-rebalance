@@ -62,7 +62,7 @@
       <section class="nested nested-grid" id="grid-editor-section">
         <h3>复合网格</h3>
         <p class="muted">
-          网格是<strong>虚拟</strong>的（不与真实交易挂钩），但开仓/加仓/止盈会修改
+          复合网格是<strong>虚拟</strong>的（不与真实交易挂钩），但开仓/加仓/止盈会修改
           <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
           操作后:
           1) 立即重跑 <code>daily.yml</code>，约 30 秒后 history + chart + 邮件同步更新;
@@ -102,13 +102,13 @@
         </thead>
         <tbody>
           <tr>
-            <th style="text-align:left;">再平衡</th>
+            <th style="text-align:left;">3pp再平衡</th>
             <td id="cash-rebalance-assets" class="assets-cell"><span class="muted">—</span></td>
             <td style="text-align:right;" id="cash-rebalance-market">¥0.00</td>
             <td style="text-align:right;" id="cash-rebalance-balance">¥0.00</td>
           </tr>
           <tr>
-            <th style="text-align:left;">网格</th>
+            <th style="text-align:left;">复合网格</th>
             <td id="cash-grid-assets" class="assets-cell"><span class="muted">—</span></td>
             <td style="text-align:right;" id="cash-grid-market">¥0.00</td>
             <td style="text-align:right;" id="cash-grid-balance">¥0.00</td>
@@ -123,17 +123,17 @@
       </table>
       <p class="muted" style="font-size:12px; margin-top:0.4em;">
         每行一笔 <strong>资金操作</strong>。
-        市值 = 已持仓 (再平衡: ETF 持仓; 网格: in_cycle 虚拟仓位的当前价估值)；
-        余额 = 可立即动用的现金 (再平衡: 真实现金; 网格: 虚拟现金)；
-        两者分别独立。 网格是<strong>虚拟</strong>的（不与真实交易挂钩），
+        市值 = 已持仓 (3pp再平衡: ETF 持仓; 复合网格: in_cycle 虚拟仓位的当前价估值)；
+        余额 = 可立即动用的现金 (3pp再平衡: 真实现金; 复合网格: 虚拟现金)；
+        两者分别独立。 复合网格是<strong>虚拟</strong>的（不与真实交易挂钩），
         但开仓/加仓/止盈会修改
         <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
       </p>
       <p class="muted" style="font-size:12px;">
         6 种操作: <code>deposit_rebalance</code> / <code>deposit_grid</code> /
         <code>withdraw_rebalance</code> / <code>withdraw_grid</code> /
-        <code>transfer_to_rebalance</code> (网格→再平衡) /
-        <code>transfer_to_grid</code> (再平衡→网格)。
+        <code>transfer_to_rebalance</code> (复合网格→3pp再平衡) /
+        <code>transfer_to_grid</code> (3pp再平衡→复合网格)。
         提现/转换不足时会被前端拦截 (服务端也会二次拒绝)。
       </p>
 

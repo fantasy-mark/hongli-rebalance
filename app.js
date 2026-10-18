@@ -63,8 +63,8 @@ function renderStatus(rec) {
     `<span>总市值 <strong>¥${Math.round(rec.total).toLocaleString()}</strong></span> ` +
     `<span class="muted">(ETF ¥${Math.round(rec.etf_value).toLocaleString()} + ` +
     `现金 ¥${Math.round(cashTotal).toLocaleString()} = ` +
-    `再平衡 ¥${Math.round(cashReb).toLocaleString()} + ` +
-    `网格 ¥${Math.round(cashGr).toLocaleString()})</span>`;
+    `3pp再平衡 ¥${Math.round(cashReb).toLocaleString()} + ` +
+    `复合网格 ¥${Math.round(cashGr).toLocaleString()})</span>`;
 }
 
 function renderCurve(history) {
@@ -530,12 +530,12 @@ const CASH_SIDES = [
   'transfer_to_rebalance', 'transfer_to_grid',
 ];
 const CASH_SIDE_LABELS = {
-  deposit_rebalance:     '入金→再平衡',
-  deposit_grid:          '入金→网格',
-  withdraw_rebalance:    '提现←再平衡',
-  withdraw_grid:         '提现←网格',
-  transfer_to_rebalance: '转换: 网格→再平衡',
-  transfer_to_grid:      '转换: 再平衡→网格',
+  deposit_rebalance:     '入金→3pp再平衡',
+  deposit_grid:          '入金→复合网格',
+  withdraw_rebalance:    '提现←3pp再平衡',
+  withdraw_grid:         '提现←复合网格',
+  transfer_to_rebalance: '转换: 复合网格→3pp再平衡',
+  transfer_to_grid:      '转换: 3pp再平衡→复合网格',
 };
 
 function makeCashRow(t = {}) {
@@ -684,17 +684,17 @@ function updateCashPreview() {
   const tradeEl = document.getElementById('trade-cash-preview');
   tradeEl.textContent =
     `本批次交易净流出 ¥${(-tradeDelta.rebalance).toFixed(2)} | ` +
-    `预计剩余再平衡 ¥${tradeProjReb.toFixed(2)} (网格 ¥${tradeProjGr.toFixed(2)})`;
+    `预计剩余3pp再平衡 ¥${tradeProjReb.toFixed(2)} (复合网格 ¥${tradeProjGr.toFixed(2)})`;
   tradeEl.style.color = tradeProjReb < 0 ? '#c0392b' : '#27ae60';
   setSaveEnabled('trade', tradeProjReb >= 0);
 
   const cashEl = document.getElementById('cash-cash-preview');
   cashEl.textContent =
-    `本批次资金净变动: 再平衡 ¥${cashDelta.rebalance >= 0 ? '+' : ''}${cashDelta.rebalance.toFixed(2)}, ` +
-    `网格 ¥${cashDelta.grid >= 0 ? '+' : ''}${cashDelta.grid.toFixed(2)} | ` +
-    `预计剩余: 再平衡 ¥${cashProjReb.toFixed(2)}, 网格 ¥${cashProjGr.toFixed(2)}` +
+    `本批次资金净变动: 3pp再平衡 ¥${cashDelta.rebalance >= 0 ? '+' : ''}${cashDelta.rebalance.toFixed(2)}, ` +
+    `复合网格 ¥${cashDelta.grid >= 0 ? '+' : ''}${cashDelta.grid.toFixed(2)} | ` +
+    `预计剩余: 3pp再平衡 ¥${cashProjReb.toFixed(2)}, 复合网格 ¥${cashProjGr.toFixed(2)}` +
     ((worstReb !== cashProjReb || worstGr !== cashProjGr)
-      ? ` (若两表单都提交: 再平衡 ¥${worstReb.toFixed(2)}, 网格 ¥${worstGr.toFixed(2)})`
+      ? ` (若两表单都提交: 3pp再平衡 ¥${worstReb.toFixed(2)}, 复合网格 ¥${worstGr.toFixed(2)})`
       : '');
   cashEl.style.color = (cashProjReb < 0 || cashProjGr < 0) ? '#c0392b' : '#27ae60';
   setSaveEnabled('cash', cashProjReb >= 0 && cashProjGr >= 0);
@@ -745,8 +745,8 @@ async function submitTrades(kind) {
   if (projectedReb < 0 || projectedGr < 0) {
     statusEl.className = 'err';
     const bad = [];
-    if (projectedReb < 0) bad.push(`再平衡: 当前 ¥${current.rebalance.toFixed(2)}, 预计 ¥${projectedReb.toFixed(2)} (缺 ¥${(-projectedReb).toFixed(2)})`);
-    if (projectedGr  < 0) bad.push(`网格:   当前 ¥${current.grid.toFixed(2)}, 预计 ¥${projectedGr.toFixed(2)} (缺 ¥${(-projectedGr).toFixed(2)})`);
+    if (projectedReb < 0) bad.push(`3pp再平衡: 当前 ¥${current.rebalance.toFixed(2)}, 预计 ¥${projectedReb.toFixed(2)} (缺 ¥${(-projectedReb).toFixed(2)})`);
+    if (projectedGr  < 0) bad.push(`复合网格:   当前 ¥${current.grid.toFixed(2)}, 预计 ¥${projectedGr.toFixed(2)} (缺 ¥${(-projectedGr).toFixed(2)})`);
     statusEl.textContent = `❌ 现金不足 — ${bad.join(' / ')}.`;
     return;
   }
@@ -871,7 +871,7 @@ function refreshGridPreview() {
     const avg = total_sh > 0 ? (invested / total_sh).toFixed(3) : '0';
     return `${code} 持仓中 (${n} 层, 均价 ¥${avg})`;
   });
-  el.textContent = `当前网格: ${parts.join(' | ')}`;
+  el.textContent = `当前复合网格: ${parts.join(' | ')}`;
 }
 
 function makeGridCard(t = {}) {
@@ -965,7 +965,7 @@ async function submitGridOp() {
   }
   if (ops.length === 0) {
     statusEl.className = 'err';
-    statusEl.textContent = '❌ 表格为空, 请先点「+ 加一行」录入网格操作.';
+    statusEl.textContent = '❌ 表格为空, 请先点「+ 加一行」录入复合网格操作.';
     return;
   }
   if (ops.length > 20) {
@@ -1001,7 +1001,7 @@ async function submitGridOp() {
     if (res.status === 204 || res.ok) {
       statusEl.className = 'ok';
       statusEl.textContent =
-        `✅ 已提交 ${ops.length} 个网格操作. Action 约 30 秒后 commit 完成, 邮件+图表同步更新. 刷新页面查看新数据.`;
+        `✅ 已提交 ${ops.length} 个复合网格操作. Action 约 30 秒后 commit 完成, 邮件+图表同步更新. 刷新页面查看新数据.`;
       // Refresh grid state preview from server
       try {
         const fresh = await loadGridState();
