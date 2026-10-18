@@ -383,16 +383,26 @@ function renderCashPoolSummary(latestRec, holdings) {
     REBALANCE_CODES_LIST
       .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
       .join(''));
-  // 复合网格 资产 column: show all 4 grid-eligible ETFs (the strategy
-  // scope), even if none of them are in_cycle.  The 网格 市值 cell
-  // separately reports the value of in_cycle positions only, so an
-  // empty grid still shows its 4 chips alongside a ¥0 market value —
-  // this keeps the row visually parallel to 3pp再平衡 (which always
-  // lists its 3 ETFs, regardless of price).
+  // 复合网格 资产 column: only show assets with active grid positions
+  // (in_cycle=true).  The 复合网格 signal state in 最新持仓's nested
+  // h3 ("— 持有" vs "未持仓") is the source of truth — if all grid
+  // signals are 未持仓, then 资金管理's 资产 column is empty too,
+  // matching the nested-section display.  This keeps the two views
+  // (最新持仓 h3 grid table + 资金管理 summary row) consistent: both
+  // reflect the same in_cycle snapshot.
+  // grid_signals records only carry the asset name (no code), so match
+  // against the name resolved from each GRID_CODES_LIST entry.
+  const inCycleNames = new Set(
+    (latestRec?.grid_signals || [])
+      .filter(s => s.in_cycle)
+      .map(s => s.name)
+  );
   const gridAssetTags = GRID_CODES_LIST
+    .filter(c => inCycleNames.has(nameForCode(c, latestRec)))
     .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
     .join('');
-  setHTML('cash-grid-assets', gridAssetTags);
+  setHTML('cash-grid-assets',
+    gridAssetTags || '<span class="muted">— 无持仓 —</span>');
 }
 
 function renderEditor(holdings, latestRec) {
