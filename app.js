@@ -14,16 +14,27 @@ async function main() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     history = await res.json();
   } catch (e) {
-    document.getElementById('status-badge').innerHTML =
-      `<span class="badge badge-err">⚠ 加载失败: ${e.message}</span>`;
+    const badge = document.getElementById('status-badge');
+    badge.className = 'err';
+    badge.innerHTML =
+      `<div class="status-main">` +
+        `<span class="badge badge-err">⚠ 加载失败</span>` +
+        `<span class="status-error">${e.message}</span>` +
+      `</div>`;
     document.getElementById('curve').textContent = '';
     return;
   }
 
   if (!Array.isArray(history) || history.length === 0) {
-    document.getElementById('status-badge').innerHTML =
-      `<span class="badge badge-info">暂无数据</span>` +
-      `<span class="muted">(GitHub Action 还没跑过, 或 <code>data/history.json</code> 为空)</span>`;
+    const badge = document.getElementById('status-badge');
+    badge.className = 'info';
+    badge.innerHTML =
+      `<div class="status-main">` +
+        `<span class="badge badge-info">暂无数据</span>` +
+      `</div>` +
+      `<div class="status-breakdown">` +
+        `GitHub Action 还没跑过, 或 <code>data/history.json</code> 为空` +
+      `</div>`;
     document.getElementById('curve').textContent = '';
     return;
   }
@@ -55,21 +66,28 @@ function renderStatus(rec) {
   const anySell = grid.some(s => s.signal === 'sell');
   const anyAction = rec.triggered || anyBuy || anySell;
 
-  const cls = anyAction ? 'badge-warn' : 'badge-ok';
+  const cls = anyAction ? 'warn' : 'ok';
+  const badgeCls = anyAction ? 'badge-warn' : 'badge-ok';
   const txt = anyAction ? '⚠ 有操作' : '✓ 未触发';
   // Two-pool cash display; fall back to legacy `cash` field if record is
   // older than the pool-split migration.
   const cashReb = Number(rec.cash_rebalance ?? rec.cash ?? 0);
   const cashGr  = Number(rec.cash_grid ?? 0);
   const cashTotal = Number(rec.cash_total ?? cashReb + cashGr);
-  document.getElementById('status-badge').innerHTML =
-    `<span class="badge ${cls}">${txt}</span> ` +
-    `<span>${rec.date}</span> ` +
-    `<span>总市值 <strong>¥${Math.round(rec.total).toLocaleString()}</strong></span> ` +
-    `<span class="muted">(ETF ¥${Math.round(rec.etf_value).toLocaleString()} + ` +
-    `现金 ¥${Math.round(cashTotal).toLocaleString()} = ` +
-    `3pp再平衡 ¥${Math.round(cashReb).toLocaleString()} + ` +
-    `复合网格 ¥${Math.round(cashGr).toLocaleString()})</span>`;
+  const badge = document.getElementById('status-badge');
+  badge.className = cls;
+  badge.innerHTML =
+    `<div class="status-main">` +
+      `<span class="badge ${badgeCls}">${txt}</span>` +
+      `<span class="status-date">${rec.date}</span>` +
+      `<span class="status-total">总市值<strong>¥${Math.round(rec.total).toLocaleString()}</strong></span>` +
+    `</div>` +
+    `<div class="status-breakdown">` +
+      `ETF ¥${Math.round(rec.etf_value).toLocaleString()}` +
+      ` + 现金 ¥${Math.round(cashTotal).toLocaleString()}` +
+      ` <span class="status-pool">(3pp再平衡 ¥${Math.round(cashReb).toLocaleString()} + ` +
+      `复合网格 ¥${Math.round(cashGr).toLocaleString()})</span>` +
+    `</div>`;
 }
 
 function renderCurve(history) {
