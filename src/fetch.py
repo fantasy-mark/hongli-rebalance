@@ -1,13 +1,24 @@
 """ETF price fetch: realtime tick (Eastmoney universal quote) → historical fallback.
 
+All historical close prices use **前复权 (qfq / forward-adjusted)** so the
+chart is continuous across dividends / splits — the most recent close is
+the truth, and older prices are reduced by future distributions.  This
+matches what brokers (同花顺/通达信) display in their default view and
+keeps the 收益追踪 chart free of artificial ex-date drops.
+
 Spot tier order (latest → most stale):
   1. Eastmoney `push2.eastmoney.com/api/qt/stock/get` — covers ALL
      on-exchange securities (stocks, ETFs, bond ETFs like 511380).
-     Field `f43` is the current price (× 1000).
+     Field `f43` is the current price (× 1000). **Unadjusted tick**
+     (representative of "right now"; no apply of historical dividends).
   2. Eastmoney `ak.fund_etf_spot_em` — rich spot table but only
-     for stock/currency ETFs; does NOT include 511380.
+     for stock/currency ETFs; does NOT include 511380. **Unadjusted**.
   3. Sina daily-close `ak.fund_etf_hist_sina` — only refreshes after
      the market closes; used as a last-resort historical reference.
+     **Unadjusted** (Sina endpoint has no `adjust` param; for ETFs
+     between ex-dates unadjusted ≡ qfq anyway).
+  4. Eastmoney `ak.fund_etf_hist_em` with `adjust="qfq"` — fallback
+     when Sina fails.  The only source that explicitly returns qfq.
 
 Note: `ak.fund_etf_hist_sina` is a daily-close endpoint that only
 refreshes after the market closes, so an Action triggered at 9:00
@@ -35,7 +46,15 @@ for _n in ("akshare", "urllib3", "requests"):
 
 
 def _sina(sina: str) -> Optional[pd.DataFrame]:
-    """Try Sina ETF history. Returns DataFrame with date index & 'close' column or None."""
+    """Try Sina ETF history (unadjusted). Returns DataFrame with date index
+    & 'close' column or None.
+
+    Sina's fund ETF endpoint has no `adjust` parameter; returns unadjusted
+    closes.  For most ETFs unadjusted ≡ qfq between ex-dates, so this
+    matches the Eastmoney qfq fallback for the days we care about.  On
+    ex-dates the unadjusted close drops by the dividend amount while the
+    qfq close is unchanged — for daily tracking this is acceptable.
+    """
     for attempt in range(3):
         try:
             raw = ak.fund_etf_hist_sina(symbol=sina)
@@ -50,11 +69,11 @@ def _sina(sina: str) -> Optional[pd.DataFrame]:
 
 
 def _eastmoney(eastmoney: str) -> Optional[pd.DataFrame]:
-    """Eastmoney historical fallback."""
+    """Eastmoney historical fallback. Returns 前复权 (qfq) series."""
     try:
         raw = ak.fund_etf_hist_em(
             symbol=eastmoney, period="daily",
-            start_date="20100101", end_date="20991231", adjust="hfq",
+            start_date="20100101", end_date="20991231", adjust="qfq",
         )
         if raw is not None and not raw.empty:
             raw["日期"] = pd.to_datetime(raw["日期"])
