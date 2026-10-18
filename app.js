@@ -448,7 +448,7 @@ function makeTradeRow(t = {}) {
     <td><input data-k="shares" type="number" value="${t.shares ?? ''}" min="0" step="1" style="text-align:right;width:7em;" placeholder="股数" /></td>
     <td><input data-k="price"  type="number" value="${t.price  ?? ''}" min="0" step="0.0001" style="text-align:right;width:7em;" placeholder="¥" /></td>
     <td><span data-k="amount-readout" class="muted" style="display:inline-block;width:7em;text-align:right;">—</span></td>
-    <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:12em;" /></td>
+    <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:8em;" /></td>
     <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
   `;
   // 实时刷新 read-only 金额 + 现金预览
@@ -541,7 +541,7 @@ function makeCashRow(t = {}) {
       <select data-k="side" style="padding:0.2em;">${opts}</select>
     </td>
     <td><input data-k="amount" type="number" value="${t.amount ?? ''}" min="0" step="0.01" style="text-align:right;width:10em;" placeholder="¥" /></td>
-    <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:18em;" /></td>
+    <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:12em;" /></td>
     <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
   `;
   tr.querySelector('[data-k="amount"]').addEventListener('input', updateCashPreview);
@@ -869,7 +869,7 @@ function makeGridRow(t = {}) {
     <td>
       <select data-k="code" style="padding:0.2em;">
         ${Object.entries(ETF_CATALOG).map(([c, n]) =>
-          `<option value="${c}" ${c === code ? 'selected' : ''}>${c} ${n}</option>`).join('')}
+          `<option value="${c}" ${c === code ? 'selected' : ''}>${n}</option>`).join('')}
       </select>
     </td>
     <td>
@@ -881,7 +881,7 @@ function makeGridRow(t = {}) {
     <td><input data-k="price"  type="number" value="${t.price  ?? ''}" min="0" step="0.0001" style="text-align:right;width:8em;" placeholder="¥" /></td>
     <td><input data-k="shares" type="number" value="${t.shares ?? ''}" min="0" step="1" style="text-align:right;width:7em;" placeholder="股" /></td>
     <td><span data-k="amount-readout" class="muted" style="display:inline-block;width:8em;text-align:right;">—</span></td>
-    <td><input data-k="note" type="text" value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:12em;" /></td>
+    <td><input data-k="note" type="text" value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:8em;" /></td>
     <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
   `;
   const updateAmount = () => {
