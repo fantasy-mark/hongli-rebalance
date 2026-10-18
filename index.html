@@ -27,7 +27,7 @@
       <p class="muted">由 GitHub Action 每日 9:00 北京时间用 matplotlib 渲染.</p>
       <img id="grid-chart" src="data/grid_chart.png" alt="grid strategy chart"
            style="width:100%; border:1px solid #ddd; border-radius:6px; background:#fafafa;"/>
-      <h3>最新持仓</h3>
+      <h2>最新持仓</h2>
       <div id="latest-detail"></div>
     </section>
 
@@ -137,20 +137,7 @@
         提现/转换不足时会被前端拦截 (服务端也会二次拒绝)。
       </p>
 
-      <div class="table-wrap">
-      <table id="cash-table">
-        <thead>
-          <tr>
-            <th style="text-align:left;">日期</th>
-            <th style="text-align:left;">方向</th>
-            <th style="text-align:right;">金额</th>
-            <th style="text-align:left;">备注</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="cash-tbody"></tbody>
-      </table>
-      </div>
+      <div id="cash-list" class="trade-list"></div>
 
       <div class="editor-actions">
         <button type="button" id="cash-add-row-btn" class="btn-secondary">+ 加一行</button>

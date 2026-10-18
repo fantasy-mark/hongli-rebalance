@@ -416,9 +416,9 @@ function renderEditor(holdings, latestRec) {
   const tList = document.getElementById('trade-list');
   tList.innerHTML = '';
   tList.appendChild(makeTradeCard());
-  const cBody = document.getElementById('cash-tbody');
-  cBody.innerHTML = '';
-  cBody.appendChild(makeCashRow());
+  const cList = document.getElementById('cash-list');
+  cList.innerHTML = '';
+  cList.appendChild(makeCashCard());
 
   setStatus('trade', '');
   setStatus('cash',  '');
@@ -554,46 +554,53 @@ const CASH_SIDE_LABELS = {
   transfer_to_grid:      '转换: 3pp再平衡→复合网格',
 };
 
-function makeCashRow(t = {}) {
-  // Cash-row shape: {date, side (6 options), amount, note}
-  const tr = document.createElement('tr');
+function makeCashCard(t = {}) {
+  // Cash-card shape: {date, side (6 options), amount, note}
+  // Card layout (3 lines) mirrors makeGridCard / makeTradeCard for
+  // visual consistency across all 3 editors (3pp再平衡 / 复合网格 / 资金管理).
+  const card = document.createElement('div');
+  card.className = 'trade-card';
   const today = new Date().toISOString().slice(0, 10);
   const side = CASH_SIDES.includes(t.side) ? t.side : 'deposit_rebalance';
   const opts = CASH_SIDES.map(s =>
     `<option value="${s}" ${s === side ? 'selected' : ''}>${CASH_SIDE_LABELS[s]}</option>`,
   ).join('');
-  tr.innerHTML = `
-    <td><input data-k="date" type="date" value="${escapeAttr(t.date || today)}" style="width:9em;" /></td>
-    <td>
-      <select data-k="side" style="padding:0.2em;">${opts}</select>
-    </td>
-    <td><input data-k="amount" type="number" value="${t.amount ?? ''}" min="0" step="0.01" style="text-align:right;width:10em;" placeholder="¥" /></td>
-    <td><input data-k="note"   type="text"   value="${escapeAttr(t.note || '')}" placeholder="备注" style="width:12em;" /></td>
-    <td class="del-cell"><button type="button" class="row-del-btn" title="删除该行">✕</button></td>
+  card.innerHTML = `
+    <div class="card-line">
+      <label>日期 <input data-k="date" type="date" value="${escapeAttr(t.date || today)}" /></label>
+      <label>方向 <select data-k="side">${opts}</select></label>
+      <button type="button" class="row-del-btn" title="删除该行">✕</button>
+    </div>
+    <div class="card-line">
+      <label>金额 <input data-k="amount" type="number" min="0" step="0.01" value="${t.amount ?? ''}" placeholder="¥" /></label>
+    </div>
+    <div class="card-line">
+      <label class="grow">备注 <input data-k="note" type="text" value="${escapeAttr(t.note || '')}" placeholder="备注" /></label>
+    </div>
   `;
-  tr.querySelector('[data-k="amount"]').addEventListener('input', updateCashPreview);
-  tr.querySelector('[data-k="side"]').addEventListener('change',  updateCashPreview);
-  tr.querySelector('.row-del-btn').addEventListener('click', () => {
-    tr.remove();
+  card.querySelector('[data-k="amount"]').addEventListener('input', updateCashPreview);
+  card.querySelector('[data-k="side"]').addEventListener('change',  updateCashPreview);
+  card.querySelector('.row-del-btn').addEventListener('click', () => {
+    card.remove();
     updateCashPreview();
   });
-  return tr;
+  return card;
 }
 
 function collectCashRows() {
   // Returns array of validated cash rows {side, date, amount, note}
-  // or null if any non-blank row is invalid.
-  const trs = [...document.querySelectorAll('#cash-tbody tr')];
+  // or null if any non-blank card is invalid (card gets the .invalid outline).
+  const cards = [...document.querySelectorAll('#cash-list .trade-card')];
   let ok = true;
   const out = [];
-  trs.forEach((tr) => {
-    const get = k => (tr.querySelector(`[data-k="${k}"]`) || {}).value || '';
+  cards.forEach((card) => {
+    const get = k => (card.querySelector(`[data-k="${k}"]`) || {}).value || '';
     const side   = get('side').trim();
     const date   = get('date').trim();
     const amount = get('amount').trim();
     const note   = get('note').trim();
-    // Skip rows where the user hasn't entered an amount yet — the date
-    // defaults to today so a "blank" row is detected by missing amount/note.
+    // Skip cards where the user hasn't entered an amount yet — the date
+    // defaults to today so a "blank" card is detected by missing amount/note.
     if (!amount && !note) return;
 
     const row = { side, date };
@@ -605,7 +612,7 @@ function collectCashRows() {
     else row.amount = a;
     if (note) row.note = note;
 
-    tr.style.outline = rowOK ? '' : '2px solid #c0392b';
+    card.classList.toggle('invalid', !rowOK);
     if (!rowOK) ok = false;
     if (rowOK) out.push(row);
   });
@@ -832,9 +839,9 @@ function resetForm(kind) {
     list.innerHTML = '';
     list.appendChild(makeTradeCard());
   } else {
-    const tbody = document.getElementById('cash-tbody');
-    tbody.innerHTML = '';
-    tbody.appendChild(makeCashRow());
+    const list = document.getElementById('cash-list');
+    list.innerHTML = '';
+    list.appendChild(makeCashCard());
   }
   updateCashPreview();
 }
@@ -1059,7 +1066,7 @@ function initEditor() {
 
   // Cash editor
   document.getElementById('cash-add-row-btn').addEventListener('click', () => {
-    document.getElementById('cash-tbody').appendChild(makeCashRow());
+    document.getElementById('cash-list').appendChild(makeCashCard());
     updateCashPreview();
   });
   document.getElementById('cash-reset-btn').addEventListener('click', () => resetForm('cash'));
