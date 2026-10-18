@@ -383,10 +383,16 @@ function renderCashPoolSummary(latestRec, holdings) {
     REBALANCE_CODES_LIST
       .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
       .join(''));
-  setHTML('cash-grid-assets',
-    GRID_CODES_LIST
-      .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
-      .join(''));
+  // 复合网格 资产 column: show all 4 grid-eligible ETFs (the strategy
+  // scope), even if none of them are in_cycle.  The 网格 市值 cell
+  // separately reports the value of in_cycle positions only, so an
+  // empty grid still shows its 4 chips alongside a ¥0 market value —
+  // this keeps the row visually parallel to 3pp再平衡 (which always
+  // lists its 3 ETFs, regardless of price).
+  const gridAssetTags = GRID_CODES_LIST
+    .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
+    .join('');
+  setHTML('cash-grid-assets', gridAssetTags);
 }
 
 function renderEditor(holdings, latestRec) {
