@@ -943,43 +943,61 @@
   },
   {
     "date": "2026-10-19",
-    "total": 172494.6,
-    "etf_value": 171842.6,
-    "cash_rebalance": 652.0,
+    "total": 172623.4,
+    "etf_value": 172444.6,
+    "cash_rebalance": 178.8,
     "cash_grid": 0.0,
-    "cash_total": 652.0,
+    "cash_total": 178.8,
     "positions": [
       {
         "name": "红利ETF易方达",
         "code": "515180",
-        "shares": 40600.0,
-        "price": 1.391,
+        "shares": 32000.0,
+        "price": 1.39,
         "date": "2026-10-19",
-        "value": 56474.6
+        "value": 44480.0
       },
       {
         "name": "黄金ETF博时",
         "code": "159937",
-        "shares": 6900.0,
-        "price": 8.53,
+        "shares": 5200.0,
+        "price": 8.532,
         "date": "2026-10-19",
-        "value": 58857.0
+        "value": 44366.4
       },
       {
         "name": "可转债ETF博时",
         "code": "511380",
-        "shares": 4500.0,
-        "price": 12.558,
+        "shares": 3500.0,
+        "price": 12.582,
         "date": "2026-10-19",
-        "value": 56511.0
+        "value": 44037.0
+      },
+      {
+        "name": "纳斯达克ETF华夏",
+        "code": "513300",
+        "shares": 14200.0,
+        "price": 2.786,
+        "date": "2026-10-19",
+        "value": 39561.2,
+        "premium": {
+          "code": "513300",
+          "price": 2.786,
+          "iopv": 2.4927,
+          "nav_date": "2026-10-15",
+          "premium_pct": 11.77,
+          "quote_time": "2026-10-19 15:47:35",
+          "source": "tencent+fund.eastmoney"
+        }
       }
     ],
     "weights": [
-      0.3274,
-      0.3412,
-      0.3276
+      0.2577,
+      0.257,
+      0.2551,
+      0.2292
     ],
-    "target_w": 0.3333333333333333,
+    "target_w": 0.25,
     "threshold_pp": 3.0,
     "triggered": false,
     "plan": [],
@@ -987,7 +1005,7 @@
       {
         "name": "红利ETF易方达",
         "price": 1.37,
-        "layer_yuan": 10111.06,
+        "layer_yuan": 10117.5,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -1002,7 +1020,7 @@
       {
         "name": "黄金ETF博时",
         "price": 8.51,
-        "layer_yuan": 10111.06,
+        "layer_yuan": 10117.5,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -1017,7 +1035,7 @@
       {
         "name": "可转债ETF博时",
         "price": 12.43,
-        "layer_yuan": 10111.06,
+        "layer_yuan": 10117.5,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -1028,6 +1046,21 @@
         "trigger_pct": 0.62,
         "trigger_kind": "open",
         "intraday_low": 12.43
+      },
+      {
+        "name": "纳斯达克ETF华夏",
+        "price": 2.761,
+        "layer_yuan": 10117.5,
+        "signal": null,
+        "in_cycle": false,
+        "num_buys": 0,
+        "avg_cost": 0.0,
+        "current_value": 0.0,
+        "unrealized_pnl": 0.0,
+        "return_pct": 0.0,
+        "trigger_pct": 18.6,
+        "trigger_kind": "open",
+        "intraday_low": 2.761
       }
     ],
     "grid_state": {
@@ -1035,7 +1068,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          1.375,
           1.372,
           1.391,
           1.397,
@@ -1154,6 +1186,7 @@
           1.37,
           1.37,
           1.37,
+          1.37,
           1.37
         ],
         "cum_realized": 0.0
@@ -1162,7 +1195,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          9.828,
           9.693,
           9.607,
           9.555,
@@ -1281,6 +1313,7 @@
           8.48,
           8.48,
           8.48,
+          8.51,
           8.51
         ],
         "cum_realized": 0.0
@@ -1289,7 +1322,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          14.22,
           14.185,
           14.175,
           14.243,
@@ -1408,6 +1440,7 @@
           12.38,
           12.38,
           12.38,
+          12.43,
           12.43
         ],
         "cum_realized": 0.0
@@ -1415,8 +1448,6 @@
       "纳斯达克ETF华夏": {
         "in_cycle": false,
         "entries": [],
-        "last_120d_min": 2.884,
-        "cum_realized": 0.0,
         "last_prices": [
           2.328,
           2.363,
@@ -1533,22 +1564,12 @@
           2.824,
           2.866,
           2.775,
-          2.798
-        ]
+          2.798,
+          2.761
+        ],
+        "cum_realized": 0.0
       }
     },
-    "qdii_premiums": [
-      {
-        "code": "513300",
-        "name": "纳斯达克ETF华夏",
-        "in_portfolio": false,
-        "price": 2.771,
-        "iopv": 2.4927,
-        "nav_date": "2026-10-15",
-        "premium_pct": 11.16,
-        "quote_time": "2026-10-19 11:47:29",
-        "source": "tencent+fund.eastmoney"
-      }
-    ]
+    "qdii_premiums": []
   }
 ]
