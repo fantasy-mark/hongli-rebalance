@@ -1,6 +1,6 @@
 {
   "_schema": "trades-v1",
-  "_comment": "Append-only trade ledger. Source of truth for cash and positions[].shares. Do not reorder; corrections are new entries. Two cash pools: buy/sell/deposit_rebalance/withdraw_rebalance/transfer_to_grid move cash_rebalance; deposit_grid/withdraw_grid/transfer_to_rebalance move cash_grid.",
+  "_comment": "Append-only trade ledger. Source of truth for cash and positions[].shares. Do not reorder; corrections are new entries.",
   "trades": [
     {
       "id": "2026-10-12-deposit_rebalance-001",
@@ -38,6 +38,46 @@
       "price": 12.765,
       "fee": 0.0,
       "note": "可转债ETF博时 建仓买入 @ 2026-10-12 close"
+    },
+    {
+      "side": "sell",
+      "date": "2026-10-19",
+      "note": "",
+      "code": "159937",
+      "shares": 1700.0,
+      "price": 8.522,
+      "fee": 0.0,
+      "id": "2026-10-19-sell-001"
+    },
+    {
+      "side": "sell",
+      "date": "2026-10-19",
+      "note": "",
+      "code": "511380",
+      "shares": 1000.0,
+      "price": 12.474,
+      "fee": 0.0,
+      "id": "2026-10-19-sell-002"
+    },
+    {
+      "side": "sell",
+      "date": "2026-10-19",
+      "note": "",
+      "code": "515180",
+      "shares": 8600.0,
+      "price": 1.382,
+      "fee": 0.0,
+      "id": "2026-10-19-sell-003"
+    },
+    {
+      "side": "buy",
+      "date": "2026-10-19",
+      "note": "",
+      "code": "513300",
+      "shares": 14200.0,
+      "price": 2.769,
+      "fee": 0.0,
+      "id": "2026-10-19-buy-001"
     }
   ]
 }
