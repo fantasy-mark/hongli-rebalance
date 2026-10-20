@@ -53,11 +53,19 @@ jobs:
       - name: Re-trigger daily record
         # Re-run record.py so the email digest & history.json reflect the
         # new grid state within ~1 minute of the edit.
+        #
+        # Authorization: GITHUB_TOKEN isn't auto-injected into curl; the
+        # /dispatches endpoint requires a Bearer token. Without auth the
+        # request silently 401s. Failures propagate via `::error::` + exit 1
+        # so the Actions UI shows red and subscribed emails fire — previously
+        # these failures were swallowed by `|| echo "WARN"` and only visible
+        # via the page lag (no commit for the re-record).
         run: |
           curl -fsS -X POST \
             -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
             -H "User-Agent: apply-grid-bot" \
             "https://api.github.com/repos/${{ github.repository }}/dispatches" \
             -d '{"event_type":"trigger"}' \
             && echo "triggered daily re-record" \
-            || echo "WARN failed to trigger daily re-record (non-fatal)"
+            || (echo "::error::failed to re-trigger daily.yml from apply-grid"; exit 1)
