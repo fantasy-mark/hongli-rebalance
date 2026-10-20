@@ -177,6 +177,12 @@ def fresh_asset_state() -> dict:
         # round-trips.
         "last_prices": [],
         "cum_realized": 0.0,
+        # Append-only log of every executed open/add/tp event (auto or manual).
+        # Schema per op: {date, op, source, price, shares, note, (tp-only:
+        # pnl, num_buys_exited, total_shares_exited)}. The page renders this
+        # as the "复合网格 操作记录" table under the strategy chart. Cleared on
+        # tp is `entries`, NOT `ops` — the op log is the permanent record.
+        "ops": [],
     }
 
 
@@ -218,6 +224,7 @@ def advance_one_day(
     if not last_prices and legacy_min is not None:
         last_prices = [float(legacy_min)]
     cum_realized = float(state.get("cum_realized", 0.0))
+    ops: list[dict] = list(state.get("ops", []))   # append-only op log
 
     signal: Optional[str] = None
 
@@ -226,6 +233,11 @@ def advance_one_day(
         if last_prices and price < min(last_prices):
             sh = layer_yuan_value / price if price > 0 else 0.0
             entries.append({"date": date_str, "price": float(price), "shares": sh})
+            ops.append({
+                "date": date_str, "op": "open", "source": "auto",
+                "price": float(price), "shares": sh,
+                "note": "窗口突破开仓",
+            })
             in_cycle = True
             signal = "buy"
     else:
@@ -234,6 +246,13 @@ def advance_one_day(
         if price <= last_price * (1 - step_pct / 100):
             sh = layer_yuan_value / price if price > 0 else 0.0
             entries.append({"date": date_str, "price": float(price), "shares": sh})
+            ops.append({
+                "date": date_str, "op": "add", "source": "auto",
+                "price": float(price), "shares": sh,
+                # len(entries) post-append = the new layer count (1=open,
+                # 2=first pyramid, ...).  Matches manual_op convention.
+                "note": f"金字塔第{len(entries)}层",
+            })
             signal = "buy"
         # Take-profit: close >= (avg_cost or first_buy_price) * (1 + tp_pct/100)
         total_shares = sum(e["shares"] for e in entries)
@@ -247,9 +266,19 @@ def advance_one_day(
             if price >= tp_target:
                 exit_value = total_shares * price
                 pnl = exit_value - total_invested
+                # Capture per-event exit stats BEFORE clearing `entries`.
+                # NOTE: prior tp events (before the ops-log migration) lost
+                # their per-event P&L because entries were wiped at tp.
+                # We start logging from today forward.
+                ops.append({
+                    "date": date_str, "op": "tp", "source": "auto",
+                    "price": float(price), "shares": total_shares,
+                    "note": "自动止盈",
+                    "pnl": float(pnl),
+                    "num_buys_exited": len(entries),
+                    "total_shares_exited": float(total_shares),
+                })
                 cum_realized += pnl
-                # Cycle closed: record exits in a transient log; the next call
-                # with in_cycle=False starts a new cycle from scratch.
                 in_cycle = False
                 entries = []
                 signal = "sell"
@@ -264,6 +293,7 @@ def advance_one_day(
         "entries": entries,
         "last_prices": last_prices,
         "cum_realized": cum_realized,
+        "ops": ops,
     }
     return new_state, signal
 
@@ -341,6 +371,7 @@ def manual_op(state: dict, op: str, today: str,
         "entries": list(state.get("entries", [])),
         "last_prices": list(state.get("last_prices", [])),
         "cum_realized": float(state.get("cum_realized", 0.0)),
+        "ops": list(state.get("ops", [])),
     }
 
     if op in ("open", "add"):
@@ -352,12 +383,30 @@ def manual_op(state: dict, op: str, today: str,
             new_state["last_prices"].append(float(price))
             if len(new_state["last_prices"]) > GRID_LOOKBACK:
                 new_state["last_prices"] = new_state["last_prices"][-GRID_LOOKBACK:]
+        # Note for manual ops: empty string. The user-supplied `note` lives
+        # in the caller (apply_grid.inline_manual_op), which appends it to
+        # the op dict via the `note` kwarg.  manual_op's signature is
+        # unchanged so existing callers don't break.
+        new_state["ops"].append({
+            "date": today, "op": op, "source": "manual",
+            "price": float(price), "shares": float(shares),
+            "note": "",
+        })
     else:  # tp
         entries = new_state["entries"]
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
         exit_value = total_shares * float(price)
         pnl = exit_value - total_invested
+        # Capture per-event exit stats BEFORE clearing `entries`.
+        new_state["ops"].append({
+            "date": today, "op": "tp", "source": "manual",
+            "price": float(price), "shares": float(total_shares),
+            "note": "",
+            "pnl": float(pnl),
+            "num_buys_exited": len(entries),
+            "total_shares_exited": float(total_shares),
+        })
         new_state["cum_realized"] += pnl
         new_state["entries"] = []
         new_state["in_cycle"] = False

@@ -900,6 +900,9 @@ function renderGridEditor(state) {
   list.appendChild(makeGridCard());
   setStatus('grid', '');
   refreshGridPreview();
+  // 操作记录 (per-asset ops log) — does NOT depend on latestRec, safe to
+  // call before history.json loads (avoids the race fixed at 7ecd8e7).
+  renderGridOpsLog(state);
   // Refresh the cash-management summary table.  Market-value cells read
   // from latestRec (the same data shown in 最新持仓's tables); balance
   // cells use originalHoldings (the cached holdings.json snapshot).  This
@@ -907,6 +910,71 @@ function renderGridEditor(state) {
   // guard avoids wiping cells to ¥0.00 if this grid fetch races the
   // initial history.json load.
   if (latestRec) renderCashPoolSummary(latestRec, originalHoldings);
+}
+
+// Render the per-asset grid operations log under the strategy chart.
+// Each row = one open/add/tp event. Sorted date desc. Up to 10 visible
+// (container clips with vertical scroll). source=auto → blue chip + Chinese
+// label; source=manual → orange chip + user's note. tp ops show per-event
+// realized P&L (green positive / red negative); open/add show —.
+function renderGridOpsLog(state) {
+  const root = document.getElementById('grid-ops-scroll');
+  if (!root) return;
+  // Flatten per-asset ops into one sortable list. Skip assets with no
+  // dict-shaped state (defensive — grid_state.json root is dict of dicts).
+  const rows = [];
+  for (const [name, asset] of Object.entries(state || {})) {
+    if (!asset || typeof asset !== 'object') continue;
+    const ops = Array.isArray(asset.ops) ? asset.ops : [];
+    for (const op of ops) rows.push({ ...op, _asset: name });
+  }
+  // Sort: date desc first, then asset name asc for stable intra-day order.
+  rows.sort((a, b) => {
+    const d = (b.date || '').localeCompare(a.date || '');
+    return d !== 0 ? d : a._asset.localeCompare(b._asset);
+  });
+  if (rows.length === 0) {
+    root.innerHTML = '<p class="grid-ops-empty">暂无操作记录</p>';
+    return;
+  }
+  // Render ALL rows; container clips to ~10 visible via max-height: 360px.
+  // (User asked "界面显示最多10笔，通过滚动条查看" — DOM may hold more.)
+  const OP_LABELS = { open: '开仓', add: '加仓', tp: '止盈' };
+  const body = rows.map(r => {
+    const isTp = r.op === 'tp';
+    let pnlCell;
+    if (isTp && typeof r.pnl === 'number') {
+      const cls = r.pnl >= 0 ? 'pos' : 'neg';
+      const sign = r.pnl >= 0 ? '+' : '';
+      pnlCell = `<td class="col-pnl ${cls}">${sign}¥${r.pnl.toFixed(2)}</td>`;
+    } else {
+      pnlCell = '<td class="col-pnl muted">—</td>';
+    }
+    const srcLabel = r.source === 'auto' ? '自动' : '手动';
+    const opText = OP_LABELS[r.op] || r.op || '';
+    const sharesText = (typeof r.shares === 'number')
+      ? Math.round(r.shares).toLocaleString()
+      : '';
+    const noteText = r.note || '';   // empty string renders as empty cell
+    return `<tr>
+      <td>${escapeHtml(r.date || '')}</td>
+      <td>${escapeHtml(r._asset)}</td>
+      <td class="col-op"><span class="src-chip ${r.source || 'manual'}">${srcLabel}</span> ${escapeHtml(opText)}</td>
+      <td>¥${(typeof r.price === 'number' ? r.price : 0).toFixed(4)}</td>
+      <td class="col-shares">${sharesText}</td>
+      ${pnlCell}
+      <td>${escapeHtml(noteText)}</td>
+    </tr>`;
+  }).join('');
+  root.innerHTML = `
+    <table class="grid-ops-table">
+      <thead><tr>
+        <th>日期</th><th>资产</th><th>操作</th>
+        <th>价格</th><th>数量</th><th>盈亏</th><th>备注</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
 }
 
 function refreshGridPreview() {

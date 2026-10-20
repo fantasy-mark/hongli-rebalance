@@ -27,6 +27,19 @@
       <p class="muted">由 GitHub Action 每日 9:00 北京时间用 matplotlib 渲染.</p>
       <img id="grid-chart" src="data/grid_chart.png" alt="grid strategy chart"
            style="width:100%; border:1px solid #ddd; border-radius:6px; background:#fafafa;"/>
+
+      <section class="nested nested-grid" id="grid-ops-log-section">
+        <h3>复合网格 操作记录</h3>
+        <p class="muted">
+          复合网格 <strong>虚拟</strong>开/加/止盈的逐笔记录，
+          来自 <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>
+          的每资产 <code>ops</code> 字段。按日期倒序，最多显示最新 10 笔（可滚动）。
+          <code>[自动]</code> 蓝色 = record.py 日触发；<code>[手动]</code> 橙色 = 页面编辑器操作。
+        </p>
+        <div id="grid-ops-scroll" class="grid-ops-scroll"></div>
+        <p id="grid-ops-footer" class="grid-ops-footer muted"></p>
+      </section>
+
       <h2>最新持仓</h2>
       <div id="latest-detail"></div>
     </section>

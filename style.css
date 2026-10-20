@@ -240,3 +240,59 @@ main section.nested h3 {
   margin-left: auto;
 }
 .trade-card .row-del-btn:hover { background: #fdd; }
+
+/* ---- Grid operations log (inside 策略全景图 section) ----
+   First vertical-scroll-with-max-height pattern in this project.  Sized
+   for ~10 rows × ~34px line-height (header + 10 data rows).  Re-uses
+   the cash-pool-table border/bg palette (#e9ecef separators,
+   #f8f9fa header, #dee2e6 header bottom) so the two tables read as
+   one design system. */
+.grid-ops-table { width: 100%; border-collapse: collapse;
+                  font-size: 0.92em; font-variant-numeric: tabular-nums; }
+.grid-ops-table th, .grid-ops-table td {
+  padding: 0.4em 0.65em; border-bottom: 1px solid #e9ecef;
+  text-align: right;
+}
+.grid-ops-table th { background: #f8f9fa; color: #666; font-weight: 600;
+                     font-size: 0.85em; border-bottom: 2px solid #dee2e6; }
+.grid-ops-table td:first-child,
+.grid-ops-table th:first-child { text-align: left; }
+.grid-ops-table td.col-op { text-align: center; }
+.grid-ops-table td.col-shares { font-variant-numeric: tabular-nums; }
+.grid-ops-table tr:last-child td { border-bottom: 0; }
+
+/* Vertical scroll container: clip after ~10 rows. */
+.grid-ops-scroll {
+  max-height: 360px;        /* ~10 rows × 34px + header ≈ 360px */
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid #e3e6ea;
+  border-radius: 6px;
+  background: #fafbfc;
+  margin-top: 0.5em;
+}
+.grid-ops-scroll .grid-ops-table { margin: 0; }   /* table fills container */
+
+/* Source chip: blue for auto, orange-tinted for manual (matches status palette). */
+.grid-ops-table .src-chip {
+  display: inline-block; padding: 0.05em 0.5em; border-radius: 3px;
+  font-size: 0.82em; font-weight: 500;
+}
+.grid-ops-table .src-chip.auto   { background: #eef2f7; color: #2c5f8d; }
+.grid-ops-table .src-chip.manual { background: #fdf3e3; color: #c0881d; }
+
+/* tp P&L cell: green if positive, red if negative. */
+.grid-ops-table td.col-pnl.pos { color: #2c7a2c; }
+.grid-ops-table td.col-pnl.neg { color: #c0392b; }
+.grid-ops-table td.col-pnl.muted { color: #888; }
+
+/* Empty state — centered, matches the muted em-dash pattern at index.html:106. */
+.grid-ops-empty {
+  text-align: center; color: #888; font-size: 0.92em;
+  padding: 1.4em 1em; margin: 0;
+}
+
+/* Footer ("共 N 笔，显示最新 10 笔" — empty in v1). */
+.grid-ops-footer {
+  font-size: 0.85em; color: #888; margin-top: 0.35em; text-align: right;
+}

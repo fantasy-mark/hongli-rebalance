@@ -70,7 +70,8 @@ def fail(msg: str) -> None:
 # -----------------------------------------------------------------------------
 
 def inline_manual_op(state: dict, op: str, today: str,
-                     price: float, shares: float) -> tuple[dict, float]:
+                     price: float, shares: float,
+                     note: str = "") -> tuple[dict, float]:
     """Apply a manual grid operation. Returns (new_state, pnl_delta).
 
     pnl_delta is non-zero only for `tp` (positive or negative realized P&L
@@ -96,6 +97,7 @@ def inline_manual_op(state: dict, op: str, today: str,
         "entries": list(state.get("entries", [])),
         "last_prices": list(state.get("last_prices", [])),
         "cum_realized": float(state.get("cum_realized", 0.0)),
+        "ops": list(state.get("ops", [])),
     }
     pnl_delta = 0.0
 
@@ -108,12 +110,28 @@ def inline_manual_op(state: dict, op: str, today: str,
             new_state["last_prices"].append(float(price))
             if len(new_state["last_prices"]) > GRID_LOOKBACK:
                 new_state["last_prices"] = new_state["last_prices"][-GRID_LOOKBACK:]
+        # Append to ops log so the page's "复合网格 操作记录" table reflects
+        # manual ops. note = user-supplied string (may be empty).
+        new_state["ops"].append({
+            "date": today, "op": op, "source": "manual",
+            "price": float(price), "shares": float(shares),
+            "note": note,
+        })
     else:  # tp
         entries = new_state["entries"]
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
         exit_value = total_shares * float(price)
         pnl = exit_value - total_invested
+        # Capture per-event exit stats BEFORE clearing `entries`.
+        new_state["ops"].append({
+            "date": today, "op": "tp", "source": "manual",
+            "price": float(price), "shares": float(total_shares),
+            "note": note,
+            "pnl": float(pnl),
+            "num_buys_exited": len(entries),
+            "total_shares_exited": float(total_shares),
+        })
         new_state["cum_realized"] += pnl
         new_state["entries"] = []
         new_state["in_cycle"] = False
@@ -237,6 +255,7 @@ def main() -> None:
             state[name] = {
                 "in_cycle": False, "entries": [],
                 "last_prices": [], "cum_realized": 0.0,
+                "ops": [],
             }
         # Compat: legacy last_120d_min → seed last_prices with it
         if not state[name].get("last_prices") and state[name].get("last_120d_min") is not None:
@@ -250,6 +269,7 @@ def main() -> None:
             new_asset_state, pnl_delta = inline_manual_op(
                 state[name], op=o["op"], today=o["date"],
                 price=o["price"], shares=o.get("shares", 0.0),
+                note=o["note"],
             )
         except ValueError as ex:
             fail(f"op {len(summary)} ({o['op']} {o['code']}): {ex}")

@@ -587,6 +587,258 @@ def test_manual_op_tp_rejects_no_cycle():
         raise AssertionError("tp on in_cycle=False should raise")
 
 
+# -----------------------------------------------------------------------------
+# grid.py — ops log (per-asset append-only log of every open/add/tp event).
+# Backed by data/grid_state.json's `ops` field; rendered on the page under
+# 策略全景图 as the "复合网格 操作记录" table.
+# -----------------------------------------------------------------------------
+
+def test_fresh_asset_state_has_ops_key():
+    """fresh_asset_state() must include an empty `ops` list (not absent)."""
+    state = grid_mod.fresh_asset_state()
+    assert "ops" in state, "fresh_asset_state must seed ops=[]"
+    assert state["ops"] == []
+
+
+def test_advance_one_day_trigger_appends_open_op_with_auto_note():
+    """Trigger buy (today < window min) → ops log gets an `open` auto op."""
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [100.0]
+    new_state, signal = grid_mod.advance_one_day(
+        state, date_str="2026-01-01", price=99.0, layer_yuan_value=10_000.0,
+    )
+    assert signal == "buy"
+    assert len(new_state["ops"]) == 1
+    op = new_state["ops"][0]
+    assert op["op"] == "open"
+    assert op["source"] == "auto"
+    assert op["date"] == "2026-01-01"
+    assert op["price"] == 99.0
+    assert op["shares"] == pytest_approx(10000 / 99, rel=1e-6)
+    assert op["note"] == "窗口突破开仓"
+    # No tp-only keys on open/add
+    assert "pnl" not in op
+    assert "num_buys_exited" not in op
+
+
+def test_advance_one_day_pyramid_appends_add_op_with_layer_number():
+    """Pyramid buy → ops log gets an `add` op with layer-numbered note."""
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [100.0]
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
+    )
+    assert len(state["ops"]) == 1 and state["ops"][0]["note"] == "窗口突破开仓"
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-01-02", price=96.0, layer_yuan_value=10_000.0,
+    )
+    assert len(state["ops"]) == 2
+    op = state["ops"][1]
+    assert op["op"] == "add"
+    assert op["source"] == "auto"
+    # post-append len(entries) = 2 → note = "金字塔第2层"
+    assert op["note"] == "金字塔第2层"
+    assert op["price"] == 96.0
+    # Third pyramid → "金字塔第3层"
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-01-03", price=93.0, layer_yuan_value=10_000.0,
+    )
+    assert state["ops"][2]["note"] == "金字塔第3层"
+
+
+def test_advance_one_day_auto_tp_appends_tp_op_with_pnl_and_exit_stats():
+    """Auto tp → ops log gets a `tp` op with pnl + num_buys_exited +
+    total_shares_exited, and cycle closes (entries cleared, cum_realized up)."""
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [100.0]
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
+    )
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-01-02", price=96.0, layer_yuan_value=10_000.0,
+    )
+    target = 99.0 * 1.03  # first_buy basis = first entry * (1 + tp_pct/100)
+    state, sig = grid_mod.advance_one_day(
+        state, "2026-01-03", price=target + 0.01, layer_yuan_value=10_000.0,
+        tp_basis="first_buy",
+    )
+    assert sig == "sell"
+    assert state["in_cycle"] is False
+    assert state["entries"] == []
+    # ops log: 3 entries — open, add, tp (in order)
+    assert len(state["ops"]) == 3
+    tp_op = state["ops"][2]
+    assert tp_op["op"] == "tp"
+    assert tp_op["source"] == "auto"
+    assert tp_op["note"] == "自动止盈"
+    # num_buys_exited = 2 (both entries exited together)
+    assert tp_op["num_buys_exited"] == 2
+    # total_shares_exited = sum of both entries' shares
+    expected_shares = 10000 / 99 + 10000 / 96
+    assert tp_op["total_shares_exited"] == pytest_approx(expected_shares, rel=1e-6)
+    # pnl = exit_value - total_invested (positive when exit above avg)
+    assert tp_op["pnl"] > 0
+    # cum_realized reflects the same pnl (delta since pre-cycle was 0)
+    assert state["cum_realized"] == pytest_approx(tp_op["pnl"], rel=1e-6)
+
+
+def test_advance_one_day_hold_does_not_append_op():
+    """No signal (hold) → ops log unchanged."""
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [100.0]
+    new_state, signal = grid_mod.advance_one_day(
+        state, "2026-01-01", price=101.0, layer_yuan_value=10_000.0,
+    )
+    assert signal is None
+    assert new_state["ops"] == []
+    # Original state's ops untouched
+    assert state.get("ops", []) == []
+
+
+def test_advance_one_day_legacy_state_without_ops_key():
+    """Old state without `ops` key → advance_one_day reads as [] and appends."""
+    state = {"in_cycle": False, "entries": [], "last_prices": [100.0],
+             "cum_realized": 0.0}   # NO "ops" key
+    new_state, signal = grid_mod.advance_one_day(
+        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
+    )
+    assert signal == "buy"
+    assert new_state["ops"] == [{
+        "date": "2026-01-01", "op": "open", "source": "auto",
+        "price": 99.0, "shares": pytest_approx(10000 / 99, rel=1e-6),
+        "note": "窗口突破开仓",
+    }]
+
+
+def test_manual_op_open_appends_to_ops_with_source_manual():
+    """manual open → ops log gets an entry with source=manual, note=empty."""
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [1.40, 1.38, 1.37]
+    new_state = grid_mod.manual_op(
+        state, op="open", today="2026-10-17", price=1.35, shares=1000.0,
+    )
+    assert len(new_state["ops"]) == 1
+    op = new_state["ops"][0]
+    assert op["op"] == "open"
+    assert op["source"] == "manual"
+    assert op["date"] == "2026-10-17"
+    assert op["price"] == 1.35
+    assert op["shares"] == 1000.0
+    assert op["note"] == ""   # manual_op's signature has no note kwarg
+    assert "pnl" not in op
+    # original state NOT mutated
+    assert "ops" not in state or state.get("ops", []) == []
+
+
+def test_manual_op_add_appends_to_ops_with_source_manual():
+    """manual add → ops log gets an entry with op='add', source='manual'."""
+    state = grid_mod.fresh_asset_state()
+    state["in_cycle"] = True
+    state["entries"] = [{"date": "2026-10-15", "price": 1.40, "shares": 1000.0}]
+    new_state = grid_mod.manual_op(
+        state, op="add", today="2026-10-17", price=1.30, shares=1000.0,
+    )
+    assert len(new_state["ops"]) == 1
+    op = new_state["ops"][0]
+    assert op["op"] == "add"
+    assert op["source"] == "manual"
+    assert op["note"] == ""
+    assert "pnl" not in op
+
+
+def test_manual_op_tp_appends_tp_op_with_pnl_and_clears_entries():
+    """manual tp → ops log gets tp op with pnl; entries cleared; cum booked."""
+    state = grid_mod.fresh_asset_state()
+    state["in_cycle"] = True
+    state["entries"] = [
+        {"date": "2026-10-15", "price": 1.40, "shares": 1000.0},
+        {"date": "2026-10-16", "price": 1.30, "shares": 1000.0},
+    ]
+    state["cum_realized"] = 50.0
+    new_state = grid_mod.manual_op(
+        state, op="tp", today="2026-10-17", price=1.50, shares=0.0,
+    )
+    assert new_state["in_cycle"] is False
+    assert new_state["entries"] == []
+    assert new_state["cum_realized"] == 50.0 + 300.0
+    assert len(new_state["ops"]) == 1
+    op = new_state["ops"][0]
+    assert op["op"] == "tp"
+    assert op["source"] == "manual"
+    assert op["num_buys_exited"] == 2
+    assert op["total_shares_exited"] == 2000.0
+    assert op["pnl"] == 300.0
+    assert op["note"] == ""
+
+
+def test_ops_log_persists_through_tp_cycle_then_reopens():
+    """ops log is append-only and survives a tp → next cycle's open."""
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [100.0]
+    # Cycle 1: open @ 99, tp @ 103 (first_buy basis)
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
+    )
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-01-02", price=99.0 * 1.03 + 0.01,
+        layer_yuan_value=10_000.0, tp_basis="first_buy",
+    )
+    assert len(state["ops"]) == 2   # open + tp, both retained
+    # Cycle 2: trigger another open
+    state["last_prices"] = [200.0]
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-02-01", price=199.0, layer_yuan_value=10_000.0,
+    )
+    assert len(state["ops"]) == 3   # cycle-1 ops preserved + new open
+    assert [op["date"] for op in state["ops"]] == [
+        "2026-01-01", "2026-01-02", "2026-02-01",
+    ]
+    assert state["ops"][2]["op"] == "open"
+
+
+def test_inline_manual_op_legacy_state_without_ops_key():
+    """apply_grid.inline_manual_op on a state missing `ops` key still works
+    and seeds an empty ops list on the result."""
+    import importlib.util
+    import sys
+    src = ROOT / "scripts" / "apply_grid.py"
+    spec = importlib.util.spec_from_file_location("apply_grid_inline", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    legacy_state = {
+        "in_cycle": False, "entries": [], "last_prices": [1.4], "cum_realized": 0.0,
+        # NO "ops" key — simulates grid_state.json pre-migration
+    }
+    new_state, pnl = mod.inline_manual_op(
+        legacy_state, op="open", today="2026-01-01", price=1.30, shares=1000.0,
+        note="first cycle",
+    )
+    assert new_state["in_cycle"] is True
+    assert new_state["ops"] == [{
+        "date": "2026-01-01", "op": "open", "source": "manual",
+        "price": 1.30, "shares": 1000.0, "note": "first cycle",
+    }]
+    assert pnl == 0.0
+
+
+def test_inline_manual_op_note_kwarg_round_trip():
+    """The `note` kwarg of inline_manual_op reaches the persisted op dict."""
+    import importlib.util
+    src = ROOT / "scripts" / "apply_grid.py"
+    spec = importlib.util.spec_from_file_location("apply_grid_inline2", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    state = {
+        "in_cycle": False, "entries": [], "last_prices": [1.4],
+        "cum_realized": 0.0, "ops": [],
+    }
+    new_state, _ = mod.inline_manual_op(
+        state, op="open", today="2026-01-01", price=1.30, shares=1000.0,
+        note="用户备注：手动开仓",
+    )
+    assert new_state["ops"][0]["note"] == "用户备注：手动开仓"
+
+
 def _write_holdings(json_path: Path, cash_label: str, cash: float, rows: list[list]) -> None:
     """Build a minimal holdings.json matching the schema read_holdings() expects.
 
@@ -1320,6 +1572,7 @@ def test_apply_grid_happy_path_add_then_tp():
             "黄金ETF博时": {
                 "in_cycle": False, "entries": [],
                 "last_prices": [8.50], "cum_realized": 0.0,
+                "ops": [],
             },
         }
         state_path = td / "grid_state.json"
@@ -1358,8 +1611,23 @@ def test_apply_grid_happy_path_add_then_tp():
         assert a["cum_realized"] == 300.0
         # last_prices for the add branch should NOT have been touched
         assert a["last_prices"] == [1.40, 1.38, 1.37]
-        # Other asset untouched
+        # ops log: 2 entries (add + tp), both source='manual', with notes
+        # round-tripped from the payload.  tp op carries pnl + exit stats.
+        assert len(a["ops"]) == 2
+        add_op, tp_op = a["ops"]
+        assert add_op["op"] == "add"
+        assert add_op["source"] == "manual"
+        assert add_op["note"] == "pyramid"
+        assert "pnl" not in add_op
+        assert tp_op["op"] == "tp"
+        assert tp_op["source"] == "manual"
+        assert tp_op["note"] == "tp"
+        assert tp_op["num_buys_exited"] == 2
+        assert tp_op["total_shares_exited"] == 2000.0
+        assert tp_op["pnl"] == 300.0
+        # Other asset untouched (also must have ops=[] from fresh-asset init)
         assert out["黄金ETF博时"]["in_cycle"] is False
+        assert out["黄金ETF博时"]["ops"] == []
 
 
 def test_apply_grid_rejects_open_when_in_cycle():
