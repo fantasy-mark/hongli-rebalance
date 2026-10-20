@@ -1574,98 +1574,69 @@
   },
   {
     "date": "2026-10-20",
-    "total": 171874.3,
-    "etf_value": 132412.9,
-    "cash_rebalance": 39461.4,
+    "total": 171303.6,
+    "etf_value": 171138.6,
+    "cash_rebalance": 165.0,
     "cash_grid": 0.0,
-    "cash_total": 39461.4,
+    "cash_total": 165.0,
     "positions": [
       {
         "name": "红利ETF易方达",
         "code": "515180",
         "shares": 32000.0,
-        "price": 1.372,
+        "price": 1.368,
         "date": "2026-10-20",
-        "value": 43904.0
+        "value": 43776.0
       },
       {
         "name": "黄金ETF博时",
         "code": "159937",
         "shares": 5200.0,
-        "price": 8.449,
+        "price": 8.434,
         "date": "2026-10-20",
-        "value": 43934.8
+        "value": 43856.8
       },
       {
         "name": "可转债ETF博时",
         "code": "511380",
         "shares": 3500.0,
-        "price": 12.656,
+        "price": 12.598,
         "date": "2026-10-20",
-        "value": 44296.0
+        "value": 44093.0
       },
       {
         "name": "纳斯达克ETF华夏",
         "code": "513300",
-        "shares": 100.0,
-        "price": 2.781,
+        "shares": 14400.0,
+        "price": 2.737,
         "date": "2026-10-20",
-        "value": 278.1,
+        "value": 39412.8,
         "premium": {
           "code": "513300",
-          "price": 2.781,
+          "price": 2.737,
           "iopv": 2.4286,
           "nav_date": "2026-10-16",
-          "premium_pct": 14.51,
-          "quote_time": "2026-10-20 11:48:03",
+          "premium_pct": 12.7,
+          "quote_time": "2026-10-20 14:25:15",
           "source": "tencent+fund.eastmoney"
         }
       }
     ],
     "weights": [
-      0.2554,
-      0.2556,
-      0.2577,
-      0.0016
+      0.2555,
+      0.256,
+      0.2574,
+      0.2301
     ],
     "target_w": 0.25,
     "threshold_pp": 3.0,
-    "triggered": true,
-    "plan": [
-      {
-        "name": "红利ETF易方达",
-        "code": "515180",
-        "current_value": 43904.0,
-        "target_value": 42968.57,
-        "delta_value": -935.43
-      },
-      {
-        "name": "黄金ETF博时",
-        "code": "159937",
-        "current_value": 43934.8,
-        "target_value": 42968.57,
-        "delta_value": -966.23
-      },
-      {
-        "name": "可转债ETF博时",
-        "code": "511380",
-        "current_value": 44296.0,
-        "target_value": 42968.57,
-        "delta_value": -1327.43
-      },
-      {
-        "name": "纳斯达克ETF华夏",
-        "code": "513300",
-        "current_value": 278.1,
-        "target_value": 42968.57,
-        "delta_value": 42690.47
-      }
-    ],
+    "triggered": false,
+    "plan": [],
     "grid_signals": [
       {
         "name": "红利ETF易方达",
         "price": 1.37,
-        "layer_yuan": 10080.05,
+        "layer_yuan": 10051.51,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -1680,7 +1651,7 @@
       {
         "name": "黄金ETF博时",
         "price": 8.41,
-        "layer_yuan": 10080.05,
+        "layer_yuan": 10051.51,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -1695,7 +1666,7 @@
       {
         "name": "可转债ETF博时",
         "price": 12.52,
-        "layer_yuan": 10080.05,
+        "layer_yuan": 10051.51,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -1709,8 +1680,8 @@
       },
       {
         "name": "纳斯达克ETF华夏",
-        "price": 2.78,
-        "layer_yuan": 10080.05,
+        "price": 2.73,
+        "layer_yuan": 10051.51,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -1718,9 +1689,9 @@
         "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
-        "trigger_pct": 19.42,
+        "trigger_pct": 17.27,
         "trigger_kind": "open",
-        "intraday_low": 2.78
+        "intraday_low": 2.73
       }
     ],
     "grid_state": {
@@ -1728,7 +1699,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          1.391,
           1.397,
           1.39,
           1.382,
@@ -1847,6 +1817,7 @@
           1.37,
           1.37,
           1.37,
+          1.37,
           1.37
         ],
         "cum_realized": 0.0
@@ -1855,7 +1826,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          9.607,
           9.555,
           9.672,
           9.811,
@@ -1974,6 +1944,7 @@
           8.48,
           8.51,
           8.51,
+          8.41,
           8.41
         ],
         "cum_realized": 0.0
@@ -1982,7 +1953,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          14.175,
           14.243,
           14.347,
           14.475,
@@ -2101,6 +2071,7 @@
           12.38,
           12.43,
           12.43,
+          12.52,
           12.52
         ],
         "cum_realized": 0.0
@@ -2226,7 +2197,8 @@
           2.775,
           2.798,
           2.761,
-          2.78
+          2.78,
+          2.73
         ],
         "cum_realized": 0.0
       }
