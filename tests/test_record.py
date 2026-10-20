@@ -1848,6 +1848,43 @@ def test_build_record_strips_ops_from_grid_state_snapshot():
     assert "ops" in grid_state["可转债ETF博时"]
 
 
+def test_advance_one_day_preserves_backtest_ops():
+    """The backfilled ops must survive the live engine's daily run.
+
+    advance_one_day rebuilds the asset state as a fixed 5-key literal, so
+    anything riding in a 6th key would be silently dropped the first time
+    record.py runs. `ops` is the one array it copies forward verbatim —
+    this test is the guard on that, exercised in the worst case: the live
+    engine ACTS and opens a real cycle on top of the backfill.
+    """
+    backtest = [
+        {"date": "2026-09-04", "op": "open", "source": "backtest",
+         "price": 13.45, "shares": 743.72, "note": "回测·窗口突破开仓"},
+        {"date": "2026-10-14", "op": "add", "source": "backtest",
+         "price": 12.63, "shares": 791.51, "note": "回测·金字塔第3层"},
+    ]
+    state = {"in_cycle": False, "entries": [], "last_prices": [13.5, 13.4],
+             "cum_realized": 0.0, "ops": [dict(o) for o in backtest]}
+
+    # A price far below the window min forces a real trigger-buy.
+    after, signal = grid_mod.advance_one_day(
+        state, date_str="2026-10-21", price=12.0,
+        layer_yuan_value=grid_mod.GRID_BASE_YUAN)
+
+    assert signal == "buy", "fixture should trigger a live buy"
+    assert after["in_cycle"] is True
+    # backfill survived byte-identical...
+    kept = [o for o in after["ops"] if o["source"] == "backtest"]
+    assert kept == backtest, "backtest ops were altered or dropped"
+    # ...and the new live op is tagged as live, not backtest
+    live = [o for o in after["ops"] if o["source"] == "auto"]
+    assert len(live) == 1
+    assert live[0]["op"] == "open" and live[0]["note"] == "窗口突破开仓"
+    assert len(after["ops"]) == 3
+    assert sorted(after.keys()) == ["cum_realized", "entries", "in_cycle",
+                                    "last_prices", "ops"]
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]
