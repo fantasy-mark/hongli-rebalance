@@ -162,6 +162,98 @@ def run_compound_grid(
     }
 
 
+def _iso_date(d) -> str:
+    """Normalize a date-ish to 'YYYY-MM-DD'.
+
+    `run_compound_grid` yields pandas Timestamps; live ops already carry
+    ISO strings. The page sorts ops with `localeCompare`, so both paths
+    must produce the same shape (a Timestamp would sort wrong).
+    """
+    if hasattr(d, "strftime"):
+        return d.strftime("%Y-%m-%d")
+    return str(d)[:10]
+
+
+def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
+    """Convert a `run_compound_grid` result into per-event ops rows.
+
+    Pure function: no I/O, no pandas import (so tests can call it without
+    akshare/matplotlib). Mirrors the schema `advance_one_day` /
+    `manual_op` append, but tagged source="backtest" because the inputs
+    come from a historical replay rather than the live engine — the page
+    renders that as a separate 回测 chip.
+
+    Mapping:
+      cycle.entries[0]     -> op="open", note "回测·窗口突破开仓"
+      cycle.entries[i > 0] -> op="add",  note "回测·金字塔第i+1层"
+      cycle exit           -> op="tp",   note "回测·止盈", plus pnl /
+                              num_buys_exited / total_shares_exited
+      open_cycle entries   -> open/add only (no tp — that cycle is open)
+
+    Sorted date ASC, with open/add before tp on a tie: in
+    `run_compound_grid` a pyramid add and the take-profit can land on the
+    same bar, so the order has to be explicit rather than incidental.
+    """
+    ops: list[dict] = []
+
+    def _entries(entries) -> None:
+        for i, e in enumerate(entries):
+            ops.append({
+                "date": _iso_date(e["date"]),
+                "op": "open" if i == 0 else "add",
+                "source": "backtest",
+                # Rounded so grid_state.json stays auditable and its git diffs
+                # readable — raw floats carry 16 significant digits
+                # (969.4619486185168 shares). Price matches the `last_prices`
+                # precision convention in grid_state.json.
+                "price": round(float(e["price"]), 4),
+                "shares": round(float(e["shares"]), 2),
+                "note": "回测·窗口突破开仓" if i == 0 else f"回测·金字塔第{i + 1}层",
+            })
+
+    for c in cycles or []:
+        _entries(c["entries"])
+        ops.append({
+            "date": _iso_date(c["exit_date"]),
+            "op": "tp",
+            "source": "backtest",
+            "price": round(float(c["exit_price"]), 4),
+            "shares": round(float(c["total_shares"]), 2),
+            "note": "回测·止盈",
+            "pnl": round(float(c["pnl"]), 2),
+            "num_buys_exited": int(c["num_buys"]),
+            "total_shares_exited": round(float(c["total_shares"]), 2),
+        })
+
+    # The still-open cycle has no exit yet — entries only, no tp.
+    if open_cycle:
+        _entries(open_cycle)
+
+    _order = {"open": 0, "add": 1, "tp": 2}
+    ops.sort(key=lambda o: (o["date"], _order[o["op"]]))
+    return ops
+
+
+def merge_backtest_ops(state: dict, name: str, ops: list[dict]) -> int:
+    """Replace `name`'s backtest ops in `state`, keeping any live ops.
+
+    The idempotency rule for scripts/backfill_grid_ops.py: re-running drops
+    every source=="backtest" op and re-appends the freshly generated ones,
+    so repeated runs never accumulate duplicates, while live ops
+    (source "auto" from record.py / "manual" from the page editor) survive
+    untouched. No-op with a warning if the asset isn't in the state.
+
+    Returns the number of live ops preserved.
+    """
+    asset = state.get(name)
+    if not isinstance(asset, dict):
+        print(f"[{name}] 不在 grid_state 里, 跳过")
+        return 0
+    live = [o for o in asset.get("ops", []) if o.get("source") != "backtest"]
+    asset["ops"] = live + list(ops)
+    return len(live)
+
+
 # -----------------------------------------------------------------------------
 # Per-asset state container (JSON-serializable, used by record.py)
 # -----------------------------------------------------------------------------
@@ -182,6 +274,12 @@ def fresh_asset_state() -> dict:
         # pnl, num_buys_exited, total_shares_exited)}. The page renders this
         # as the "复合网格 操作记录" table under the strategy chart. Cleared on
         # tp is `entries`, NOT `ops` — the op log is the permanent record.
+        #
+        # `source` has three values:
+        #   "auto"     — record.py daily trigger (live)
+        #   "manual"   — page editor via apply_grid.py (live)
+        #   "backtest" — ops_from_cycles() replay of historical prices, i.e.
+        #                SIMULATED (see scripts/backfill_grid_ops.py)
         "ops": [],
     }
 

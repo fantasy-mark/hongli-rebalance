@@ -425,6 +425,16 @@ def build_record(today: str, positions: list[dict],
     etf_total = sum(p["value"] for p in positions)
     n = len(positions)
     target_w = 1.0 / n if n > 0 else 0.0
+    # `ops` is an append-only log whose canonical home is
+    # data/grid_state.json (the page fetches that file directly for the
+    # 复合网格 操作记录 table). Embedding it in every daily record would
+    # re-copy the whole log once per day forever, growing history.json
+    # without bound. Strip it — nothing reads this copy.
+    slim_grid_state = {
+        name: ({k: v for k, v in asset.items() if k != "ops"}
+               if isinstance(asset, dict) else asset)
+        for name, asset in (grid_state or {}).items()
+    }
     return {
         "date": today,
         "total": round(total, 2),
@@ -439,7 +449,7 @@ def build_record(today: str, positions: list[dict],
         "triggered": triggered_3pp,
         "plan": plan,
         "grid_signals": grid_signals,
-        "grid_state": grid_state,
+        "grid_state": slim_grid_state,
         "qdii_premiums": qdii_premiums or [],
     }
 

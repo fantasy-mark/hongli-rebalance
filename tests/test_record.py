@@ -1672,6 +1672,182 @@ def test_apply_grid_rejects_open_when_in_cycle():
 
 
 
+def _fake_cycle(dates, prices, exit_date, exit_price, pnl=None,
+                shares_per_layer=1000.0, pos_yuan=None):
+    """Build a `run_compound_grid` cycles[0]-shaped dict.
+
+    `pos_yuan` mirrors the real engine's per-layer sizing (grid.py:
+    `sh = pos_yuan / price`), so each layer costs exactly that much even
+    though prices differ. Without it, every entry gets the same flat
+    `shares_per_layer` (handy for arithmetic on round numbers).
+    """
+    entries = [{"date": pd.Timestamp(d), "price": float(p),
+                "shares": (pos_yuan / float(p) if pos_yuan else shares_per_layer)}
+               for d, p in zip(dates, prices)]
+    total_shares = sum(e["shares"] for e in entries)
+    total_invested = sum(e["shares"] * e["price"] for e in entries)
+    return {
+        "entries": entries,
+        "exit_date": pd.Timestamp(exit_date),
+        "exit_price": float(exit_price),
+        "num_buys": len(entries),
+        "avg_cost": total_invested / total_shares,
+        "total_shares": total_shares,
+        "total_invested": total_invested,
+        "exit_value": total_shares * exit_price,
+        "pnl": (total_shares * exit_price - total_invested) if pnl is None else pnl,
+        "return_pct": 0.0,
+    }
+
+
+def test_ops_from_cycles_maps_closed_cycle_to_open_add_tp():
+    c = _fake_cycle(["2024-01-10", "2024-01-20"], [10.0, 9.5],
+                    "2024-02-05", 10.6)
+    ops = grid_mod.ops_from_cycles([c])
+    assert len(ops) == 3, f"expected 3 ops, got {len(ops)}"
+    # entries[0] -> open, entries[1] -> add, exit -> tp
+    assert [o["op"] for o in ops] == ["open", "add", "tp"]
+    assert ops[0]["date"] == "2024-01-10"
+    assert ops[1]["date"] == "2024-01-20"
+    assert ops[2]["date"] == "2024-02-05"
+    # every op is tagged as simulated, never as a live trigger
+    assert all(o["source"] == "backtest" for o in ops)
+    assert ops[0]["note"] == "回测·窗口突破开仓"
+    assert ops[1]["note"] == "回测·金字塔第2层"
+    assert ops[2]["note"] == "回测·止盈"
+    # dates normalized from pandas Timestamps to the ISO strings the page sorts on
+    assert all(isinstance(o["date"], str) for o in ops)
+    # tp carries the realized stats; open/add must not
+    assert ops[2]["pnl"] == pytest_approx(c["pnl"])
+    assert ops[2]["num_buys_exited"] == 2
+    assert ops[2]["total_shares_exited"] == pytest_approx(2000.0)
+    assert "pnl" not in ops[0] and "pnl" not in ops[1]
+
+
+def test_ops_from_cycles_open_cycle_has_no_tp():
+    """The still-open cycle contributes entries but never a take-profit."""
+    open_cycle = [{"date": pd.Timestamp("2026-09-04"), "price": 13.446, "shares": 743.72},
+                  {"date": pd.Timestamp("2026-09-28"), "price": 13.038, "shares": 766.99},
+                  {"date": pd.Timestamp("2026-10-14"), "price": 12.634, "shares": 791.51}]
+    ops = grid_mod.ops_from_cycles([], open_cycle)
+    assert len(ops) == 3
+    assert [o["op"] for o in ops] == ["open", "add", "add"]
+    assert not any(o["op"] == "tp" for o in ops)
+    assert ops[2]["note"] == "回测·金字塔第3层"
+    # no open cycle at all -> no ops, not a crash
+    assert grid_mod.ops_from_cycles([], None) == []
+    assert grid_mod.ops_from_cycles([], []) == []
+
+
+def test_ops_from_cycles_orders_add_before_tp_on_same_date():
+    """run_compound_grid can add a layer and take profit on the SAME bar
+    (grid.py adds at line ~100, then checks tp at ~110). The op order has to
+    be explicit, not incidental to dict/append order."""
+    c = _fake_cycle(["2024-01-10", "2024-02-05"], [10.0, 9.5],
+                    "2024-02-05", 10.6)
+    ops = grid_mod.ops_from_cycles([c])
+    same_day = [o for o in ops if o["date"] == "2024-02-05"]
+    assert len(same_day) == 2, "fixture should put an add and a tp on one date"
+    assert [o["op"] for o in same_day] == ["add", "tp"]
+
+
+def test_merge_backtest_ops_is_idempotent_and_preserves_live_ops():
+    """Re-running the backfill must not duplicate, and must never eat a live op."""
+    auto = {"date": "2026-10-21", "op": "open", "source": "auto",
+            "price": 1.0, "shares": 100.0, "note": "窗口突破开仓"}
+    manual = {"date": "2026-10-22", "op": "add", "source": "manual",
+              "price": 0.9, "shares": 200.0, "note": "手动加仓"}
+    state = {"A": {"in_cycle": False, "entries": [], "cum_realized": 0.0,
+                   "last_prices": [1.0, 2.0], "ops": [auto, manual]}}
+
+    gen = grid_mod.ops_from_cycles(
+        [_fake_cycle(["2024-01-10"], [10.0], "2024-02-05", 10.6)])
+
+    preserved = grid_mod.merge_backtest_ops(state, "A", gen)
+    assert preserved == 2, "both live ops should survive"
+    first = list(state["A"]["ops"])
+
+    # Second run over the same state, same generated ops.
+    preserved = grid_mod.merge_backtest_ops(state, "A", gen)
+    assert preserved == 2
+    assert state["A"]["ops"] == first, "re-running must be a no-op"
+    assert len(state["A"]["ops"]) == 4       # 2 live + 2 backtest (open + tp)
+    # live state fields untouched by the merge
+    assert state["A"]["in_cycle"] is False
+    assert state["A"]["last_prices"] == [1.0, 2.0]
+    # unknown asset is a safe no-op
+    assert grid_mod.merge_backtest_ops(state, "NOPE", gen) == 0
+
+
+def test_ops_from_cycles_reconciles_invested_yuan():
+    """Every backtest layer costs exactly GRID_BASE_YUAN, so the sum of
+    entry shares × price must equal layers × base. This is the assertion
+    scripts/backfill_grid_ops.py prints as 对账."""
+    base = grid_mod.GRID_BASE_YUAN
+    cycles = [
+        _fake_cycle(["2021-03-01", "2021-03-15"], [10.0, 9.7],
+                    "2021-04-01", 10.3, pos_yuan=base),
+        _fake_cycle(["2024-06-01"], [8.0], "2024-07-01", 8.3,
+                    pos_yuan=base),
+    ]
+    open_cycle = [{"date": pd.Timestamp("2026-09-04"), "price": 13.446,
+                   "shares": base / 13.446}]
+    ops = grid_mod.ops_from_cycles(cycles, open_cycle)
+
+    layers = [o for o in ops if o["op"] in ("open", "add")]
+    assert len(layers) == 4
+    # ops_from_cycles rounds shares to 2dp so grid_state.json stays readable,
+    # so a layer costs base_yuan ± (0.005 shares × price) — a few cents, not
+    # exact. At the highest price here (13.446) that's < ¥0.07.
+    tol = 0.10
+    for o in layers:
+        cost = o["shares"] * o["price"]
+        assert abs(cost - base) < tol, \
+            f"layer should cost ¥{base}, got ¥{cost:.4f}"
+
+    expected = sum(c["total_invested"] for c in cycles) + sum(
+        e["shares"] * e["price"] for e in open_cycle)
+    actual = sum(o["shares"] * o["price"] for o in layers)
+    assert abs(actual - expected) < tol * len(layers)
+    assert abs(actual - 4 * base) < tol * len(layers)
+
+
+def test_build_record_strips_ops_from_grid_state_snapshot():
+    """history.json embeds grid_state once per day. `ops` is an append-only
+    log that already lives in data/grid_state.json (which the page fetches
+    directly) — copying it into every record would grow history.json
+    without bound, and nothing reads that copy."""
+    grid_state = {
+        "可转债ETF博时": {
+            "in_cycle": True,
+            "entries": [{"date": "2026-09-04", "price": 13.446, "shares": 743.72}],
+            "last_prices": [13.1, 13.2],
+            "cum_realized": 3048.28,
+            "ops": [{"date": "2026-09-04", "op": "open", "source": "backtest",
+                     "price": 13.446, "shares": 743.72, "note": "回测·窗口突破开仓"}],
+        },
+        "黄金ETF博时": {"in_cycle": False, "entries": [], "last_prices": [8.0],
+                        "cum_realized": 0.0, "ops": []},
+    }
+    rec = record.build_record(
+        today="2026-10-21", positions=[], cash_rebalance=0.0, cash_grid=0.0,
+        total=0.0, weights=[], triggered_3pp=False, plan=[],
+        grid_signals=[], grid_state=grid_state)
+
+    snap = rec["grid_state"]
+    # ops stripped everywhere
+    for name in snap:
+        assert "ops" not in snap[name], f"{name} still carries ops"
+    # but the fields a daily snapshot actually needs survive intact
+    assert snap["可转债ETF博时"]["in_cycle"] is True
+    assert snap["可转债ETF博时"]["entries"] == grid_state["可转债ETF博时"]["entries"]
+    assert snap["可转债ETF博时"]["last_prices"] == [13.1, 13.2]
+    assert snap["可转债ETF博时"]["cum_realized"] == pytest_approx(3048.28)
+    assert snap["黄金ETF博时"]["in_cycle"] is False
+    # the caller's dict is not mutated
+    assert "ops" in grid_state["可转债ETF博时"]
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]
