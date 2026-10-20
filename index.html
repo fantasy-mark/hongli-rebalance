@@ -34,7 +34,16 @@
           复合网格 <strong>虚拟</strong>开/加/止盈的逐笔记录，
           来自 <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>
           的每资产 <code>ops</code> 字段。按日期倒序，最多显示最新 10 笔（可滚动）。
-          <code>[自动]</code> 蓝色 = record.py 日触发；<code>[手动]</code> 橙色 = 页面编辑器操作。
+          <code>[自动]</code> 蓝色 = record.py 日触发；<code>[手动]</code> 橙色 = 页面编辑器操作；
+          <code>[回测]</code> 紫灰 = 历史<strong>模拟</strong>成交，<strong>非实盘</strong>。
+        </p>
+        <p class="muted">
+          <code>[回测]</code> 行由 <code>scripts/backfill_grid_ops.py</code>
+          从 2020-11-05 起的全历史按 <code>run_compound_grid</code> 重放生成，
+          对应「策略全景图」底部的<strong>资金占用</strong>面板。
+          口径与实盘不同：回放<strong>每层固定 ¥10,000</strong>且按<strong>收盘价</strong>成交，
+          实盘引擎则用浮动仓位 <code>layer_yuan</code> 并以 <strong>K 线最低价</strong>触发。
+          因此回测的份额与盈亏<strong>不可与实盘逐笔对账</strong>，仅供量级对照。
         </p>
         <div id="grid-ops-scroll" class="grid-ops-scroll"></div>
         <p id="grid-ops-footer" class="grid-ops-footer muted"></p>

@@ -914,9 +914,13 @@ function renderGridEditor(state) {
 
 // Render the per-asset grid operations log under the strategy chart.
 // Each row = one open/add/tp event. Sorted date desc. Up to 10 visible
-// (container clips with vertical scroll). source=auto → blue chip + Chinese
-// label; source=manual → orange chip + user's note. tp ops show per-event
-// realized P&L (green positive / red negative); open/add show —.
+// (container clips with vertical scroll). Three source tiers:
+//   auto     → blue chip 自动    (live: record.py daily trigger)
+//   manual   → orange chip 手动  (live: page editor)
+//   backtest → purple chip 回测  (SIMULATED: replayed from historical prices,
+//                                   see scripts/backfill_grid_ops.py)
+// tp ops show per-event realized P&L (green positive / red negative);
+// open/add show —.
 function renderGridOpsLog(state) {
   const root = document.getElementById('grid-ops-scroll');
   if (!root) return;
@@ -935,11 +939,17 @@ function renderGridOpsLog(state) {
   });
   if (rows.length === 0) {
     root.innerHTML = '<p class="grid-ops-empty">暂无操作记录</p>';
+    const stale = document.getElementById('grid-ops-footer');
+    if (stale) stale.textContent = '';
     return;
   }
   // Render ALL rows; container clips to ~10 visible via max-height: 360px.
   // (User asked "界面显示最多10笔，通过滚动条查看" — DOM may hold more.)
   const OP_LABELS = { open: '开仓', add: '加仓', tp: '止盈' };
+  const SRC_LABELS = { auto: '自动', manual: '手动', backtest: '回测' };
+  // Whitelist: `src` lands in a class attribute, so never interpolate the
+  // raw value — an unknown source falls back to the manual tier.
+  const SRC_TIERS = ['auto', 'manual', 'backtest'];
   const body = rows.map(r => {
     const isTp = r.op === 'tp';
     let pnlCell;
@@ -950,7 +960,8 @@ function renderGridOpsLog(state) {
     } else {
       pnlCell = '<td class="col-pnl muted">—</td>';
     }
-    const srcLabel = r.source === 'auto' ? '自动' : '手动';
+    const src = SRC_TIERS.includes(r.source) ? r.source : 'manual';
+    const srcLabel = SRC_LABELS[src];
     const opText = OP_LABELS[r.op] || r.op || '';
     const sharesText = (typeof r.shares === 'number')
       ? Math.round(r.shares).toLocaleString()
@@ -959,7 +970,7 @@ function renderGridOpsLog(state) {
     return `<tr>
       <td>${escapeHtml(r.date || '')}</td>
       <td>${escapeHtml(r._asset)}</td>
-      <td class="col-op"><span class="src-chip ${r.source || 'manual'}">${srcLabel}</span> ${escapeHtml(opText)}</td>
+      <td class="col-op"><span class="src-chip ${src}">${srcLabel}</span> ${escapeHtml(opText)}</td>
       <td>¥${(typeof r.price === 'number' ? r.price : 0).toFixed(4)}</td>
       <td class="col-shares">${sharesText}</td>
       ${pnlCell}
@@ -975,6 +986,20 @@ function renderGridOpsLog(state) {
       <tbody>${body}</tbody>
     </table>
   `;
+  // Footer: total + a per-tier breakdown, so a long backtest-dominated log
+  // makes its own composition obvious without scrolling.
+  const foot = document.getElementById('grid-ops-footer');
+  if (foot) {
+    const counts = {};
+    for (const r of rows) {
+      const k = SRC_TIERS.includes(r.source) ? r.source : 'manual';
+      counts[k] = (counts[k] || 0) + 1;
+    }
+    foot.textContent = '共 ' + rows.length + ' 笔 · ' + SRC_TIERS
+      .filter(k => counts[k])
+      .map(k => SRC_LABELS[k] + ' ' + counts[k])
+      .join(' · ');
+  }
 }
 
 function refreshGridPreview() {

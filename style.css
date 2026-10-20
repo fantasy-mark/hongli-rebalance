@@ -280,6 +280,9 @@ main section.nested h3 {
 }
 .grid-ops-table .src-chip.auto   { background: #eef2f7; color: #2c5f8d; }
 .grid-ops-table .src-chip.manual { background: #fdf3e3; color: #c0881d; }
+/* Backtest ops are SIMULATED (replayed from historical prices), not live
+   trades — kept visually distinct from the two live tiers on purpose. */
+.grid-ops-table .src-chip.backtest { background: #f0eef6; color: #6b5b95; }
 
 /* tp P&L cell: green if positive, red if negative. */
 .grid-ops-table td.col-pnl.pos { color: #2c7a2c; }
