@@ -1614,10 +1614,10 @@
         "premium": {
           "code": "513300",
           "price": 2.743,
-          "iopv": 2.4286,
-          "nav_date": "2026-10-16",
-          "premium_pct": 12.95,
-          "quote_time": "2026-10-20 15:49:06",
+          "iopv": 2.455,
+          "nav_date": "2026-10-19",
+          "premium_pct": 11.73,
+          "quote_time": "2026-10-20 16:14:36",
           "source": "tencent+fund.eastmoney"
         }
       }
@@ -1689,7 +1689,7 @@
         "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
-        "trigger_pct": 17.27,
+        "trigger_pct": 15.53,
         "trigger_kind": "open",
         "intraday_low": 2.73
       }
@@ -1699,7 +1699,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          1.39,
           1.382,
           1.375,
           1.377,
@@ -1818,15 +1817,16 @@
           1.37,
           1.37,
           1.37,
+          1.37,
           1.37
         ],
-        "cum_realized": 0.0
+        "cum_realized": 0.0,
+        "ops": []
       },
       "黄金ETF博时": {
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          9.672,
           9.811,
           9.83,
           9.691,
@@ -1945,15 +1945,16 @@
           8.51,
           8.41,
           8.41,
+          8.41,
           8.41
         ],
-        "cum_realized": 0.0
+        "cum_realized": 0.0,
+        "ops": []
       },
       "可转债ETF博时": {
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          14.347,
           14.475,
           14.425,
           14.5,
@@ -2072,15 +2073,16 @@
           12.43,
           12.52,
           12.52,
+          12.52,
           12.52
         ],
-        "cum_realized": 0.0
+        "cum_realized": 0.0,
+        "ops": []
       },
       "纳斯达克ETF华夏": {
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          2.328,
           2.363,
           2.374,
           2.37,
@@ -2199,9 +2201,11 @@
           2.761,
           2.78,
           2.73,
+          2.73,
           2.73
         ],
-        "cum_realized": 0.0
+        "cum_realized": 0.0,
+        "ops": []
       }
     },
     "qdii_premiums": []

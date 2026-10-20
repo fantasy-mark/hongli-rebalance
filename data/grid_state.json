@@ -3,7 +3,6 @@
     "in_cycle": false,
     "entries": [],
     "last_prices": [
-      1.39,
       1.382,
       1.375,
       1.377,
@@ -122,15 +121,16 @@
       1.37,
       1.37,
       1.37,
+      1.37,
       1.37
     ],
-    "cum_realized": 0.0
+    "cum_realized": 0.0,
+    "ops": []
   },
   "黄金ETF博时": {
     "in_cycle": false,
     "entries": [],
     "last_prices": [
-      9.672,
       9.811,
       9.83,
       9.691,
@@ -249,15 +249,16 @@
       8.51,
       8.41,
       8.41,
+      8.41,
       8.41
     ],
-    "cum_realized": 0.0
+    "cum_realized": 0.0,
+    "ops": []
   },
   "可转债ETF博时": {
     "in_cycle": false,
     "entries": [],
     "last_prices": [
-      14.347,
       14.475,
       14.425,
       14.5,
@@ -376,15 +377,16 @@
       12.43,
       12.52,
       12.52,
+      12.52,
       12.52
     ],
-    "cum_realized": 0.0
+    "cum_realized": 0.0,
+    "ops": []
   },
   "纳斯达克ETF华夏": {
     "in_cycle": false,
     "entries": [],
     "last_prices": [
-      2.328,
       2.363,
       2.374,
       2.37,
@@ -503,8 +505,10 @@
       2.761,
       2.78,
       2.73,
+      2.73,
       2.73
     ],
-    "cum_realized": 0.0
+    "cum_realized": 0.0,
+    "ops": []
   }
 }
