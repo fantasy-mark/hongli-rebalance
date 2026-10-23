@@ -9,15 +9,20 @@ Rules (per asset, independent):
     works.
   - Pyramid: while in a cycle, every additional `step_pct` % drop from
     the LAST buy price adds another `layer_yuan` layer.
-  - Take-profit: when price >= avg_cost * (1 + tp_pct/100), sell ALL
-    shares, lock in realized P&L, then wait for the next trigger.
+  - Take-profit: when price >= first_buy_price * (1 + tp_pct/100), sell
+    **only the cost amount** (`total_invested / price` shares, recovering
+    exactly the principal), then wait for the next trigger. The leftover
+    `total_shares - total_invested/price` shares become **zero-cost shares
+    held permanently** and are never sold again — see `split_take_profit`.
+    So realized P&L per cycle is 0 by construction, and all return comes
+    from the free shares' appreciation.
+
+State persistence: `advance_one_day()` mutates a JSON-serializable dict so
+the Action can commit `data/grid_state.json` after each run.
 
 Layer sizing:
   layer_yuan(d) = GRID_BASE_YUAN + max(pool_value - recent_min, 0) * GRID_FLOATING_FRACTION
   where recent_min = min(pool_value over the past GRID_FLOATING_WINDOW trading days).
-
-State persistence: `advance_one_day()` mutates a JSON-serializable dict so
-the Action can commit `data/grid_state.json` after each run.
 """
 from __future__ import annotations
 
@@ -48,6 +53,50 @@ def layer_yuan(pool_value: float, recent_min: float) -> float:
 
 
 # -----------------------------------------------------------------------------
+# 止盈规则 (single source of truth)
+# -----------------------------------------------------------------------------
+# 网格止盈时**只卖出成本金额**: 卖出 `total_invested / price` 份, 恰好把本金
+# 取回来, 于是每个周期的已实现盈亏恒为 0; 剩下的份额变成**零成本份额**永久
+# 持有, 之后再也不会卖出 —— 该资产此后的全部收益都来自这些份额的累积涨幅。
+#
+# 这实质上把网格变成了买入持有: 止盈不再兑现浮盈, 只是把它永久化。网格仍然
+# 决定加仓的层数和时点, 但不再有退出机制。零成本份额**没有卖出入口**。
+#
+# 口径后果 (所有消费方都必须同步, 否则指标会说谎):
+#   - `cum_realized` 恒为 0 —— 已实现盈亏不再是有效的收益指标;
+#   - 收益全部体现在 `free_shares * price`, 即一笔永不兑现的浮动收益;
+#   - 资金占用只涨不落 (零成本份额一直拿着), 图表 ROI 的分母会持续变大,
+#     而分子只反映当前市价 —— 这个指标对回撤极度敏感。
+
+def split_take_profit(total_shares: float, total_invested: float,
+                      price: float) -> dict:
+    """按"只卖成本金额"规则拆分一次止盈。
+
+    Returns {shares_sold, proceeds, free_gained, pnl}:
+      shares_sold  实际卖出的份额 (= 本金 / 价格, 取回全部本金)
+      free_gained  转成零成本永久持有的份额
+      pnl          已实现盈亏; 正常路径恒为 0, 亏本出场时为负
+
+    当 `price` 低于持仓均价时要卖的份额会超过持仓, 转出"负的零成本份额"没有
+    意义, 此时退化为全部卖出并认亏。这只可能由**手动**止盈触发 —— 自动止盈的
+    触发价 (`first_buy * 1.03` 或 `avg_cost * 1.03`) 必然高于均价, 因为金字塔
+    只在更低处加仓, 所以 `first_buy >= avg_cost`。
+    """
+    if not price > 0:
+        raise ValueError(f"price must be > 0, got {price}")
+    if total_shares <= 0:
+        return {"shares_sold": 0.0, "proceeds": 0.0, "free_gained": 0.0, "pnl": 0.0}
+    want = total_invested / price
+    if want >= total_shares:
+        # 亏本出场 (只有手动路径可能): 卖光并认亏
+        proceeds = total_shares * price
+        return {"shares_sold": total_shares, "proceeds": proceeds,
+                "free_gained": 0.0, "pnl": proceeds - total_invested}
+    return {"shares_sold": want, "proceeds": total_invested,
+            "free_gained": total_shares - want, "pnl": 0.0}
+
+
+# -----------------------------------------------------------------------------
 # Full backtest (used by chart rendering and tests)
 # -----------------------------------------------------------------------------
 
@@ -68,7 +117,7 @@ def run_compound_grid(
         "global" — open cycle when price < min of all prior history (rolling global low)
 
     Returns dict with: cycles (closed), history (daily DataFrame), cum_realized,
-    open_cycle, open_avg_cost, open_invested, open_shares.
+    open_cycle, open_avg_cost, open_invested, open_shares, free_shares.
     """
     import pandas as pd  # local import keeps the module lightweight
 
@@ -76,6 +125,7 @@ def run_compound_grid(
     entries: list[dict] = []
     cycles: list[dict] = []
     cum_realized = 0.0
+    free_shares = 0.0     # 零成本份额累计 (止盈时转出, 永不再卖)
     history: list[dict] = []
     prices_sorted = prices.sort_index()
 
@@ -108,20 +158,22 @@ def run_compound_grid(
             else:
                 tp_target = avg_cost * (1 + tp_pct / 100)
             if price >= tp_target:
-                exit_value = total_shares * price
-                pnl = exit_value - total_invested
-                cum_realized += pnl
+                split = split_take_profit(total_shares, total_invested, float(price))
+                free_shares += split["free_gained"]
+                cum_realized += split["pnl"]
                 cycles.append({
                     "entries": entries,
                     "exit_date": date,
                     "exit_price": float(price),
                     "num_buys": len(entries),
                     "avg_cost": avg_cost,
-                    "total_shares": total_shares,
+                    # 卖出的是"回本所需"那部分, 不是全部持仓 —— 见 split_take_profit
+                    "total_shares": split["shares_sold"],
+                    "shares_transferred": split["free_gained"],
                     "total_invested": total_invested,
-                    "exit_value": exit_value,
-                    "pnl": pnl,
-                    "return_pct": pnl / total_invested * 100 if total_invested else 0.0,
+                    "exit_value": split["proceeds"],
+                    "pnl": split["pnl"],
+                    "return_pct": 0.0,
                 })
                 in_cycle = False
                 entries = []
@@ -139,6 +191,9 @@ def run_compound_grid(
             current_value = 0.0
             unrealized = 0.0
 
+        # 零成本份额是本金早已收回后的净多头, 它的市值就是累计收益。
+        free_value = free_shares * price
+
         history.append({
             "date": date,
             "in_cycle": in_cycle,
@@ -148,6 +203,10 @@ def run_compound_grid(
             "current_value": current_value,
             "unrealized_pnl": unrealized,
             "cum_realized": cum_realized,
+            "free_shares": free_shares,
+            "free_value": free_value,
+            # 资金占用 = 在周期内的持仓 + 永久持有的零成本份额
+            "in_use": current_value + free_value,
         })
 
     df = pd.DataFrame(history).set_index("date")
@@ -159,6 +218,7 @@ def run_compound_grid(
         "open_avg_cost": avg_cost if in_cycle else None,
         "open_invested": total_invested if in_cycle else None,
         "open_shares": total_shares if in_cycle else None,
+        "free_shares": free_shares,
     }
 
 
@@ -186,8 +246,9 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
     Mapping:
       cycle.entries[0]     -> op="open", note "回测·窗口突破开仓"
       cycle.entries[i > 0] -> op="add",  note "回测·金字塔第i+1层"
-      cycle exit           -> op="tp",   note "回测·止盈", plus pnl /
-                              num_buys_exited / total_shares_exited
+      cycle exit           -> op="tp",   note "回测·回本出场", plus pnl /
+                              num_buys_exited / total_shares_exited /
+                              shares_to_free (转成永久零成本份额的部分)
       open_cycle entries   -> open/add only (no tp — that cycle is open)
 
     Sorted date ASC, with open/add before tp on a tie: in
@@ -213,16 +274,21 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
 
     for c in cycles or []:
         _entries(c["entries"])
+        # 出场现在是两条腿: 卖"回本所需"那部分, 余量转成永久持有的零成本
+        # 份额。`total_shares` 已经是"卖出的份额", 转出的份额另计。
+        sold = float(c.get("total_shares", 0.0))
+        to_free = float(c.get("shares_transferred", 0.0) or 0.0)
         ops.append({
             "date": _iso_date(c["exit_date"]),
             "op": "tp",
             "source": "backtest",
             "price": round(float(c["exit_price"]), 4),
-            "shares": round(float(c["total_shares"]), 2),
-            "note": "回测·止盈",
+            "shares": round(sold, 2),
+            "note": "回测·回本出场",
             "pnl": round(float(c["pnl"]), 2),
             "num_buys_exited": int(c["num_buys"]),
-            "total_shares_exited": round(float(c["total_shares"]), 2),
+            "total_shares_exited": round(sold + to_free, 2),
+            "shares_to_free": round(to_free, 2),
         })
 
     # The still-open cycle has no exit yet — entries only, no tp.
@@ -281,6 +347,14 @@ def fresh_asset_state() -> dict:
         #   "backtest" — ops_from_cycles() replay of historical prices, i.e.
         #                SIMULATED (see scripts/backfill_grid_ops.py)
         "ops": [],
+        # 零成本份额 (float, shares). 每次止盈时 `total_shares -
+        # total_invested/price` 转入这里, 此后**永不再卖** —— 见
+        # split_take_profit 的说明。旧版 state 没有这个 key, 读取一律走
+        # .get("free_shares", 0.0) 以保持向后兼容。
+        #
+        # ⚠️ state 是用**字面量 dict** 重建的 (见 advance_one_day /
+        # inline_manual_op), 少写一个 key 就会被静默丢弃而不报错。
+        "free_shares": 0.0,
     }
 
 
@@ -322,6 +396,7 @@ def advance_one_day(
     if not last_prices and legacy_min is not None:
         last_prices = [float(legacy_min)]
     cum_realized = float(state.get("cum_realized", 0.0))
+    free_shares = float(state.get("free_shares", 0.0))   # 零成本份额, 永不再卖
     ops: list[dict] = list(state.get("ops", []))   # append-only op log
 
     signal: Optional[str] = None
@@ -362,21 +437,25 @@ def advance_one_day(
             else:
                 tp_target = avg_cost * (1 + tp_pct / 100)
             if price >= tp_target:
-                exit_value = total_shares * price
-                pnl = exit_value - total_invested
+                split = split_take_profit(total_shares, total_invested,
+                                          float(price))
+                free_shares += split["free_gained"]
                 # Capture per-event exit stats BEFORE clearing `entries`.
-                # NOTE: prior tp events (before the ops-log migration) lost
-                # their per-event P&L because entries were wiped at tp.
-                # We start logging from today forward.
+                # `shares` is what was actually SOLD (回本所需), not the whole
+                # position — the rest moved to free_shares. Both are logged so
+                # the ops table reconciles against the trade ledger.
                 ops.append({
                     "date": date_str, "op": "tp", "source": "auto",
-                    "price": float(price), "shares": total_shares,
-                    "note": "自动止盈",
-                    "pnl": float(pnl),
+                    "price": float(price), "shares": split["shares_sold"],
+                    "note": "自动止盈·转零成本",
+                    "pnl": float(split["pnl"]),
                     "num_buys_exited": len(entries),
-                    "total_shares_exited": float(total_shares),
+                    # "出场"的全部份额 = 卖出的 + 转成零成本的 (== 原持仓)
+                    "total_shares_exited": float(split["shares_sold"]
+                                                 + split["free_gained"]),
+                    "shares_to_free": float(split["free_gained"]),
                 })
-                cum_realized += pnl
+                cum_realized += split["pnl"]
                 in_cycle = False
                 entries = []
                 signal = "sell"
@@ -392,6 +471,7 @@ def advance_one_day(
         "last_prices": last_prices,
         "cum_realized": cum_realized,
         "ops": ops,
+        "free_shares": free_shares,
     }
     return new_state, signal
 
@@ -401,9 +481,18 @@ def advance_one_day(
 # -----------------------------------------------------------------------------
 
 def asset_snapshot(state: dict, current_price: float) -> dict:
-    """Return a read-only summary for a single asset's state."""
+    """Return a read-only summary for a single asset's state.
+
+    `free_shares` / `free_value` / `in_use` describe the permanently-held
+    zero-cost shares. They are populated whether or not a cycle is open —
+    free shares outlive every cycle, so an asset sitting in `in_cycle=False`
+    can still hold real value. Callers that used to assume
+    `in_cycle == False` ⇒ 市值 0 must now read `in_use`.
+    """
     entries = state.get("entries", [])
     in_cycle = bool(state.get("in_cycle", False))
+    free_shares = float(state.get("free_shares", 0.0))
+    free_value = free_shares * float(current_price)
     if in_cycle and entries:
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
@@ -418,6 +507,9 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
             "current_value": round(current_value, 2),
             "unrealized_pnl": round(unrealized, 2),
             "return_pct": round(unrealized / total_invested * 100, 2) if total_invested else 0.0,
+            "free_shares": round(free_shares, 2),
+            "free_value": round(free_value, 2),
+            "in_use": round(current_value + free_value, 2),
         }
     return {
         "in_cycle": False,
@@ -427,6 +519,9 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
         "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
+        "free_shares": round(free_shares, 2),
+        "free_value": round(free_value, 2),
+        "in_use": round(free_value, 2),
     }
 
 
@@ -445,17 +540,18 @@ def manual_op(state: dict, op: str, today: str,
       - add:  in_cycle must be True. Append an entry. `last_prices` is NOT
         touched. `entries[-1].price` becomes the new "加仓参考价" for the
         next auto pyramid, matching advance_one_day's behavior.
-      - tp:   in_cycle must be True. Compute pnl at the user's exit price,
-        add to cum_realized, set in_cycle=False, clear entries.
-        `last_prices` is NOT touched.
+      - tp:   in_cycle must be True. Applies the "sell cost only" rule
+        (split_take_profit): sell back exactly the principal, keep the
+        remainder as permanently-held zero-cost shares, set in_cycle=False,
+        clear entries. `last_prices` is NOT touched.
     """
     if op not in ("open", "add", "tp"):
         raise ValueError(f"unknown op: {op!r}")
     if not (price > 0):
         raise ValueError(f"price must be > 0, got {price}")
     # For "open" and "add", `shares` is the layer share count → must be > 0.
-    # For "tp", `shares` is ignored (we always exit ALL existing entries),
-    # so any value (including 0) is accepted.
+    # For "tp", `shares` is ignored (the sell quantity is derived from the
+    # cycle's own invested amount), so any value (including 0) is accepted.
     if op in ("open", "add") and not (shares > 0):
         raise ValueError(f"{op} requires shares > 0, got {shares}")
     in_cycle = bool(state.get("in_cycle", False))
@@ -470,6 +566,7 @@ def manual_op(state: dict, op: str, today: str,
         "last_prices": list(state.get("last_prices", [])),
         "cum_realized": float(state.get("cum_realized", 0.0)),
         "ops": list(state.get("ops", [])),
+        "free_shares": float(state.get("free_shares", 0.0)),
     }
 
     if op in ("open", "add"):
@@ -494,18 +591,21 @@ def manual_op(state: dict, op: str, today: str,
         entries = new_state["entries"]
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
-        exit_value = total_shares * float(price)
-        pnl = exit_value - total_invested
+        split = split_take_profit(total_shares, total_invested, float(price))
+        new_state["free_shares"] += split["free_gained"]
         # Capture per-event exit stats BEFORE clearing `entries`.
         new_state["ops"].append({
             "date": today, "op": "tp", "source": "manual",
-            "price": float(price), "shares": float(total_shares),
+            "price": float(price), "shares": float(split["shares_sold"]),
             "note": "",
-            "pnl": float(pnl),
+            "pnl": float(split["pnl"]),
             "num_buys_exited": len(entries),
-            "total_shares_exited": float(total_shares),
+            # "出场"的全部份额 = 卖出的 + 转成零成本的 (== 原持仓)
+            "total_shares_exited": float(split["shares_sold"]
+                                         + split["free_gained"]),
+            "shares_to_free": float(split["free_gained"]),
         })
-        new_state["cum_realized"] += pnl
+        new_state["cum_realized"] += split["pnl"]
         new_state["entries"] = []
         new_state["in_cycle"] = False
 

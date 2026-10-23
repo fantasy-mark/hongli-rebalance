@@ -20,6 +20,12 @@ THESE OPS ARE SIMULATED (source="backtest"), NOT LIVE:
     trigger watches K-line LOWS (see scripts/backfill_grid_window.py).
 So the share counts will NOT match what the live grid would actually place.
 
+EXIT RULE: exits use the "sell cost only" rule (src/grid.py:
+split_take_profit) — the replay sells just enough shares to recover the
+principal and transfers the remainder to permanently-held zero-cost shares.
+So every tp row here has pnl == 0 and a non-zero `shares_to_free`; the
+grid's entire gain lives in the zero-cost shares' market value.
+
 Idempotent: re-running drops every existing source=="backtest" op and
 regenerates them, preserving any live source=="auto"/"manual" ops.
 
@@ -100,12 +106,12 @@ def main() -> None:
     print(f"\n回放区间 {first.date()} → {last.date()}   "
           f"每层固定 ¥{grid_mod.GRID_BASE_YUAN:,.0f} (回测口径)\n")
     header = (f"{'资产':<16}{'周期':>5}{'层数':>5}{'op':>5}"
-              f"{'投入合计':>12}{'已实现':>11}{'在用':>11}")
+              f"{'投入合计':>12}{'零成本份额':>12}{'资金占用':>12}")
     print(header)
     print("-" * len(header.encode("gbk", errors="replace")))
 
     all_ops = {}
-    total_ops = total_invested = total_realized = total_inuse = 0.0
+    total_ops = total_invested = total_free = total_inuse = 0.0
     for name, s in prices.items():
         result = grid_mod.run_compound_grid(s, trigger_mode="window")
         cycles, open_cycle = result["cycles"], result["open_cycle"]
@@ -116,21 +122,26 @@ def main() -> None:
         if open_cycle:
             invested += result["open_invested"]
         layers = sum(c["num_buys"] for c in cycles) + len(open_cycle or [])
-        in_use = result["open_shares"] * s.iloc[-1] if open_cycle else 0.0
+        last_px = s.iloc[-1]
+        # 资金占用 = 周期内持仓 + 永久持有的零成本份额 (新出场规则下, 出场
+        # 只卖成本金额, 浮盈全部沉淀在零成本份额里, 已实现盈亏恒为 0)。
+        open_value = result["open_shares"] * last_px if open_cycle else 0.0
+        free_value = result["free_shares"] * last_px
+        in_use = open_value + free_value
 
         total_ops += len(ops)
         total_invested += invested
-        total_realized += result["cum_realized"]
+        total_free += free_value
         total_inuse += in_use
         print(f"{name:<16}{len(cycles):>5}{layers:>5}{len(ops):>5}"
-              f"{invested:>12,.0f}{result['cum_realized']:>11,.0f}"
-              f"{in_use:>11,.0f}")
+              f"{invested:>12,.0f}{free_value:>12,.0f}{in_use:>12,.0f}")
         print(f"{'':<16}{'':>5}{'':>5}{'':>5}"
-              f"{'  ↳ 层数 × ¥10,000 =':>12}{layers * grid_mod.GRID_BASE_YUAN:>11,.0f}")
+              f"{'  ↳ 层数 × ¥10,000 =':>12}{layers * grid_mod.GRID_BASE_YUAN:>11,.0f}"
+              f"{'已实现 (恒为 0)':>12}{result['cum_realized']:>12,.0f}")
 
     print("-" * len(header.encode("gbk", errors="replace")))
     print(f"{'合计':<16}{'':>5}{'':>5}{int(total_ops):>5}"
-          f"{total_invested:>12,.0f}{total_realized:>11,.0f}{total_inuse:>11,.0f}")
+          f"{total_invested:>12,.0f}{total_free:>12,.0f}{total_inuse:>12,.0f}")
 
     # Reconciliation: every layer costs exactly GRID_BASE_YUAN, so the sum of
     # entry shares × price must equal layers × base.

@@ -147,11 +147,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.159,
-        "shares": 18238.22,
-        "note": "回测·止盈",
-        "pnl": 1138.1,
+        "shares": 17256.26,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 2,
-        "total_shares_exited": 18238.22
+        "total_shares_exited": 18238.22,
+        "shares_to_free": 981.97
       },
       {
         "date": "2022-03-15",
@@ -166,11 +167,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.197,
-        "shares": 8665.51,
-        "note": "回测·止盈",
-        "pnl": 372.62,
+        "shares": 8354.22,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 8665.51
+        "total_shares_exited": 8665.51,
+        "shares_to_free": 311.29
       },
       {
         "date": "2022-10-28",
@@ -185,11 +187,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.217,
-        "shares": 8605.85,
-        "note": "回测·止盈",
-        "pnl": 473.32,
+        "shares": 8216.93,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 8605.85
+        "total_shares_exited": 8605.85,
+        "shares_to_free": 388.93
       },
       {
         "date": "2023-10-24",
@@ -212,11 +215,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.269,
-        "shares": 16611.85,
-        "note": "回测·止盈",
-        "pnl": 1080.43,
+        "shares": 15760.44,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 2,
-        "total_shares_exited": 16611.85
+        "total_shares_exited": 16611.85,
+        "shares_to_free": 851.4
       },
       {
         "date": "2024-08-28",
@@ -239,11 +243,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.368,
-        "shares": 15817.48,
-        "note": "回测·止盈",
-        "pnl": 1638.32,
+        "shares": 14619.88,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 2,
-        "total_shares_exited": 15817.48
+        "total_shares_exited": 15817.48,
+        "shares_to_free": 1197.6
       },
       {
         "date": "2025-04-07",
@@ -258,11 +263,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.318,
-        "shares": 7861.64,
-        "note": "回测·止盈",
-        "pnl": 361.64,
+        "shares": 7587.25,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 7861.64
+        "total_shares_exited": 7861.64,
+        "shares_to_free": 274.38
       },
       {
         "date": "2025-12-11",
@@ -277,11 +283,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.395,
-        "shares": 7396.45,
-        "note": "回测·止盈",
-        "pnl": 318.05,
+        "shares": 7168.46,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 7396.45
+        "total_shares_exited": 7396.45,
+        "shares_to_free": 227.99
       },
       {
         "date": "2026-06-18",
@@ -304,13 +311,15 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.394,
-        "shares": 15151.43,
-        "note": "回测·止盈",
-        "pnl": 1121.09,
+        "shares": 14347.2,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 2,
-        "total_shares_exited": 15151.43
+        "total_shares_exited": 15151.43,
+        "shares_to_free": 804.23
       }
-    ]
+    ],
+    "free_shares": 0.0
   },
   "黄金ETF博时": {
     "in_cycle": true,
@@ -446,6 +455,14 @@
     "cum_realized": 0.0,
     "ops": [
       {
+        "date": "2026-10-23",
+        "op": "open",
+        "source": "auto",
+        "price": 8.12,
+        "shares": 1231.5270935960593,
+        "note": "窗口突破开仓"
+      },
+      {
         "date": "2020-11-10",
         "op": "open",
         "source": "backtest",
@@ -482,11 +499,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 4.065,
-        "shares": 10835.52,
-        "note": "回测·止盈",
-        "pnl": 4046.37,
+        "shares": 9840.1,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 4,
-        "total_shares_exited": 10835.52
+        "total_shares_exited": 10835.52,
+        "shares_to_free": 995.42
       },
       {
         "date": "2026-06-10",
@@ -509,21 +527,23 @@
         "op": "tp",
         "source": "backtest",
         "price": 8.981,
-        "shares": 2356.93,
-        "note": "回测·止盈",
-        "pnl": 1167.58,
+        "shares": 2226.92,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 2,
-        "total_shares_exited": 2356.93
+        "total_shares_exited": 2356.93,
+        "shares_to_free": 130.01
       },
       {
         "date": "2026-10-23",
         "op": "open",
-        "source": "auto",
-        "price": 8.12,
-        "shares": 1231.5270935960593,
-        "note": "窗口突破开仓"
+        "source": "backtest",
+        "price": 8.18,
+        "shares": 1222.49,
+        "note": "回测·窗口突破开仓"
       }
-    ]
+    ],
+    "free_shares": 0.0
   },
   "可转债ETF博时": {
     "in_cycle": true,
@@ -659,6 +679,14 @@
     "cum_realized": 0.0,
     "ops": [
       {
+        "date": "2026-10-23",
+        "op": "open",
+        "source": "auto",
+        "price": 12.32,
+        "shares": 811.6883116883116,
+        "note": "窗口突破开仓"
+      },
+      {
         "date": "2020-11-06",
         "op": "open",
         "source": "backtest",
@@ -671,11 +699,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 10.665,
-        "shares": 969.46,
-        "note": "回测·止盈",
-        "pnl": 339.31,
+        "shares": 937.65,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 969.46
+        "total_shares_exited": 969.46,
+        "shares_to_free": 31.82
       },
       {
         "date": "2022-03-25",
@@ -690,11 +719,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 11.212,
-        "shares": 920.56,
-        "note": "回测·止盈",
-        "pnl": 321.27,
+        "shares": 891.9,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 920.56
+        "total_shares_exited": 920.56,
+        "shares_to_free": 28.65
       },
       {
         "date": "2022-12-19",
@@ -709,11 +739,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 11.313,
-        "shares": 911.66,
-        "note": "回测·止盈",
-        "pnl": 313.61,
+        "shares": 883.94,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 911.66
+        "total_shares_exited": 911.66,
+        "shares_to_free": 27.72
       },
       {
         "date": "2023-09-14",
@@ -744,11 +775,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 11.572,
-        "shares": 2771.7,
-        "note": "回测·止盈",
-        "pnl": 2074.09,
+        "shares": 2592.46,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 3,
-        "total_shares_exited": 2771.7
+        "total_shares_exited": 2771.7,
+        "shares_to_free": 179.23
       },
       {
         "date": "2026-09-04",
@@ -773,16 +805,9 @@
         "price": 12.634,
         "shares": 791.51,
         "note": "回测·金字塔第3层"
-      },
-      {
-        "date": "2026-10-23",
-        "op": "open",
-        "source": "auto",
-        "price": 12.32,
-        "shares": 811.6883116883116,
-        "note": "窗口突破开仓"
       }
-    ]
+    ],
+    "free_shares": 0.0
   },
   "纳斯达克ETF华夏": {
     "in_cycle": false,
@@ -924,11 +949,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.039,
-        "shares": 9950.25,
-        "note": "回测·止盈",
-        "pnl": 338.31,
+        "shares": 9624.64,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 9950.25
+        "total_shares_exited": 9950.25,
+        "shares_to_free": 325.61
       },
       {
         "date": "2022-01-21",
@@ -967,11 +993,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.221,
-        "shares": 35728.31,
-        "note": "回测·止盈",
-        "pnl": 3624.27,
+        "shares": 32760.03,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 4,
-        "total_shares_exited": 35728.31
+        "total_shares_exited": 35728.31,
+        "shares_to_free": 2968.28
       },
       {
         "date": "2022-05-12",
@@ -986,11 +1013,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.054,
-        "shares": 9794.32,
-        "note": "回测·止盈",
-        "pnl": 323.21,
+        "shares": 9487.67,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 9794.32
+        "total_shares_exited": 9794.32,
+        "shares_to_free": 306.65
       },
       {
         "date": "2022-05-19",
@@ -1005,11 +1033,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.081,
-        "shares": 9803.92,
-        "note": "回测·止盈",
-        "pnl": 598.04,
+        "shares": 9250.69,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 9803.92
+        "total_shares_exited": 9803.92,
+        "shares_to_free": 553.23
       },
       {
         "date": "2022-06-13",
@@ -1024,11 +1053,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.03,
-        "shares": 10080.65,
-        "note": "回测·止盈",
-        "pnl": 383.06,
+        "shares": 9708.74,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 10080.65
+        "total_shares_exited": 10080.65,
+        "shares_to_free": 371.91
       },
       {
         "date": "2025-04-07",
@@ -1043,11 +1073,12 @@
         "op": "tp",
         "source": "backtest",
         "price": 1.644,
-        "shares": 6309.15,
-        "note": "回测·止盈",
-        "pnl": 372.24,
+        "shares": 6082.73,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 1,
-        "total_shares_exited": 6309.15
+        "total_shares_exited": 6309.15,
+        "shares_to_free": 226.42
       },
       {
         "date": "2026-03-20",
@@ -1070,12 +1101,14 @@
         "op": "tp",
         "source": "backtest",
         "price": 2.221,
-        "shares": 9517.54,
-        "note": "回测·止盈",
-        "pnl": 1138.46,
+        "shares": 9004.95,
+        "note": "回测·回本出场",
+        "pnl": 0.0,
         "num_buys_exited": 2,
-        "total_shares_exited": 9517.54
+        "total_shares_exited": 9517.54,
+        "shares_to_free": 512.59
       }
-    ]
+    ],
+    "free_shares": 0.0
   }
 }

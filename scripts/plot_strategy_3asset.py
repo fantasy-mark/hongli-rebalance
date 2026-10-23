@@ -125,14 +125,18 @@ def main() -> None:
             prices[n], pos_yuan=grid_mod.GRID_BASE_YUAN,
         )["history"]
 
-    v3_total = (sum(h["current_value"] for h in v3_hist.values())
+    # 资金占用 = 在周期内的持仓 + 永久持有的零成本份额 (in_use)。
+    # 止盈只卖成本金额, 所以收益全在 free_value 里, 只看 current_value 会漏。
+    v3_total = (sum(h["in_use"] for h in v3_hist.values())
                 .reindex(prices.index).fillna(0.0))
-    v3_stack = pd.concat({n: h["current_value"] for n, h in v3_hist.items()},
+    v3_stack = pd.concat({n: h["in_use"] for n, h in v3_hist.items()},
                           axis=1).reindex(prices.index).fillna(0.0)
 
     realized = sum(h["cum_realized"] for h in v3_hist.values())
     unrealized = sum(h["unrealized_pnl"] for h in v3_hist.values())
-    v3_pnl = (realized + unrealized).reindex(prices.index).ffill().fillna(0.0)
+    free_value = sum(h["free_value"] for h in v3_hist.values())
+    v3_pnl = ((realized + unrealized + free_value)
+              .reindex(prices.index).ffill().fillna(0.0))
     GRID_DENOM = max(v3_total.max(), 1.0)
     v3_pnl_pct = v3_pnl / GRID_DENOM * 100
     v3_roi_log = pd.Series(_pct_to_log(v3_pnl_pct.values), index=v3_pnl_pct.index)

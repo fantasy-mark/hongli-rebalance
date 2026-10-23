@@ -4,6 +4,12 @@
 阈值保持 ±3pp; 等权; 网格 v3 (first_buy)
 
 输出综合对比表: 3pp + 网格 PnL + CAGR + Sharpe + MaxDD
+
+WARNING (2026-10-23 起): 网格出场规则已改为「只卖成本金额」(见
+src/grid.py:split_take_profit) —— 正常出场时已实现盈亏恒为 0, 浮盈转成
+永久持有的零成本份额。所以本脚本的 "网格 PnL" (取自 cum_realized) 会
+恒为 0, 输出不再代表网格的真实收益。要看真实收益用
+scripts/compare_grid_exit_mode.py。
 """
 from __future__ import annotations
 

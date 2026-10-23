@@ -15,7 +15,10 @@ payload on argv[1] with shape:
 
 For each op, the math is run inlined (mirroring scripts/apply_holdings.py)
 so the workflow doesn't need to install pandas/akshare. The mutator is
-the same as src/grid.py:manual_op. State is read from
+the same as src/grid.py:manual_op, INCLUDING the take-profit rule: a `tp`
+sells only `total_invested / price` shares (recovering exactly the
+principal) and transfers the remainder to permanently-held `free_shares`,
+so realized P&L is 0 on a normal exit. State is read from
 data/grid_state.json, mutated in memory, and written back atomically.
 
 Validation rules:
@@ -69,13 +72,41 @@ def fail(msg: str) -> None:
 # so this script has no external imports beyond stdlib).
 # -----------------------------------------------------------------------------
 
+def split_take_profit(total_shares: float, total_invested: float,
+                      price: float) -> dict:
+    """MIRROR of src/grid.py:split_take_profit — keep the two in sync.
+
+    This script cannot import src/grid.py (stdlib only, so the workflow
+    needs no pandas/akshare), so the rule is duplicated deliberately:
+    sell `total_invested / price` shares to recover exactly the principal,
+    transfer the remainder to permanently-held zero-cost shares. Realized
+    P&L is therefore 0 unless the exit is below cost, in which case we
+    sell everything and book the loss (reachable only via a manual tp —
+    the auto trigger price is always above avg cost).
+    """
+    if not price > 0:
+        raise ValueError(f"price must be > 0, got {price}")
+    if total_shares <= 0:
+        return {"shares_sold": 0.0, "proceeds": 0.0, "free_gained": 0.0, "pnl": 0.0}
+    want = total_invested / price
+    if want >= total_shares:
+        proceeds = total_shares * price
+        return {"shares_sold": total_shares, "proceeds": proceeds,
+                "free_gained": 0.0, "pnl": proceeds - total_invested}
+    return {"shares_sold": want, "proceeds": total_invested,
+            "free_gained": total_shares - want, "pnl": 0.0}
+
+
 def inline_manual_op(state: dict, op: str, today: str,
                      price: float, shares: float,
                      note: str = "") -> tuple[dict, float]:
     """Apply a manual grid operation. Returns (new_state, pnl_delta).
 
-    pnl_delta is non-zero only for `tp` (positive or negative realized P&L
-    booked into cum_realized). For `open`/`add` it is 0.
+    For `tp` the "sell cost only" rule applies (see split_take_profit):
+    pnl_delta is 0 on a normal above-cost exit, because only the principal
+    is sold and the remainder moves to permanently-held `free_shares`. It
+    is negative only if the user exits BELOW cost, where we sell out and
+    book the loss. For `open`/`add` it is 0.
 
     Raises ValueError on precondition failure.
     """
@@ -98,6 +129,7 @@ def inline_manual_op(state: dict, op: str, today: str,
         "last_prices": list(state.get("last_prices", [])),
         "cum_realized": float(state.get("cum_realized", 0.0)),
         "ops": list(state.get("ops", [])),
+        "free_shares": float(state.get("free_shares", 0.0)),
     }
     pnl_delta = 0.0
 
@@ -121,21 +153,24 @@ def inline_manual_op(state: dict, op: str, today: str,
         entries = new_state["entries"]
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
-        exit_value = total_shares * float(price)
-        pnl = exit_value - total_invested
+        split = split_take_profit(total_shares, total_invested, float(price))
+        new_state["free_shares"] += split["free_gained"]
         # Capture per-event exit stats BEFORE clearing `entries`.
         new_state["ops"].append({
             "date": today, "op": "tp", "source": "manual",
-            "price": float(price), "shares": float(total_shares),
+            "price": float(price), "shares": float(split["shares_sold"]),
             "note": note,
-            "pnl": float(pnl),
+            "pnl": float(split["pnl"]),
             "num_buys_exited": len(entries),
-            "total_shares_exited": float(total_shares),
+            # "出场"的全部份额 = 卖出的 + 转成零成本的 (== 原持仓)
+            "total_shares_exited": float(split["shares_sold"]
+                                         + split["free_gained"]),
+            "shares_to_free": float(split["free_gained"]),
         })
-        new_state["cum_realized"] += pnl
+        new_state["cum_realized"] += split["pnl"]
         new_state["entries"] = []
         new_state["in_cycle"] = False
-        pnl_delta = pnl
+        pnl_delta = split["pnl"]
 
     return new_state, pnl_delta
 
@@ -256,6 +291,7 @@ def main() -> None:
                 "in_cycle": False, "entries": [],
                 "last_prices": [], "cum_realized": 0.0,
                 "ops": [],
+                "free_shares": 0.0,   # 零成本份额, 止盈时转入, 永不再卖
             }
         # Compat: legacy last_120d_min → seed last_prices with it
         if not state[name].get("last_prices") and state[name].get("last_120d_min") is not None:

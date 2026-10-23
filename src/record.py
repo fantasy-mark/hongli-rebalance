@@ -508,6 +508,11 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
             "current_value": snap["current_value"],
             "unrealized_pnl": snap["unrealized_pnl"],
             "return_pct": snap["return_pct"],
+            # 零成本份额: 止盈时转出, 此后永久持有不再卖。即使 in_cycle=False
+            # 也可能非零 —— 消费方不能靠 in_cycle 判断"这个资产没有市值"。
+            "free_shares": snap["free_shares"],
+            "free_value": snap["free_value"],
+            "in_use": snap["in_use"],
             "trigger_pct": round(trigger_pct, 2),
             "trigger_kind": trigger_kind,
         })
@@ -665,7 +670,9 @@ def main() -> None:
         tag = s["signal"] or "hold"
         print(f"    {s['name']:<14} {tag:<4}  layer=¥{s['layer_yuan']:,.0f}  "
               f"in_cycle={s['in_cycle']}  buys={s['num_buys']}  "
-              f"unreal={s['unrealized_pnl']:+,.0f}")
+              f"unreal={s['unrealized_pnl']:+,.0f}  "
+              f"free={s['free_shares']:,.0f}份(¥{s['free_value']:,.0f})  "
+              f"in_use=¥{s['in_use']:,.0f}")
 
     write_github_output(today, total, any_signal)
 

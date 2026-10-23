@@ -2,7 +2,7 @@
 
 Layout (2 stacked subplots, shared x-axis):
   Top:    N ETF buy-and-hold + 3pp rebalance + 网格 ROI (%, log scale)
-  Bottom: 网格 资金占用 堆叠 (per-asset ¥)
+  Bottom: 网格 资金占用 堆叠 (per-asset ¥, 含永久持有的零成本份额)
 
 N is derived dynamically from `data/holdings.json` (whichever ETFs the
 user currently holds, codes must be registered in `src.record.ETF_DEFS`).
@@ -313,11 +313,16 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     # Replay grid with trigger_mode="window" (120-day rolling low) — the live rule.
     grid_state = _load_grid_state_safe()
     grid_histories = _replay_grid_for_chart(etf_w, grid_state)
-    grid_in_use_by_asset = {n: grid_histories[n]["current_value"] for n in ASSET_NAMES}
+    # 资金占用 = 在周期内的持仓市值 + 永久持有的零成本份额市值 (`in_use`).
+    # 只算 current_value 会漏掉止盈后仍持有的部分, 分母被低估 → ROI 虚高。
+    grid_in_use_by_asset = {n: grid_histories[n]["in_use"] for n in ASSET_NAMES}
     grid_in_use_total = sum(grid_in_use_by_asset[n] for n in ASSET_NAMES)
+    # 收益 = 已实现 + 在周期内浮盈 + 零成本份额市值.
+    # 止盈只卖成本金额, 所以 cum_realized 恒为 0, 全部收益都在 free_value 里。
     grid_pnl_total = (
         sum(grid_histories[n]["cum_realized"] for n in ASSET_NAMES)
         + sum(grid_histories[n]["unrealized_pnl"] for n in ASSET_NAMES)
+        + sum(grid_histories[n]["free_value"] for n in ASSET_NAMES)
     )
 
     # Clip to common window

@@ -55,7 +55,23 @@ def fmt_delta_pp(d: float) -> str:
 
 
 def fmt_signal(sig: str | None) -> str:
-    return {"buy": "⚠ 买入", "sell": "✓ 止盈"}.get(sig or "", "持有")
+    # "sell" 不再是止盈: 只卖成本金额, 已实现盈亏恒为 0, 浮盈转成永久持有的
+    # 零成本份额。叫它"止盈"会让人以为兑现了收益。
+    return {"buy": "⚠ 买入", "sell": "✓ 回本"}.get(sig or "", "持有")
+
+
+def _grid_free_note(grid_signals: list[dict]) -> str:
+    """One-line summary of permanently-held zero-cost shares.
+
+    Only shown once something has actually been transferred, so the email
+    stays quiet until the rule has bitten.
+    """
+    total_value = sum(float(s.get("free_value", 0.0) or 0.0)
+                      for s in grid_signals)
+    if total_value <= 0:
+        return ""
+    return (f"零成本份额(永久持有, 不再卖出): 合计市值 "
+            f"{fmt_money(total_value)}  ← 网格的全部收益都在这里")
 
 
 def _qdii_premium_view(p: dict) -> tuple[str, str, str]:
@@ -158,28 +174,38 @@ def build_text(r: dict) -> str:
     grid_signals = r.get("grid_signals", [])
     if grid_signals:
         lines += [
-            "[复合网格]  120 日新低 + 3% 加仓 + 3% 止盈",
-            f"{'名称':<14}{'信号':>8}{'层数':>5}{'均价':>10}{'现价':>10}{'浮盈%':>8}{'距下次触发':>13}",
-            "-" * 75,
+            "[复合网格]  120 日新低 + 3% 加仓 + 3% 回本止盈(余量转零成本永久持有)",
+            f"{'名称':<14}{'信号':>8}{'层数':>5}{'均价':>10}{'现价':>10}"
+            f"{'资金占用(¥)':>11}{'浮盈%':>8}{'距下次触发':>13}",
+            "-" * 86,
         ]
         for s in grid_signals:
             sig_label = fmt_signal(s.get("signal"))
             trig = s.get("trigger_pct", 0.0)
             kind = s.get("trigger_kind", "open")
             if kind == "tp":
-                trig_label = f"距止盈 {trig:+.2f}%"
+                trig_label = f"距回本 {trig:+.2f}%"
             else:
                 trig_label = f"距开仓 {trig:+.2f}%"
+            # 浮盈% 只在周期内有意义 (唯一有成本基准的部分); 不在周期里时
+            # 显示 "—", 免得 "+0.00%" 被读成"没赚没亏"。
+            in_cycle = bool(s.get("in_cycle", False))
+            ret = (f"{s['return_pct']:>+7.2f}%" if in_cycle else f"{'—':>8}")
+            in_use = float(s.get("in_use", s.get("current_value", 0.0)) or 0.0)
+            use = (f"{in_use:>11,.0f}" if in_use > 0 else f"{'—':>11}")
             lines.append(
                 f"{s['name']:<14}{sig_label:>8}{s['num_buys']:>5}"
-                f"{s['avg_cost']:>10.3f}{s['price']:>10.3f}{s['return_pct']:>+7.2f}%{trig_label:>13}"
+                f"{s['avg_cost']:>10.3f}{s['price']:>10.3f}{use}{ret}{trig_label:>13}"
             )
         lines += [
-            "-" * 75,
+            "-" * 86,
             f"加仓额(本笔): ¥{grid_signals[0]['layer_yuan']:,.0f}  "
             f"= ¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%",
-            "",
         ]
+        free_note = _grid_free_note(grid_signals)
+        if free_note:
+            lines.append(free_note)
+        lines.append("")
 
     lines += [
         "— 自动化 GitHub Actions 发送",
@@ -214,7 +240,7 @@ def _grid_row(s: dict) -> str:
         badge_text = "⚠ 买入"
     elif sig == "sell":
         badge_color = COLOR_OK
-        badge_text = "✓ 止盈"
+        badge_text = "✓ 回本"
     else:
         badge_color = "#999"
         badge_text = "— 持有"
@@ -222,7 +248,12 @@ def _grid_row(s: dict) -> str:
         f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
         f'background:{badge_color};color:#fff;font-size:12px;font-weight:600;">{badge_text}</span>'
     )
+    # 浮盈%: 只在周期内有意义 (那是唯一有成本基准的部分)。不在周期里时
+    # 显示 "—" 而不是 "+0.00%" —— 后者会被读成"没赚没亏", 而实际上资产
+    # 可能正持有一堆零成本份额, 收益全在「资金占用」那一栏里。
+    in_cycle = bool(s.get("in_cycle", False))
     ret_color = COLOR_OK if s["unrealized_pnl"] >= 0 else COLOR_WARN
+    ret_cell = (f'{s["return_pct"]:+.2f}%' if in_cycle else "—")
     # "距下次触发" 一栏:
     #   待机 → 现价相对窗口最低的距离 (越大越安全)
     #   持仓 → 现价相对止盈位的距离 (越小越接近清仓)
@@ -232,7 +263,7 @@ def _grid_row(s: dict) -> str:
         if trigger_pct <= 0.5:
             trig_color = COLOR_WARN; trig_label = f"近止盈 {-trigger_pct:+.2f}%"
         else:
-            trig_color = "#666"; trig_label = f"距止盈 {trigger_pct:+.2f}%"
+            trig_color = "#666"; trig_label = f"距回本 {trigger_pct:+.2f}%"
     else:
         if trigger_pct <= 0.5:
             trig_color = COLOR_WARN; trig_label = f"近开仓 {-trigger_pct:+.2f}%"
@@ -240,6 +271,10 @@ def _grid_row(s: dict) -> str:
             trig_color = "#E67E22"; trig_label = f"距开仓 {trigger_pct:+.2f}%"
         else:
             trig_color = COLOR_OK; trig_label = f"距开仓 {trigger_pct:+.2f}%"
+    # 资金占用 = 周期内持仓 + 永久持有的零成本份额。in_cycle=False 不再代表
+    # 市值归零 —— 止盈转出的零成本份额一直躺在账上。
+    in_use = float(s.get("in_use", s.get("current_value", 0.0)) or 0.0)
+    value_cell = f"¥{in_use:,.0f}" if in_use > 0 else "—"
     return (
         f'<tr>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};font-weight:600;">{s["name"]}</td>'
@@ -247,7 +282,8 @@ def _grid_row(s: dict) -> str:
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{s["num_buys"]}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{s["avg_cost"]:.3f}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">¥{s["price"]:.3f}</td>'
-        f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{ret_color};font-weight:600;">{s["return_pct"]:+.2f}%</td>'
+        f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{value_cell}</td>'
+        f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{ret_color};font-weight:600;">{ret_cell}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{trig_color};font-weight:600;">{trig_label}</td>'
         f'</tr>'
     )
@@ -328,11 +364,19 @@ def build_html(r: dict, pages_url: str = "") -> str:
         any_grid_action = any(s.get("signal") for s in grid_signals)
         grid_accent = COLOR_WARN if any_grid_action else COLOR_GRID
         grid_title = "⚠ 网格信号" if any_grid_action else "✓ 网格无操作"
+        free_total = sum(float(s.get("free_value", 0.0) or 0.0)
+                          for s in grid_signals)
+        grid_free_note_html = (
+            f'<div style="font-size:12px;color:#666;margin-top:10px;">'
+            f'零成本份额(永久持有, 不再卖出): 合计市值 '
+            f'<strong>{fmt_money(free_total)}</strong>'
+            f' ← 网格的全部收益都在这里</div>'
+        ) if free_total > 0 else ""
         grid_section = f"""
     <div style="padding:20px 24px;border-top:1px solid #eee;">
       <div style="background:{grid_accent};padding:10px 16px;color:#fff;border-radius:6px;margin-bottom:12px;font-weight:bold;font-size:14px;">{grid_title}</div>
       <div style="font-size:12px;color:#666;margin-bottom:10px;">
-        复合网格 · 120 日新低 + 3% 加仓 + 3% 止盈 · 加仓额 <strong>¥{layer:,.0f}</strong>
+        复合网格 · 120 日新低 + 3% 加仓 + 3% 回本止盈(余量转零成本永久持有) · 加仓额 <strong>¥{layer:,.0f}</strong>
         (¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%)
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
@@ -343,12 +387,14 @@ def build_html(r: dict, pages_url: str = "") -> str:
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">层数</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">均价</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">现价</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">资金占用</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">浮盈%</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">距下次触发</th>
           </tr>
         </thead>
         <tbody>{grid_rows}</tbody>
       </table>
+      {grid_free_note_html}
     </div>
 """
 
@@ -442,7 +488,7 @@ def build_subject(r: dict) -> str:
     elif any_buy:
         tag = "⚠ 网格买入"
     elif any_sell:
-        tag = "✓ 网格止盈"
+        tag = "✓ 网格回本"
     else:
         tag = "✓ OK"
     return f"[{tag}] 稳健再平衡 {r['date']} 总市值 {fmt_money(r['total'])}"
