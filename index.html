@@ -31,7 +31,7 @@
       <section class="nested nested-grid" id="grid-ops-log-section">
         <h3>复合网格 操作记录</h3>
         <p class="muted">
-          复合网格 <strong>虚拟</strong>开/加/止盈的逐笔记录，
+          复合网格 <strong>虚拟</strong>开/加/回本的逐笔记录，
           来自 <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>
           的每资产 <code>ops</code> 字段。按日期倒序，最多显示最新 10 笔（可滚动）。
           <code>[自动]</code> 蓝色 = record.py 日触发；<code>[手动]</code> 橙色 = 页面编辑器操作；
@@ -84,7 +84,7 @@
       <section class="nested nested-grid" id="grid-editor-section">
         <h3>复合网格</h3>
         <p class="muted">
-          复合网格是<strong>虚拟</strong>的（不与真实交易挂钩），但开仓/加仓/止盈会修改
+          复合网格是<strong>虚拟</strong>的（不与真实交易挂钩），但开仓/加仓/回本会修改
           <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
           操作后:
           1) 立即重跑 <code>daily.yml</code>，约 30 秒后 history + chart + 邮件同步更新;
@@ -94,7 +94,15 @@
         <p class="muted" style="font-size:12px;">
           <code>open</code> = 强制开仓 (要求 <code>in_cycle=false</code>)；
           <code>add</code> = 加仓 (要求 <code>in_cycle=true</code>)；
-          <code>tp</code> = 止盈 (要求 <code>in_cycle=true</code>，按 manual 价算 realized P&L 累加到 <code>cum_realized</code>)。
+          <code>tp</code> = 回本出场 (要求 <code>in_cycle=true</code>)。
+        </p>
+        <p class="muted" style="font-size:12px;">
+          <strong>出场规则（重要）：</strong>止盈不再兑现浮盈，只卖出
+          <code>累计投入 / 出场价</code> 份，恰好回本；余下的份额转成
+          <strong>永久持有的零成本份额</strong>（<code>free_shares</code>），
+          此后<strong>永不再卖</strong>。所以已实现盈亏在正常出场时恒为 0，
+          网格的全部收益都沉淀在零成本份额的市值里 —— 这套规则实质上把网格
+          变成了「买入持有」。只有在<strong>低于成本手动出场</strong>时才会真的亏损。
         </p>
 
         <div id="grid-list" class="trade-list"></div>
@@ -145,10 +153,11 @@
       </table>
       <p class="muted" style="font-size:12px; margin-top:0.4em;">
         每行一笔 <strong>资金操作</strong>。
-        市值 = 已持仓 (3pp再平衡: ETF 持仓; 复合网格: in_cycle 虚拟仓位的当前价估值)；
+        市值 = 已持仓 (3pp再平衡: ETF 持仓; 复合网格: 虚拟仓位<strong>资金占用</strong>的当前价估值，
+        含永久持有的零成本份额)；
         余额 = 可立即动用的现金 (3pp再平衡: 真实现金; 复合网格: 虚拟现金)；
         两者分别独立。 复合网格是<strong>虚拟</strong>的（不与真实交易挂钩），
-        但开仓/加仓/止盈会修改
+        但开仓/加仓/回本会修改
         <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
       </p>
       <p class="muted" style="font-size:12px;">

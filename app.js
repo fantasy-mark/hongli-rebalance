@@ -167,16 +167,30 @@ function renderLatest(rec) {
     const sig = s.signal;
     let sigClass = 'ok', sigText = '— 持有';
     if (sig === 'buy') { sigClass = 'warn'; sigText = '⚠ 买入'; }
-    else if (sig === 'sell') { sigClass = 'ok'; sigText = '✓ 止盈'; }
-    // 距下次触发: 待机=距开仓(距窗口最低), 持仓=距止盈
+    // "sell" 不再是止盈: 只卖出成本金额回本, 余量转成永久持有的零成本份额。
+    // 已实现盈亏恒为 0, 叫它"止盈"会让人以为收益已经兑现了。
+    else if (sig === 'sell') { sigClass = 'ok'; sigText = '✓ 回本'; }
+    // 距下次触发: 待机=距开仓(距窗口最低), 持仓=距回本出场位
     const trigPct = s.trigger_pct ?? 0;
     const trigKind = s.trigger_kind || 'open';
-    const trigPrefix = trigKind === 'tp' ? '距止盈' : '距开仓';
+    const trigPrefix = trigKind === 'tp' ? '距回本' : '距开仓';
     let trigClass = 'ok';
     if (trigKind === 'tp' && trigPct <= 0.5) trigClass = 'warn';
     if (trigKind === 'open') {
       if (trigPct <= 0.5) trigClass = 'warn';
       else if (trigPct <= 2.0) trigClass = 'warn';
+    }
+    // 资金占用 = 周期内持仓 + 永久持有的零成本份额 (in_use)。
+    // in_cycle=false 不再代表市值归零 —— 止盈转出的零成本份额仍在账上。
+    const inUse = Number(s.in_use ?? s.current_value ?? 0);
+    const freeValue = Number(s.free_value || 0);
+    let valueCell = inUse > 0 ? '¥' + Math.round(inUse).toLocaleString() : '—';
+    if (inUse > 0) {
+      // Tooltip 拆出零成本部分: 那部分没有成本基准, 浮盈永远是 100%。
+      const tip = freeValue > 0
+        ? ` title="含永久持有的零成本份额 ¥${Math.round(freeValue).toLocaleString()}"`
+        : '';
+      valueCell = `<span${tip}>${valueCell}</span>`;
     }
     return `<tr>
       <td>${s.name}</td>
@@ -184,8 +198,8 @@ function renderLatest(rec) {
       <td>${s.num_buys}</td>
       <td>¥${s.avg_cost.toFixed(3)}</td>
       <td>¥${s.price.toFixed(3)}</td>
-      <td>${s.in_cycle ? '¥' + Math.round(s.current_value).toLocaleString() : '—'}</td>
-      <td class="${s.unrealized_pnl >= 0 ? 'ok' : 'warn'}">${s.return_pct >= 0 ? '+' : ''}${s.return_pct.toFixed(2)}%</td>
+      <td>${valueCell}</td>
+      <td class="${s.unrealized_pnl >= 0 ? 'ok' : 'warn'}">${s.in_cycle ? (s.return_pct >= 0 ? '+' : '') + s.return_pct.toFixed(2) + '%' : '—'}</td>
       <td class="${trigClass}">${trigPrefix} ${trigPct >= 0 ? '+' : ''}${trigPct.toFixed(2)}%</td>
     </tr>`;
   }).join('');
@@ -210,7 +224,7 @@ function renderLatest(rec) {
     <table>
       <thead>
         <tr>
-          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>市值</th><th>浮盈%</th><th>距下次触发</th>
+          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>资金占用</th><th>浮盈%</th><th>距下次触发</th>
         </tr>
       </thead>
       <tbody>${gridRows}</tbody>
@@ -374,8 +388,10 @@ function computeGridMarketValue(latestRec) {
   const signals = latestRec?.grid_signals || [];
   let total = 0;
   for (const s of signals) {
-    if (!s.in_cycle) continue;
-    total += Number(s.current_value || 0);
+    // 资金占用 = 周期内持仓 + 永久持有的零成本份额。止盈转出的零成本份额
+    // 永不再卖, 所以不能再用 in_cycle 来判断"这个资产没有市值"。
+    const inUse = Number(s.in_use ?? s.current_value ?? 0);
+    if (inUse > 0) total += inUse;
   }
   return total;
 }
@@ -406,22 +422,24 @@ function renderCashPoolSummary(latestRec, holdings) {
     REBALANCE_CODES_LIST
       .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
       .join(''));
-  // 复合网格 资产 column: only show assets with active grid positions
-  // (in_cycle=true).  The 复合网格 signal state in 最新持仓's nested
-  // h3 ("— 持有" vs "未持仓") is the source of truth — if all grid
-  // signals are 未持仓, then 资金管理's 资产 column is empty too,
-  // matching the nested-section display.  This keeps the two views
-  // (最新持仓 h3 grid table + 资金管理 summary row) consistent: both
-  // reflect the same in_cycle snapshot.
+  // 复合网格 资产 column: only show assets the strategy actually holds.
+  // The 复合网格 signal state in 最新持仓's nested h3 (the 资金占用 column:
+  // "—" vs a number) is the source of truth — if all grid rows show "—",
+  // then 资金管理's 资产 column is empty too, matching the nested-section
+  // display.  This keeps the two views (最新持仓 h3 grid table + 资金管理
+  // summary row) consistent: both reflect the same snapshot.
+  //
+  // "Holds" now means in_use > 0, not in_cycle == true: 止盈把浮盈转成
+  // 永久持有的零成本份额之后, 资产可以不在周期里却仍然持有真金白银。
   // grid_signals records only carry the asset name (no code), so match
   // against the name resolved from each GRID_CODES_LIST entry.
-  const inCycleNames = new Set(
+  const heldGridNames = new Set(
     (latestRec?.grid_signals || [])
-      .filter(s => s.in_cycle)
+      .filter(s => Number(s.in_use ?? s.current_value ?? 0) > 0)
       .map(s => s.name)
   );
   const gridAssetTags = GRID_CODES_LIST
-    .filter(c => inCycleNames.has(nameForCode(c, latestRec)))
+    .filter(c => heldGridNames.has(nameForCode(c, latestRec)))
     .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
     .join('');
   setHTML('cash-grid-assets',
@@ -882,7 +900,7 @@ function resetForm(kind) {
 
 // ---- Grid editor (open / add / tp) ----
 
-const GRID_OPS = { open: "开仓", add: "加仓", tp: "止盈" };
+const GRID_OPS = { open: "开仓", add: "加仓", tp: "回本" };
 const GRID_STATE_URL = "data/grid_state.json";
 
 let currentGridState = null;   // last fetched snapshot for preview
@@ -945,18 +963,26 @@ function renderGridOpsLog(state) {
   }
   // Render ALL rows; container clips to ~10 visible via max-height: 360px.
   // (User asked "界面显示最多10笔，通过滚动条查看" — DOM may hold more.)
-  const OP_LABELS = { open: '开仓', add: '加仓', tp: '止盈' };
+  const OP_LABELS = { open: '开仓', add: '加仓', tp: '回本' };
   const SRC_LABELS = { auto: '自动', manual: '手动', backtest: '回测' };
   // Whitelist: `src` lands in a class attribute, so never interpolate the
   // raw value — an unknown source falls back to the manual tier.
   const SRC_TIERS = ['auto', 'manual', 'backtest'];
   const body = rows.map(r => {
     const isTp = r.op === 'tp';
+    // 止盈转出的零成本份额数 —— 新规则下这才是"止盈"的实际结果,
+    // 已实现盈亏恒为 0 (除非低于成本手动出场, 那时才是负数)。
+    const toFree = (typeof r.shares_to_free === 'number') ? r.shares_to_free : 0;
     let pnlCell;
     if (isTp && typeof r.pnl === 'number') {
-      const cls = r.pnl >= 0 ? 'pos' : 'neg';
-      const sign = r.pnl >= 0 ? '+' : '';
-      pnlCell = `<td class="col-pnl ${cls}">${sign}¥${r.pnl.toFixed(2)}</td>`;
+      if (r.pnl === 0 && toFree > 0) {
+        // "+¥0.00" 会被读成"没赚到", 实际是"浮盈转成了零成本份额"。
+        pnlCell = '<td class="col-pnl muted">¥0.00</td>';
+      } else {
+        const cls = r.pnl >= 0 ? 'pos' : 'neg';
+        const sign = r.pnl >= 0 ? '+' : '';
+        pnlCell = `<td class="col-pnl ${cls}">${sign}¥${r.pnl.toFixed(2)}</td>`;
+      }
     } else {
       pnlCell = '<td class="col-pnl muted">—</td>';
     }
@@ -966,7 +992,11 @@ function renderGridOpsLog(state) {
     const sharesText = (typeof r.shares === 'number')
       ? Math.round(r.shares).toLocaleString()
       : '';
-    const noteText = r.note || '';   // empty string renders as empty cell
+    let noteText = r.note || '';   // empty string renders as empty cell
+    if (toFree > 0) {
+      noteText += (noteText ? ' · ' : '') +
+        `转零成本 ${Math.round(toFree).toLocaleString()} 份`;
+    }
     return `<tr>
       <td>${escapeHtml(r.date || '')}</td>
       <td>${escapeHtml(r._asset)}</td>
@@ -1012,14 +1042,22 @@ function refreshGridPreview() {
   }
   const parts = Object.entries(ETF_CATALOG).map(([code, name]) => {
     const s = codeToState[code];
-    if (!s || !s.in_cycle) return `${code} 待开仓`;
+    const freeShares = Number((s && s.free_shares) || 0);
+    if (!s || !s.in_cycle) {
+      // 不在周期里, 但可能还持有永久的零成本份额 —— 那也是持仓。
+      if (freeShares > 0) return `${code} 零成本 ${Math.round(freeShares).toLocaleString()} 份`;
+      return `${code} 待开仓`;
+    }
     const n = (s.entries || []).length;
     const invested = (s.entries || []).reduce(
       (acc, e) => acc + e.shares * e.price, 0,
     );
     const total_sh = (s.entries || []).reduce((acc, e) => acc + e.shares, 0);
     const avg = total_sh > 0 ? (invested / total_sh).toFixed(3) : '0';
-    return `${code} 持仓中 (${n} 层, 均价 ¥${avg})`;
+    const tail = freeShares > 0
+      ? ` + 零成本 ${Math.round(freeShares).toLocaleString()} 份`
+      : '';
+    return `${code} 持仓中 (${n} 层, 均价 ¥${avg}${tail})`;
   });
   el.textContent = `当前复合网格: ${parts.join(' | ')}`;
 }
