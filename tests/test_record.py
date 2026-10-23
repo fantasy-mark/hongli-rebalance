@@ -1,4 +1,5 @@
-"""Unit tests for src.record + src.grid + src.three_pp (pure functions, no network).
+"""Unit tests for src.record + src.grid + src.three_pp + src.notify_failure
+(pure functions, no network).
 
 Run:  python -m tests.test_record
 """
@@ -18,6 +19,7 @@ import pandas as pd
 
 from src import record, grid as grid_mod
 from src import three_pp
+from src import notify_failure as nf
 
 
 def test_read_holdings_with_现金_label():
@@ -1883,6 +1885,112 @@ def test_advance_one_day_preserves_backtest_ops():
     assert len(after["ops"]) == 3
     assert sorted(after.keys()) == ["cum_realized", "entries", "in_cycle",
                                     "last_prices", "ops"]
+
+
+def _nf_fixture(files: dict, env: dict):
+    """Write `files` into a temp dir and return (workspace, env) for diagnose_steps."""
+    tmp = tempfile.mkdtemp()
+    for name, body in files.items():
+        Path(tmp, name).write_text(body, encoding="utf-8")
+    return tmp, env
+
+
+# ---------------------------------------------------------------------------
+# src.notify_failure — 失败邮件必须上报真实步骤状态
+#
+# 背景 (2026-10-23 事故): 旧版邮件无论何种失败都写死 "失败原因: record
+# 步骤未成功完成" + 三条静态 "常见原因"。而当天实际是 apt 装字体被取消,
+# record 步骤从未执行 (skipped)。邮件把排查引到了错误的步骤。
+# ---------------------------------------------------------------------------
+
+def test_diagnose_steps_reads_outcome_rc_and_log_tail():
+    ws, env = _nf_fixture(
+        {"font_install.tail.log": "Get:2 http://azure... [61.2 MB]\n"
+                                  "Error: The operation was canceled.\n"},
+        {"FONT_OUTCOME": "failure", "FONT_RC": "100"},
+    )
+    steps = nf.diagnose_steps(env=env, workspace=ws)
+    by_id = {s["id"]: s for s in steps}
+    assert by_id["font"]["outcome"] == "failure"
+    assert by_id["font"]["rc"] == "100"
+    assert "The operation was canceled." in by_id["font"]["log"]
+    # 没有 env 的步骤应为 unknown, 而不是伪装成 success
+    assert by_id["record"]["outcome"] == "unknown"
+
+
+def test_diagnose_steps_blames_font_not_record_when_record_skipped():
+    """2026-10-23 的实际形状: font 失败 → record 被跳过。"""
+    ws, env = _nf_fixture(
+        {"font_install.tail.log": "Error: The operation was canceled.\n"},
+        {"FONT_OUTCOME": "failure", "FONT_RC": "100",
+         "RECORD_OUTCOME": "skipped", "RECORD_RC": ""},
+    )
+    steps = nf.diagnose_steps(env=env, workspace=ws)
+    bad = nf.failing_steps(steps)
+    assert [s["id"] for s in bad] == ["font"], "只有 font 真的失败了"
+    assert bad[0]["rc"] == "100"
+    # record 是被上游中断的症状, 不该混进"失败步骤"
+    assert [s["id"] for s in nf.skipped_steps(steps)] == ["record"]
+
+    text = nf.build_diagnosis_text(steps, "https://example/run/1")
+    assert "Install CJK font" in text
+    assert "exit=100" in text
+    assert "The operation was canceled." in text
+    # record 只是被上游中断, 措辞必须体现这一点
+    assert "未执行" in text
+    assert "真正的故障点" in text
+    assert "example/run/1" in text
+
+
+def test_failure_email_never_blames_record_verbatim():
+    """回归测试: 旧版硬编码的那句话不能再出现。
+
+    它在 record 从未执行时依然是错的, 正是本次事故的误导来源。
+    """
+    ws, env = _nf_fixture(
+        {"font_install.tail.log": "Error: The operation was canceled.\n"},
+        {"FONT_OUTCOME": "failure", "FONT_RC": "100",
+         "RECORD_OUTCOME": "skipped"},
+    )
+    steps = nf.diagnose_steps(env=env, workspace=ws)
+    for text in (nf.build_diagnosis_text(steps, "u"),):
+        assert "record 步骤未成功完成" not in text
+        assert "常见原因" not in text, "静态猜测列表已移除"
+
+
+def test_diagnosis_reports_all_clear_when_every_step_succeeded():
+    """record 成功但别的环节失败时, 邮件不能说 "无" 就完事。"""
+    ws, env = _nf_fixture(
+        {"record_stderr.tail.log": ""},
+        {"FONT_OUTCOME": "success", "FONT_RC": "0",
+         "RECORD_OUTCOME": "success", "RECORD_RC": "0"},
+    )
+    steps = nf.diagnose_steps(env=env, workspace=ws)
+    assert nf.failing_steps(steps) == []
+    text = nf.build_diagnosis_text(steps, "https://example/run/2")
+    assert "所有受监控步骤都成功" in text
+    assert "example/run/2" in text, "仍必须给出日志链接"
+
+
+def test_diagnosis_html_escapes_log_content():
+    """日志尾部会被原样塞进邮件 HTML —— 必须转义, 否则上游报错可注入标签。"""
+    ws, env = _nf_fixture(
+        {"font_install.tail.log": "E: boom <script>alert(1)</script> & \"x\"\n"},
+        {"FONT_OUTCOME": "failure", "FONT_RC": "100"},
+    )
+    steps = nf.diagnose_steps(env=env, workspace=ws)
+    out = nf.build_diagnosis_html(steps, "https://example/run/3")
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+    assert "alert(1)" in out, "内容本身应保留, 只是被转义"
+
+
+def test_diagnose_steps_survives_missing_workspace_file():
+    """日志文件不存在时不能抛异常 —— 邮件本身不能因为诊断失败而发不出去。"""
+    ws, env = _nf_fixture({}, {"FONT_OUTCOME": "failure", "FONT_RC": "100"})
+    steps = nf.diagnose_steps(env=env, workspace=ws)
+    assert steps[0]["log"] == ""
+    assert nf.build_diagnosis_text(steps, "u")     # 不抛异常即可
 
 
 def test_main():

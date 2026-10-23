@@ -28,7 +28,20 @@ jobs:
       - name: Install CJK font (Linux runner)
         # matplotlib 在 GitHub Ubuntu runner 上没有 CJK 字体,
         # 需要 fonts-noto-cjk 才能让中文字段正常显示在 PNG 中。
-        run: sudo apt-get install -y fonts-noto-cjk
+        #
+        # 包装而非直跑: 2026-10-23 这个步骤挂了 (apt "The operation was
+        # canceled."), record 步骤因此被 skipped, 而旧版失败邮件声称
+        # "失败原因: record 步骤未成功完成" —— 把排查引到了错误的步骤。
+        # 现在捕获日志尾部 + 退出码, 由 notify_failure 如实上报。
+        id: font
+        run: |
+          set +e
+          sudo apt-get install -y fonts-noto-cjk > font_install.log 2>&1
+          rc=$?
+          tail -c 3000 font_install.log > font_install.tail.log || true
+          cat font_install.log
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit $rc
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -36,7 +49,20 @@ jobs:
       - name: Record today's snapshot
         id: record
         # record.py 同时跑 3pp + 网格, 并在末尾调用 chart.render_chart
-        run: python -m src.record
+        #
+        # 同样包装以便失败时上报真实 stderr。注意 record.py 通过
+        # write_github_output() 追加 date/total/trigger 到 $GITHUB_OUTPUT,
+        # 该文件经环境变量继承, 重定向 stdout 不影响它 —— 末尾的 Commit
+        # 步骤仍能读到 steps.record.outputs.date。
+        run: |
+          set +e
+          python -m src.record > record_stdout.log 2> record_stderr.log
+          rc=$?
+          tail -c 3000 record_stderr.log > record_stderr.tail.log || true
+          cat record_stdout.log
+          cat record_stderr.log
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit $rc
 
       - name: Render chart (idempotent recovery)
         # record.py 的 chart 渲染是 best-effort 静默失败; 在 runner 上
@@ -52,6 +78,10 @@ jobs:
 
       - name: Send email digest
         # 即使 record 失败也尝试发邮件 (说明性)
+        #
+        # 传 steps.*.outcome 与 .outputs.rc 给 notify_failure: 它据此判断
+        # 到底是哪一步失败 (record 自身失败 vs 被上游中断而 skipped), 并
+        # 读取各步骤捕获的日志尾部。缺了这些, 邮件只能给出静态猜测。
         if: always()
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -59,11 +89,15 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO:   ${{ secrets.MAIL_TO }}
+          FONT_OUTCOME:   ${{ steps.font.outcome }}
+          FONT_RC:        ${{ steps.font.outputs.rc }}
+          RECORD_OUTCOME: ${{ steps.record.outcome }}
+          RECORD_RC:      ${{ steps.record.outputs.rc }}
         run: |
           if [ "${{ steps.record.outcome }}" = "success" ]; then
             python -m src.notify
           else
-            echo "::warning::record step failed; sending failure notice"
+            echo "::warning::record step did not succeed (outcome=${{ steps.record.outcome }}); sending failure notice"
             python -m src.notify_failure
           fi
 
