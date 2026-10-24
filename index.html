@@ -97,12 +97,17 @@
           <code>tp</code> = 回本出场 (要求 <code>in_cycle=true</code>)。
         </p>
         <p class="muted" style="font-size:12px;">
-          <strong>出场规则（重要）：</strong>止盈不再兑现浮盈，只卖出
-          <code>累计投入 / 出场价</code> 份，恰好回本；余下的份额转成
-          <strong>永久持有的零成本份额</strong>（<code>free_shares</code>），
-          此后<strong>永不再卖</strong>。所以已实现盈亏在正常出场时恒为 0，
-          网格的全部收益都沉淀在零成本份额的市值里 —— 这套规则实质上把网格
-          变成了「买入持有」。只有在<strong>低于成本手动出场</strong>时才会真的亏损。
+          <strong>出场规则（重要）：</strong>出场不再兑现浮盈，只卖出
+          <code>累计投入 / 出场价</code> 份，恰好回本；余下的份额
+          <strong>归并到再平衡的持仓</strong>（<code>merged_shares</code>）——
+          它们不再是网格的资产，而是组合的一部分，此后按再平衡的规则参与权重计算。
+          所以已实现盈亏在正常出场时恒为 0，网格的全部收益都沉淀在归并份额的市值里
+          —— 这套规则实质上把网格变成了「买入持有」。只有在<strong>低于成本手动出场</strong>时才会真的亏损。
+        </p>
+        <p class="muted" style="font-size:12px;">
+          归并份额是<strong>模拟口径</strong>：网格本身是虚拟策略，所以归并进组合的份额
+          也不会写进 <code>data/trades.json</code>（那里只记录真实成交）；
+          它们只参与页面/邮件里的组合权重与市值。
         </p>
 
         <div id="grid-list" class="trade-list"></div>
@@ -153,8 +158,9 @@
       </table>
       <p class="muted" style="font-size:12px; margin-top:0.4em;">
         每行一笔 <strong>资金操作</strong>。
-        市值 = 已持仓 (3pp再平衡: ETF 持仓; 复合网格: 虚拟仓位<strong>资金占用</strong>的当前价估值，
-        含永久持有的零成本份额)；
+        市值 = 已持仓 (3pp再平衡: ETF 持仓，<strong>含网格归并进来的份额</strong>;
+        复合网格: 虚拟仓位<strong>资金占用</strong>的当前价估值，
+        只算在周期内的层 —— 出场后本金收回，占用回落)；
         余额 = 可立即动用的现金 (3pp再平衡: 真实现金; 复合网格: 虚拟现金)；
         两者分别独立。 复合网格是<strong>虚拟</strong>的（不与真实交易挂钩），
         但开仓/加仓/回本会修改

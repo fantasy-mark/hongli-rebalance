@@ -151,14 +151,22 @@ function renderLatest(rec) {
     const w = rec.weights[i];
     const delta = (w - rec.target_w) * 100;
     const over = Math.abs(delta) > rec.threshold_pp;
+    // 数量 = 真实持仓 + 网格归并进来的份额 (模拟口径)。市值 p.value 已经是
+    // total_shares × price, 所以数量必须跟着 total_shares 走, 否则两栏对不上。
+    const totalShares = Number(p.total_shares ?? p.shares ?? 0);
+    const mergedShares = Number(p.merged_shares || 0);
+    const mergedCell = mergedShares > 0
+      ? `<span style="color:#B03A2E;">${Math.round(mergedShares).toLocaleString()}</span>`
+      : '<span class="muted">—</span>';
     return `<tr>
       <td>${p.name}</td>
       <td>${p.code}</td>
-      <td>${Math.round(p.shares).toLocaleString()}</td>
+      <td>${Math.round(totalShares).toLocaleString()}</td>
       <td>¥${p.price.toFixed(3)}</td>
       <td>¥${Math.round(p.value).toLocaleString()}</td>
       <td>${(w * 100).toFixed(2)}%</td>
       <td class="${over ? 'warn' : ''}">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}pp</td>
+      <td>${mergedCell}</td>
     </tr>`;
   }).join('');
 
@@ -167,7 +175,7 @@ function renderLatest(rec) {
     const sig = s.signal;
     let sigClass = 'ok', sigText = '— 持有';
     if (sig === 'buy') { sigClass = 'warn'; sigText = '⚠ 买入'; }
-    // "sell" 不再是止盈: 只卖出成本金额回本, 余量转成永久持有的零成本份额。
+    // "sell" 不再是止盈: 只卖出成本金额回本, 余量归并到再平衡持仓。
     // 已实现盈亏恒为 0, 叫它"止盈"会让人以为收益已经兑现了。
     else if (sig === 'sell') { sigClass = 'ok'; sigText = '✓ 回本'; }
     // 距下次触发: 待机=距开仓(距窗口最低), 持仓=距回本出场位
@@ -180,18 +188,19 @@ function renderLatest(rec) {
       if (trigPct <= 0.5) trigClass = 'warn';
       else if (trigPct <= 2.0) trigClass = 'warn';
     }
-    // 资金占用 = 周期内持仓 + 永久持有的零成本份额 (in_use)。
-    // in_cycle=false 不再代表市值归零 —— 止盈转出的零成本份额仍在账上。
-    const inUse = Number(s.in_use ?? s.current_value ?? 0);
-    const freeValue = Number(s.free_value || 0);
-    let valueCell = inUse > 0 ? '¥' + Math.round(inUse).toLocaleString() : '—';
-    if (inUse > 0) {
-      // Tooltip 拆出零成本部分: 那部分没有成本基准, 浮盈永远是 100%。
-      const tip = freeValue > 0
-        ? ` title="含永久持有的零成本份额 ¥${Math.round(freeValue).toLocaleString()}"`
-        : '';
-      valueCell = `<span${tip}>${valueCell}</span>`;
+    // 资金占用 = 网格**在周期内**的层 (出场后本金收回, 占用回落)。
+    // 已归并的份额不再占网格的钱 —— 它们是再平衡组合的持仓了。
+    const useValue = Number(s.current_value || 0);
+    const mergedShares = Number(s.merged_shares || 0);
+    const mergedValue = Number(s.merged_value || 0);
+    let valueCell = useValue > 0 ? '¥' + Math.round(useValue).toLocaleString() : '—';
+    if (useValue > 0 && mergedValue > 0) {
+      // Tooltip 说明这一栏只是网格自己的占用, 归并部分记在再平衡那一栏。
+      valueCell = `<span title="网格在周期内的层; 另有 ¥${Math.round(mergedValue).toLocaleString()} 已归并到再平衡持仓">${valueCell}</span>`;
     }
+    const mergedCell = mergedShares > 0
+      ? `<span style="color:#B03A2E;">${Math.round(mergedShares).toLocaleString()}</span>`
+      : '<span class="muted">—</span>';
     return `<tr>
       <td>${s.name}</td>
       <td class="${sigClass}">${sigText}</td>
@@ -200,6 +209,7 @@ function renderLatest(rec) {
       <td>¥${s.price.toFixed(3)}</td>
       <td>${valueCell}</td>
       <td class="${s.unrealized_pnl >= 0 ? 'ok' : 'warn'}">${s.in_cycle ? (s.return_pct >= 0 ? '+' : '') + s.return_pct.toFixed(2) + '%' : '—'}</td>
+      <td>${mergedCell}</td>
       <td class="${trigClass}">${trigPrefix} ${trigPct >= 0 ? '+' : ''}${trigPct.toFixed(2)}%</td>
     </tr>`;
   }).join('');
@@ -213,18 +223,19 @@ function renderLatest(rec) {
     <table>
       <thead>
         <tr>
-          <th>名称</th><th>代码</th><th>数量</th><th>价格</th><th>市值</th><th>权重</th><th>偏离</th>
+          <th>名称</th><th>代码</th><th>数量</th><th>价格</th><th>市值</th><th>权重</th><th>偏离</th><th>含归并</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
+    <p class="muted" style="font-size:12px;">数量与市值含网格归并进来的份额(模拟口径) · 含归并 = 其中来自网格的部分</p>
 
     ${grid.length ? `
     <h3 style="margin-top:1.5em;">复合网格 <span class="muted" style="font-size:12px;font-weight:normal;">(加仓额 ¥${layer.toLocaleString()})</span></h3>
     <table>
       <thead>
         <tr>
-          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>资金占用</th><th>浮盈%</th><th>距下次触发</th>
+          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>资金占用</th><th>浮盈%</th><th>已归并</th><th>距下次触发</th>
         </tr>
       </thead>
       <tbody>${gridRows}</tbody>
@@ -388,10 +399,10 @@ function computeGridMarketValue(latestRec) {
   const signals = latestRec?.grid_signals || [];
   let total = 0;
   for (const s of signals) {
-    // 资金占用 = 周期内持仓 + 永久持有的零成本份额。止盈转出的零成本份额
-    // 永不再卖, 所以不能再用 in_cycle 来判断"这个资产没有市值"。
-    const inUse = Number(s.in_use ?? s.current_value ?? 0);
-    if (inUse > 0) total += inUse;
+    // 资金占用 = 网格**在周期内**的层 (出场后本金收回, 占用回落)。
+    // 归并到再平衡的份额算在 3pp 再平衡那一行, 不在这里重复计。
+    const useValue = Number(s.current_value || 0);
+    if (useValue > 0) total += useValue;
   }
   return total;
 }
@@ -429,13 +440,14 @@ function renderCashPoolSummary(latestRec, holdings) {
   // display.  This keeps the two views (最新持仓 h3 grid table + 资金管理
   // summary row) consistent: both reflect the same snapshot.
   //
-  // "Holds" now means in_use > 0, not in_cycle == true: 止盈把浮盈转成
-  // 永久持有的零成本份额之后, 资产可以不在周期里却仍然持有真金白银。
+  // "Holds" means the grid still has capital tied up in that asset, i.e.
+  // current_value > 0 (the layers of the currently-open cycle). 出场后本金
+  // 全额收回, 网格不再持有该资产 —— 归并出去的那批份额归再平衡组合管。
   // grid_signals records only carry the asset name (no code), so match
   // against the name resolved from each GRID_CODES_LIST entry.
   const heldGridNames = new Set(
     (latestRec?.grid_signals || [])
-      .filter(s => Number(s.in_use ?? s.current_value ?? 0) > 0)
+      .filter(s => Number(s.current_value || 0) > 0)
       .map(s => s.name)
   );
   const gridAssetTags = GRID_CODES_LIST
@@ -970,13 +982,13 @@ function renderGridOpsLog(state) {
   const SRC_TIERS = ['auto', 'manual', 'backtest'];
   const body = rows.map(r => {
     const isTp = r.op === 'tp';
-    // 止盈转出的零成本份额数 —— 新规则下这才是"止盈"的实际结果,
+    // 出场时归并到再平衡持仓的份额数 —— 新规则下这才是"出场"的实际结果,
     // 已实现盈亏恒为 0 (除非低于成本手动出场, 那时才是负数)。
-    const toFree = (typeof r.shares_to_free === 'number') ? r.shares_to_free : 0;
+    const toMerge = (typeof r.shares_to_merge === 'number') ? r.shares_to_merge : 0;
     let pnlCell;
     if (isTp && typeof r.pnl === 'number') {
-      if (r.pnl === 0 && toFree > 0) {
-        // "+¥0.00" 会被读成"没赚到", 实际是"浮盈转成了零成本份额"。
+      if (r.pnl === 0 && toMerge > 0) {
+        // "+¥0.00" 会被读成"没赚到", 实际是"浮盈转成了再平衡持仓的份额"。
         pnlCell = '<td class="col-pnl muted">¥0.00</td>';
       } else {
         const cls = r.pnl >= 0 ? 'pos' : 'neg';
@@ -993,9 +1005,9 @@ function renderGridOpsLog(state) {
       ? Math.round(r.shares).toLocaleString()
       : '';
     let noteText = r.note || '';   // empty string renders as empty cell
-    if (toFree > 0) {
+    if (toMerge > 0) {
       noteText += (noteText ? ' · ' : '') +
-        `转零成本 ${Math.round(toFree).toLocaleString()} 份`;
+        `归并再平衡 ${Math.round(toMerge).toLocaleString()} 份`;
     }
     return `<tr>
       <td>${escapeHtml(r.date || '')}</td>
@@ -1042,11 +1054,14 @@ function refreshGridPreview() {
   }
   const parts = Object.entries(ETF_CATALOG).map(([code, name]) => {
     const s = codeToState[code];
-    const freeShares = Number((s && s.free_shares) || 0);
+    // 已归并到再平衡持仓的份额 —— 它们不再属于网格, 只是记在这儿方便对照。
+    const mergedShares = Number((s && s.merged_shares) || 0);
+    const mergedTail = mergedShares > 0
+      ? ` (已归并 ${Math.round(mergedShares).toLocaleString()} 份)`
+      : '';
     if (!s || !s.in_cycle) {
-      // 不在周期里, 但可能还持有永久的零成本份额 —— 那也是持仓。
-      if (freeShares > 0) return `${code} 零成本 ${Math.round(freeShares).toLocaleString()} 份`;
-      return `${code} 待开仓`;
+      // 不在周期里 = 网格不持有该资产 (出场时本金全额收回)。
+      return `${code} 待开仓${mergedTail}`;
     }
     const n = (s.entries || []).length;
     const invested = (s.entries || []).reduce(
@@ -1054,10 +1069,7 @@ function refreshGridPreview() {
     );
     const total_sh = (s.entries || []).reduce((acc, e) => acc + e.shares, 0);
     const avg = total_sh > 0 ? (invested / total_sh).toFixed(3) : '0';
-    const tail = freeShares > 0
-      ? ` + 零成本 ${Math.round(freeShares).toLocaleString()} 份`
-      : '';
-    return `${code} 持仓中 (${n} 层, 均价 ¥${avg}${tail})`;
+    return `${code} 持仓中 (${n} 层, 均价 ¥${avg}${mergedTail})`;
   });
   el.textContent = `当前复合网格: ${parts.join(' | ')}`;
 }
