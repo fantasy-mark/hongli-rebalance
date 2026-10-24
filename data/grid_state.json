@@ -152,7 +152,7 @@
         "pnl": 0.0,
         "num_buys_exited": 2,
         "total_shares_exited": 18238.22,
-        "shares_to_free": 981.97
+        "shares_to_merge": 981.97
       },
       {
         "date": "2022-03-15",
@@ -172,7 +172,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 8665.51,
-        "shares_to_free": 311.29
+        "shares_to_merge": 311.29
       },
       {
         "date": "2022-10-28",
@@ -192,7 +192,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 8605.85,
-        "shares_to_free": 388.93
+        "shares_to_merge": 388.93
       },
       {
         "date": "2023-10-24",
@@ -220,7 +220,7 @@
         "pnl": 0.0,
         "num_buys_exited": 2,
         "total_shares_exited": 16611.85,
-        "shares_to_free": 851.4
+        "shares_to_merge": 851.4
       },
       {
         "date": "2024-08-28",
@@ -248,7 +248,7 @@
         "pnl": 0.0,
         "num_buys_exited": 2,
         "total_shares_exited": 15817.48,
-        "shares_to_free": 1197.6
+        "shares_to_merge": 1197.6
       },
       {
         "date": "2025-04-07",
@@ -268,7 +268,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 7861.64,
-        "shares_to_free": 274.38
+        "shares_to_merge": 274.38
       },
       {
         "date": "2025-12-11",
@@ -288,7 +288,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 7396.45,
-        "shares_to_free": 227.99
+        "shares_to_merge": 227.99
       },
       {
         "date": "2026-06-18",
@@ -316,10 +316,10 @@
         "pnl": 0.0,
         "num_buys_exited": 2,
         "total_shares_exited": 15151.43,
-        "shares_to_free": 804.23
+        "shares_to_merge": 804.23
       }
     ],
-    "free_shares": 0.0
+    "merged_shares": 0.0
   },
   "黄金ETF博时": {
     "in_cycle": true,
@@ -504,7 +504,7 @@
         "pnl": 0.0,
         "num_buys_exited": 4,
         "total_shares_exited": 10835.52,
-        "shares_to_free": 995.42
+        "shares_to_merge": 995.42
       },
       {
         "date": "2026-06-10",
@@ -532,7 +532,7 @@
         "pnl": 0.0,
         "num_buys_exited": 2,
         "total_shares_exited": 2356.93,
-        "shares_to_free": 130.01
+        "shares_to_merge": 130.01
       },
       {
         "date": "2026-10-23",
@@ -543,7 +543,7 @@
         "note": "回测·窗口突破开仓"
       }
     ],
-    "free_shares": 0.0
+    "merged_shares": 0.0
   },
   "可转债ETF博时": {
     "in_cycle": true,
@@ -704,7 +704,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 969.46,
-        "shares_to_free": 31.82
+        "shares_to_merge": 31.82
       },
       {
         "date": "2022-03-25",
@@ -724,7 +724,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 920.56,
-        "shares_to_free": 28.65
+        "shares_to_merge": 28.65
       },
       {
         "date": "2022-12-19",
@@ -744,7 +744,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 911.66,
-        "shares_to_free": 27.72
+        "shares_to_merge": 27.72
       },
       {
         "date": "2023-09-14",
@@ -780,7 +780,7 @@
         "pnl": 0.0,
         "num_buys_exited": 3,
         "total_shares_exited": 2771.7,
-        "shares_to_free": 179.23
+        "shares_to_merge": 179.23
       },
       {
         "date": "2026-09-04",
@@ -807,7 +807,7 @@
         "note": "回测·金字塔第3层"
       }
     ],
-    "free_shares": 0.0
+    "merged_shares": 0.0
   },
   "纳斯达克ETF华夏": {
     "in_cycle": false,
@@ -954,7 +954,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 9950.25,
-        "shares_to_free": 325.61
+        "shares_to_merge": 325.61
       },
       {
         "date": "2022-01-21",
@@ -998,7 +998,7 @@
         "pnl": 0.0,
         "num_buys_exited": 4,
         "total_shares_exited": 35728.31,
-        "shares_to_free": 2968.28
+        "shares_to_merge": 2968.28
       },
       {
         "date": "2022-05-12",
@@ -1018,7 +1018,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 9794.32,
-        "shares_to_free": 306.65
+        "shares_to_merge": 306.65
       },
       {
         "date": "2022-05-19",
@@ -1038,7 +1038,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 9803.92,
-        "shares_to_free": 553.23
+        "shares_to_merge": 553.23
       },
       {
         "date": "2022-06-13",
@@ -1058,7 +1058,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 10080.65,
-        "shares_to_free": 371.91
+        "shares_to_merge": 371.91
       },
       {
         "date": "2025-04-07",
@@ -1078,7 +1078,7 @@
         "pnl": 0.0,
         "num_buys_exited": 1,
         "total_shares_exited": 6309.15,
-        "shares_to_free": 226.42
+        "shares_to_merge": 226.42
       },
       {
         "date": "2026-03-20",
@@ -1106,9 +1106,9 @@
         "pnl": 0.0,
         "num_buys_exited": 2,
         "total_shares_exited": 9517.54,
-        "shares_to_free": 512.59
+        "shares_to_merge": 512.59
       }
     ],
-    "free_shares": 0.0
+    "merged_shares": 0.0
   }
 }

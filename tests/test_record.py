@@ -436,17 +436,17 @@ def test_advance_grid_pyramid_then_sell():
     assert sig3 == "sell"
     assert state["in_cycle"] is False
     assert state["entries"] == []
-    # 只卖成本金额 → 本周期已实现盈亏恒为 0, 浮盈全部转成零成本份额
+    # 只卖成本金额 → 本周期已实现盈亏恒为 0, 浮盈全部归并到再平衡持仓
     assert state["cum_realized"] == 0.0
-    assert state["free_shares"] > 0.0
+    assert state["merged_shares"] > 0.0
 
     tp_op = [o for o in state["ops"] if o["op"] == "tp"][-1]
-    # 卖出 + 转零成本 == 原持仓 (一份份额都不能凭空消失或多出来)
-    assert tp_op["shares"] + tp_op["shares_to_free"] == pytest_approx(pre_shares)
+    # 卖出 + 归并 == 原持仓 (一份份额都不能凭空消失或多出来)
+    assert tp_op["shares"] + tp_op["shares_to_merge"] == pytest_approx(pre_shares)
     # 卖出的恰好是回本所需: 卖出的份额 × 价格 == 本金
     assert tp_op["shares"] * exit_price == pytest_approx(pre_invested)
-    # 剩下的就是零成本份额, 且不再卖
-    assert tp_op["shares_to_free"] == pytest_approx(state["free_shares"])
+    # 剩下的就归并给再平衡组合了
+    assert tp_op["shares_to_merge"] == pytest_approx(state["merged_shares"])
     assert tp_op["pnl"] == 0.0
 
 
@@ -458,21 +458,22 @@ def test_asset_snapshot_no_cycle():
     assert snap["current_value"] == 0.0
 
 
-def test_asset_snapshot_out_of_cycle_still_reports_free_value():
-    """不在周期里 ≠ 市值归零: 零成本份额一直持有, in_use 仍是它的市值。
+def test_asset_snapshot_out_of_cycle_reports_merged_but_no_capital():
+    """不在周期里 = 网格不再持有该资产 (出场时本金全额收回)。
 
-    消费方 (邮件/页面/图表) 以前靠 in_cycle 判断"这个资产没有市值",
-    那个假设在新规则下是错的。
+    归并到再平衡的份额仍然要报出来 —— 它们现在是**组合**的持仓, 组合那
+    一侧要用它们算权重和市值 (见 record.py:merge_grid_shares_into_positions),
+    但它们**不是**网格的资金占用。
     """
     state = grid_mod.fresh_asset_state()
-    state["free_shares"] = 1125.0
+    state["merged_shares"] = 1125.0
     snap = grid_mod.asset_snapshot(state, current_price=8.18)
     assert snap["in_cycle"] is False
     assert snap["current_value"] == 0.0, "no in-cycle position"
-    assert snap["free_shares"] == pytest_approx(1125.0)
-    assert snap["free_value"] == pytest_approx(1125.0 * 8.18)
-    assert snap["in_use"] == pytest_approx(1125.0 * 8.18), (
-        "in_use must include the permanently-held zero-cost shares")
+    assert snap["merged_shares"] == pytest_approx(1125.0)
+    assert snap["merged_value"] == pytest_approx(1125.0 * 8.18)
+    assert "in_use" not in snap, (
+        "in_use was removed: 网格资金占用 = current_value (在周期内的层)")
     # 浮盈% 没有成本基准 —— 不在周期里就是 0 (展示层负责显示 "—")。
     assert snap["return_pct"] == 0.0
 
@@ -589,7 +590,7 @@ def test_manual_op_add_rejects_no_cycle():
 
 
 def test_manual_op_tp_sells_cost_only():
-    """tp: 只卖出成本金额 → 本金取回, 浮盈转零成本份额, 已实现盈亏不变。"""
+    """tp: 只卖出成本金额 → 本金取回, 浮盈归并到再平衡持仓, 已实现盈亏不变。"""
     state = grid_mod.fresh_asset_state()
     state["in_cycle"] = True
     state["entries"] = [
@@ -602,8 +603,8 @@ def test_manual_op_tp_sells_cost_only():
     )
     # total_invested = 1000*1.40 + 1000*1.30 = 2700 ; total_shares = 2000
     # 只卖回本所需: 2700 / 1.50 = 1800 份 → proceeds 2700 (本金原样取回)
-    # 零成本份额: 2000 - 1800 = 200 份, 此后永久持有不再卖
-    assert new_state["free_shares"] == pytest_approx(200.0)
+    # 归并份额: 2000 - 1800 = 200 份, 交给再平衡组合
+    assert new_state["merged_shares"] == pytest_approx(200.0)
     assert new_state["cum_realized"] == 50.0, "正常止盈不产生已实现盈亏"
     assert new_state["in_cycle"] is False
     assert new_state["entries"] == []
@@ -613,7 +614,7 @@ def test_manual_op_tp_below_cost_sells_out_and_books_loss():
     """手动止盈价低于均价: 卖出的份额会超过持仓 → 退化为卖光并认亏。
 
     自动止盈的触发价永远高于均价, 所以这条路径只有手动可达。绝不能转出
-    负的零成本份额。
+    负的归并份额。
     """
     state = grid_mod.fresh_asset_state()
     state["in_cycle"] = True
@@ -625,7 +626,7 @@ def test_manual_op_tp_below_cost_sells_out_and_books_loss():
         state, op="tp", today="2026-10-17", price=1.00, shares=0.0,
     )
     # 回本需要 2700/1.00 = 2700 份 > 持仓 2000 份 → 卖光
-    assert new_state["free_shares"] == 0.0, "不能转出负的零成本份额"
+    assert new_state["merged_shares"] == 0.0, "不能转出负的归并份额"
     # 卖光 2000 × 1.00 = 2000, 认亏 2000 - 2700 = -700
     assert new_state["cum_realized"] == pytest_approx(-700.0)
     assert new_state["in_cycle"] is False
@@ -704,8 +705,8 @@ def test_advance_one_day_pyramid_appends_add_op_with_layer_number():
 
 def test_advance_one_day_auto_tp_appends_tp_op_with_pnl_and_exit_stats():
     """Auto tp → ops log gets a `tp` op recording the cost-only split
-    (total_shares_exited + shares_to_free), and cycle closes. Realized
-    P&L is 0 — the profit moves to free_shares instead."""
+    (total_shares_exited + shares_to_merge), and cycle closes. Realized
+    P&L is 0 — the profit moves to merged_shares instead."""
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
     state, _ = grid_mod.advance_one_day(
@@ -727,27 +728,27 @@ def test_advance_one_day_auto_tp_appends_tp_op_with_pnl_and_exit_stats():
     tp_op = state["ops"][2]
     assert tp_op["op"] == "tp"
     assert tp_op["source"] == "auto"
-    assert tp_op["note"] == "自动止盈·转零成本"
+    assert tp_op["note"] == "自动止盈·归并再平衡"
     # num_buys_exited = 2 (both entries closed together)
     assert tp_op["num_buys_exited"] == 2
-    # 只卖出回本所需的份额, 其余转零成本:
+    # 只卖出回本所需的份额, 其余归并到再平衡持仓:
     #   原持仓 = 10000/99 + 10000/96 ; 本金 = 20000
-    #   卖出 = 20000 / exit_price ; 转零成本 = 原持仓 - 卖出
+    #   卖出 = 20000 / exit_price ; 归并 = 原持仓 - 卖出
     exit_price = target + 0.01
     total_shares = 10000 / 99 + 10000 / 96
     expected_sold = 20000 / exit_price
     assert tp_op["total_shares_exited"] == pytest_approx(total_shares, rel=1e-6), (
-        "total_shares_exited = 出场的全部份额 (卖出 + 转零成本)")
+        "total_shares_exited = 出场的全部份额 (卖出 + 归并)")
     assert tp_op["shares"] == pytest_approx(expected_sold, rel=1e-6)
-    assert tp_op["shares_to_free"] == pytest_approx(total_shares - expected_sold,
+    assert tp_op["shares_to_merge"] == pytest_approx(total_shares - expected_sold,
                                                     rel=1e-6)
     # 卖出 + 转出 == 原持仓, 一份不多一份不少
-    assert (tp_op["shares"] + tp_op["shares_to_free"]
+    assert (tp_op["shares"] + tp_op["shares_to_merge"]
             == pytest_approx(total_shares, rel=1e-6))
     # 只卖成本 → 已实现盈亏恒为 0
     assert tp_op["pnl"] == 0.0
     assert state["cum_realized"] == 0.0
-    assert state["free_shares"] == pytest_approx(total_shares - expected_sold,
+    assert state["merged_shares"] == pytest_approx(total_shares - expected_sold,
                                                 rel=1e-6)
 
 
@@ -835,9 +836,9 @@ def test_manual_op_tp_appends_tp_op_recording_the_cost_split():
     assert op["op"] == "tp"
     assert op["source"] == "manual"
     assert op["num_buys_exited"] == 2
-    # 本金 2700 / 1.50 = 1800 份卖出, 余 200 份转零成本 → 出场 2000 份
+    # 本金 2700 / 1.50 = 1800 份卖出, 余 200 份归并 → 出场 2000 份
     assert op["total_shares_exited"] == 2000.0
-    assert op["shares_to_free"] == 200.0
+    assert op["shares_to_merge"] == 200.0
     assert op["shares"] == 1800.0
     assert op["pnl"] == 0.0
     assert op["note"] == ""
@@ -1111,21 +1112,22 @@ def test_notify_qdii_unheld_low_premium_advises_buildable():
 def _make_record_with_grid() -> dict:
     """Minimal record with two grid signals.
 
-    One asset just took profit (out of cycle, but holding permanently-held
-    zero-cost shares); the other is still in a cycle.
+    One asset just exited (out of cycle, its capital came back — the shares
+    it merged into the rebalance portfolio are reported separately); the
+    other is still in a cycle.
     """
     r = _make_record_with_qdii(premium_pct=2.0)
     r["grid_signals"] = [
         {"name": "黄金ETF博时", "price": 8.18, "layer_yuan": 10000.0,
          "signal": "sell", "in_cycle": False, "num_buys": 0,
          "avg_cost": 0.0, "current_value": 0.0, "unrealized_pnl": 0.0,
-         "return_pct": 0.0, "free_shares": 1125.0, "free_value": 9206.0,
-         "in_use": 9206.0, "trigger_pct": 3.2, "trigger_kind": "open"},
+         "return_pct": 0.0, "merged_shares": 1125.0, "merged_value": 9206.0,
+         "trigger_pct": 3.2, "trigger_kind": "open"},
         {"name": "纳斯达克ETF华夏", "price": 2.69, "layer_yuan": 10000.0,
          "signal": None, "in_cycle": True, "num_buys": 2,
          "avg_cost": 2.55, "current_value": 15000.0, "unrealized_pnl": 900.0,
-         "return_pct": 6.0, "free_shares": 5265.0, "free_value": 14162.0,
-         "in_use": 29162.0, "trigger_pct": 1.1, "trigger_kind": "tp"},
+         "return_pct": 6.0, "merged_shares": 5265.0, "merged_value": 14162.0,
+         "trigger_pct": 1.1, "trigger_kind": "tp"},
     ]
     return r
 
@@ -1133,7 +1135,7 @@ def _make_record_with_grid() -> dict:
 def test_notify_grid_sell_signal_is_recovery_not_take_profit():
     """「sell」不再叫止盈: 只卖成本金额回本, 已实现盈亏恒为 0。
 
-    叫它止盈会让人以为收益已经兑现了 —— 而新规则下收益全在零成本份额里。
+    叫它止盈会让人以为收益已经兑现了 —— 而新规则下收益全在归并份额里。
     """
     from src import notify
     r = _make_record_with_grid()
@@ -1147,10 +1149,11 @@ def test_notify_grid_sell_signal_is_recovery_not_take_profit():
     assert "网格回本" in notify.build_subject(r)
 
 
-def test_notify_grid_shows_in_use_column_and_zero_cost_note():
-    """邮件要能看出「零成本份额」的存在和它的市值。
+def test_notify_grid_shows_capital_column_and_merged_note():
+    """邮件要能看出「资金占用」和「已归并」是两回事。
 
-    收益全在这些份额里, 不显示等于收益凭空消失。
+    资金占用 = 网格在周期内的层 (出场后本金回来, 占用回落);
+    归并份额的市值记在组合那一栏 —— 不显示等于收益凭空消失。
     """
     from src import notify
     r = _make_record_with_grid()
@@ -1158,15 +1161,18 @@ def test_notify_grid_shows_in_use_column_and_zero_cost_note():
     html = notify.build_html(r, pages_url="https://x/")
     for body in (text, html):
         assert "资金占用" in body, "grid table should have a 资金占用 column"
-        assert "零成本份额" in body
+        assert "已归并" in body, "grid table should have a 已归并 column"
+        assert "归并到再平衡持仓的份额" in body
         # 9,206 + 14,162 = 23,368
-        assert "23,368" in body, "zero-cost share market value should be shown"
+        assert "23,368" in body, "merged share market value should be shown"
+        # 资金占用 = 只有纳指在周期内 → 15,000 (旧的 in_use 口径是 29,162)
+        assert "15,000" in body, "grid capital should be the in-cycle layers only"
 
 
 def test_notify_grid_return_pct_is_dash_when_out_of_cycle():
     """不在周期里时浮盈% 显示 "—", 而不是 "+0.00%"。
 
-    "+0.00%" 会被读成"没赚没亏", 但资产可能正持有一堆零成本份额。
+    "+0.00%" 会被读成"没赚没亏", 但资产可能刚把一批份额归并给了组合。
     """
     from src import notify
     r = _make_record_with_grid()
@@ -1754,9 +1760,9 @@ def test_apply_grid_happy_path_add_then_tp():
         assert a["in_cycle"] is False
         assert a["entries"] == []
         # 只卖成本金额: 本金 2700 / 1.50 = 1800 份卖出 → 恰好回本, pnl = 0
-        # 原持仓 2000 份中余 200 份转零成本, 永久持有
+        # 原持仓 2000 份中余 200 份归并到再平衡持仓
         assert a["cum_realized"] == 0.0
-        assert a["free_shares"] == pytest_approx(200.0)
+        assert a["merged_shares"] == pytest_approx(200.0)
         # last_prices for the add branch should NOT have been touched
         assert a["last_prices"] == [1.40, 1.38, 1.37]
         # ops log: 2 entries (add + tp), both source='manual', with notes
@@ -1772,7 +1778,7 @@ def test_apply_grid_happy_path_add_then_tp():
         assert tp_op["note"] == "tp"
         assert tp_op["num_buys_exited"] == 2
         assert tp_op["total_shares_exited"] == 2000.0
-        assert tp_op["shares_to_free"] == 200.0
+        assert tp_op["shares_to_merge"] == 200.0
         assert tp_op["pnl"] == 0.0
         # Other asset untouched (also must have ops=[] from fresh-asset init)
         assert out["黄金ETF博时"]["in_cycle"] is False
@@ -1822,7 +1828,7 @@ def test_apply_grid_rejects_open_when_in_cycle():
 
 
 def _fake_cycle(dates, prices, exit_date, exit_price, pnl=None,
-                shares_per_layer=1000.0, pos_yuan=None, to_free=0.0):
+                shares_per_layer=1000.0, pos_yuan=None, to_merge=0.0):
     """Build a `run_compound_grid` cycles[0]-shaped dict.
 
     `pos_yuan` mirrors the real engine's per-layer sizing (grid.py:
@@ -1830,7 +1836,7 @@ def _fake_cycle(dates, prices, exit_date, exit_price, pnl=None,
     though prices differ. Without it, every entry gets the same flat
     `shares_per_layer` (handy for arithmetic on round numbers).
 
-    `to_free` mirrors the cost-only exit: the cycle's `total_shares` is
+    `to_merge` mirrors the cost-only exit: the cycle's `total_shares` is
     the number of shares SOLD to recover the principal, and
     `shares_transferred` is the remainder that became permanently-held
     zero-cost shares.
@@ -1840,7 +1846,7 @@ def _fake_cycle(dates, prices, exit_date, exit_price, pnl=None,
                for d, p in zip(dates, prices)]
     total_shares = sum(e["shares"] for e in entries)
     total_invested = sum(e["shares"] * e["price"] for e in entries)
-    sold = total_shares - to_free
+    sold = total_shares - to_merge
     return {
         "entries": entries,
         "exit_date": pd.Timestamp(exit_date),
@@ -1848,7 +1854,7 @@ def _fake_cycle(dates, prices, exit_date, exit_price, pnl=None,
         "num_buys": len(entries),
         "avg_cost": total_invested / total_shares,
         "total_shares": sold,
-        "shares_transferred": to_free,
+        "shares_transferred": to_merge,
         "total_invested": total_invested,
         "exit_value": sold * exit_price,
         "pnl": (total_shares * exit_price - total_invested) if pnl is None else pnl,
@@ -1877,22 +1883,22 @@ def test_ops_from_cycles_maps_closed_cycle_to_open_add_tp():
     assert ops[2]["pnl"] == pytest_approx(c["pnl"])
     assert ops[2]["num_buys_exited"] == 2
     assert ops[2]["total_shares_exited"] == pytest_approx(2000.0)
-    assert ops[2]["shares_to_free"] == pytest_approx(0.0)
+    assert ops[2]["shares_to_merge"] == pytest_approx(0.0)
     assert "pnl" not in ops[0] and "pnl" not in ops[1]
 
 
 def test_ops_from_cycles_tp_reports_zero_cost_transfer():
-    """只卖成本金额的出场: 卖出的份额与转成零成本份额的余量必须分开记账。
+    """只卖成本金额的出场: 卖出的份额与归并出去的余量必须分开记账。
 
     `total_shares_exited` 仍是"这一整个周期关掉的仓位", `shares` 是真正卖出
-    的那部分, `shares_to_free` 是转成永久零成本份额的部分。
+    的那部分, `shares_to_merge` 是归并到再平衡持仓的部分。
     """
     c = _fake_cycle(["2024-01-10", "2024-01-20"], [10.0, 9.5],
-                    "2024-02-05", 10.6, to_free=250.0)
+                    "2024-02-05", 10.6, to_merge=250.0)
     ops = grid_mod.ops_from_cycles([c])
     tp = [o for o in ops if o["op"] == "tp"][0]
     assert tp["shares"] == pytest_approx(1750.0), "卖出的是回本所需那部分"
-    assert tp["shares_to_free"] == pytest_approx(250.0)
+    assert tp["shares_to_merge"] == pytest_approx(250.0)
     assert tp["total_shares_exited"] == pytest_approx(2000.0)
 
 
@@ -2023,8 +2029,8 @@ def test_build_record_strips_ops_from_grid_state_snapshot():
 def test_advance_one_day_preserves_backtest_ops():
     """The backfilled ops must survive the live engine's daily run.
 
-    advance_one_day rebuilds the asset state as a fixed 5-key literal, so
-    anything riding in a 6th key would be silently dropped the first time
+    advance_one_day rebuilds the asset state as a fixed 6-key literal, so
+    anything riding in a 7th key would be silently dropped the first time
     record.py runs. `ops` is the one array it copies forward verbatim —
     this test is the guard on that, exercised in the worst case: the live
     engine ACTS and opens a real cycle on top of the backfill.
@@ -2037,7 +2043,7 @@ def test_advance_one_day_preserves_backtest_ops():
     ]
     state = {"in_cycle": False, "entries": [], "last_prices": [13.5, 13.4],
              "cum_realized": 0.0, "ops": [dict(o) for o in backtest],
-             "free_shares": 321.5}   # 已有零成本份额, 必须跨天保留
+             "merged_shares": 321.5}   # 已归并份额, 必须跨天保留
 
     # A price far below the window min forces a real trigger-buy.
     after, signal = grid_mod.advance_one_day(
@@ -2054,16 +2060,16 @@ def test_advance_one_day_preserves_backtest_ops():
     assert len(live) == 1
     assert live[0]["op"] == "open" and live[0]["note"] == "窗口突破开仓"
     assert len(after["ops"]) == 3
-    # 零成本份额同样是必须被字面量复制过去的字段 —— 漏一个就是每天清零
-    assert after["free_shares"] == 321.5, "free_shares was dropped by the rebuild"
-    assert sorted(after.keys()) == ["cum_realized", "entries", "free_shares",
-                                    "in_cycle", "last_prices", "ops"]
+    # 归并份额同样是必须被字面量复制过去的字段 —— 漏一个就是每天清零
+    assert after["merged_shares"] == 321.5, "merged_shares was dropped by the rebuild"
+    assert sorted(after.keys()) == ["cum_realized", "entries", "in_cycle",
+                                    "last_prices", "merged_shares", "ops"]
 
 
-def test_free_shares_survive_subsequent_daily_runs():
-    """零成本份额一旦转出, 就必须跨天、跨周期一直存活。
+def test_merged_shares_survive_subsequent_daily_runs():
+    """归并份额一旦转出, 就必须跨天、跨周期一直存活。
 
-    这是"永久持有"承诺的落地守护: 止盈 → 次日 → 再开新周期 → 再止盈,
+    这是"交给组合就不再撒手"的落地守护: 出场 → 次日 → 再开新周期 → 再出场,
     份额只能增加, 绝不能因为 state 重建而减少。
     """
     state = grid_mod.fresh_asset_state()
@@ -2074,20 +2080,143 @@ def test_free_shares_survive_subsequent_daily_runs():
     state, sig = grid_mod.advance_one_day(
         state, "2026-01-02", price=101.98, layer_yuan_value=10_000.0)
     assert sig == "sell"
-    free_after_tp = state["free_shares"]
-    assert free_after_tp > 0
+    merged_after_tp = state["merged_shares"]
+    assert merged_after_tp > 0
 
-    # 之后连续多天 (含再次开仓/加仓/止盈), free_shares 只能不减
-    seen = [free_after_tp]
+    # 之后连续多天 (含再次开仓/加仓/止盈), merged_shares 只能不减
+    seen = [merged_after_tp]
     for i, p in enumerate([101.0, 100.0, 98.0, 97.5, 100.98, 99.5]):
         state, _ = grid_mod.advance_one_day(
             state, f"2026-01-{3 + i:02d}", price=p,
             layer_yuan_value=10_000.0)
-        seen.append(state["free_shares"])
+        seen.append(state["merged_shares"])
     for prev, cur in zip(seen, seen[1:]):
-        assert cur >= prev - 1e-9, f"free_shares decreased: {seen}"
+        assert cur >= prev - 1e-9, f"merged_shares decreased: {seen}"
     # 至少经历了一次新的止盈, 份额应当增加过
-    assert state["free_shares"] > free_after_tp
+    assert state["merged_shares"] > merged_after_tp
+
+
+# ---------------------------------------------------------------------------
+# src.record — 网格归并份额并入再平衡组合
+#
+# 规则 (src/grid.py:split_take_profit): 出场只卖出"回本所需"那部分, 余量
+# 归并到再平衡的持仓。归并份额从这一刻起是**组合**的资产: 必须计入市值、
+# 权重和总市值, 否则组合的真实敞口被低估。
+#
+# 归并份额是模拟口径 —— 不写进 data/trades.json (那里只记录真实成交)。
+# ---------------------------------------------------------------------------
+
+def test_merged_shares_by_code_maps_asset_names_to_codes():
+    """grid_state 的 key 是中文名, 组合的 key 是 6 位代码 —— 归并前必须对齐。"""
+    state = {
+        "黄金ETF博时": {"merged_shares": 1125.0},
+        "纳斯达克ETF华夏": {"merged_shares": 0.0},
+        "红利ETF易方达": {"merged_shares": 250.0},
+        "不认识的名字": {"merged_shares": 999.0},
+    }
+    out = record.merged_shares_by_code(state)
+    assert out == {"159937": 1125.0, "515180": 250.0}, (
+        f"unexpected mapping: {out}")
+    # 0 份额的资产不该出现 (否则会造出一个空仓位的行)
+    assert "513300" not in out
+
+
+def test_merge_grid_shares_into_positions_folds_into_value():
+    """归并份额要进 total_shares 和 value, 但不能改掉真实持仓 shares。"""
+    positions = [
+        {"name": "黄金ETF博时", "code": "159937", "shares": 5200.0,
+         "price": 8.18, "value": 42536.0},
+    ]
+    out = record.merge_grid_shares_into_positions(
+        positions, {"159937": 1000.0})
+    assert len(out) == 1
+    p = out[0]
+    assert p["shares"] == 5200.0, "真实持仓份额不能被改写"
+    assert p["merged_shares"] == pytest_approx(1000.0)
+    assert p["total_shares"] == pytest_approx(6200.0)
+    assert p["merged_value"] == pytest_approx(1000.0 * 8.18)
+    assert p["value"] == pytest_approx(6200.0 * 8.18), (
+        "市值必须按 total_shares 算, 否则权重分母被低估")
+    # 输入不被修改
+    assert positions[0]["value"] == 42536.0
+    assert "merged_shares" not in positions[0]
+
+
+def test_merged_shares_change_rebalance_weights():
+    """归并份额计入权重 —— 这是整个改动的目的。"""
+    positions = [
+        {"name": "A", "code": "515180", "shares": 1000.0, "price": 10.0,
+         "value": 10000.0},
+        {"name": "B", "code": "159937", "shares": 1000.0, "price": 10.0,
+         "value": 10000.0},
+    ]
+    before_total, before_w, _, _ = record.evaluate(positions, 0.0, 0.0)
+    assert before_w[0] == pytest_approx(0.5)
+    assert before_w[1] == pytest_approx(0.5)
+
+    merged = record.merge_grid_shares_into_positions(
+        positions, {"159937": 500.0})
+    after_total, after_w, _, _ = record.evaluate(merged, 0.0, 0.0)
+    assert after_total == pytest_approx(25000.0), "A 10,000 + B 15,000"
+    assert after_w[0] == pytest_approx(10000.0 / 25000.0)
+    assert after_w[1] == pytest_approx(15000.0 / 25000.0)
+    assert after_w[1] > before_w[1], "归并份额必须把权重推高"
+
+
+def test_merged_only_code_becomes_its_own_position_row():
+    """网格归并了组合没持有的代码 → 它也得有一行持仓 (组合真的持有它了)。"""
+    positions = [
+        {"name": "红利ETF易方达", "code": "515180", "shares": 1000.0,
+         "price": 10.0},
+    ]
+    out = record.merge_grid_shares_into_positions(
+        positions, {"513300": 500.0}, {"513300": 2.5})
+    assert len(out) == 2
+    row = [p for p in out if p["code"] == "513300"][0]
+    assert row["shares"] == 0.0
+    assert row["merged_shares"] == pytest_approx(500.0)
+    assert row["total_shares"] == pytest_approx(500.0)
+    assert row["value"] == pytest_approx(1250.0)
+    assert row.get("merged_only") is True
+    # 定价失败的代码不能凭空造出一行 0 市值的持仓
+    out2 = record.merge_grid_shares_into_positions(
+        positions, {"513300": 500.0}, {})
+    assert len(out2) == 1
+
+
+def test_grid_capital_drops_to_zero_after_exit_while_merged_survives():
+    """出场后: 网格的资金占用归零 (本金收回), 归并份额留在组合那边。"""
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [100.0]
+    state, _ = grid_mod.advance_one_day(
+        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0)
+    state, sig = grid_mod.advance_one_day(
+        state, "2026-01-02", price=99.0 * 1.04, layer_yuan_value=10_000.0,
+        tp_basis="first_buy")
+    assert sig == "sell"
+    snap = grid_mod.asset_snapshot(state, current_price=103.0)
+    assert snap["in_cycle"] is False
+    assert snap["current_value"] == 0.0, "出场后网格不再占用资金"
+    assert snap["merged_shares"] > 0.0, "余量归并给组合"
+    assert snap["merged_value"] == pytest_approx(snap["merged_shares"] * 103.0)
+
+
+def test_merged_shares_never_leak_into_the_real_trade_ledger():
+    """归并份额是模拟口径 —— trades.json 只记录真实成交。
+
+    归并只是给持仓加权, 不产生任何一笔"买入"记录。
+    """
+    trades_path = ROOT / "data" / "trades.json"
+    before = trades_path.read_text(encoding="utf-8") if trades_path.exists() else None
+    positions = [
+        {"name": "红利ETF易方达", "code": "515180", "shares": 1000.0,
+         "price": 10.0},
+    ]
+    merged = record.merge_grid_shares_into_positions(positions, {"515180": 500.0})
+    # 归并后的持仓仍然是"一笔真实持仓 + 模拟的余量", 不是新的成交
+    assert merged[0]["shares"] == 1000.0
+    after = trades_path.read_text(encoding="utf-8") if trades_path.exists() else None
+    assert before == after, "归并不得改动 trades.json"
 
 
 def _nf_fixture(files: dict, env: dict):

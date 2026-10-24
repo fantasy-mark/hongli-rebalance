@@ -42,6 +42,7 @@ ETF_DEFS = {
     "513300": ("sh513300", "513300", "纳斯达克ETF华夏", True),   # QDII
 }
 ASSET_NAMES = [v[2] for v in ETF_DEFS.values()]
+NAME_TO_CODE = {v[2]: code for code, v in ETF_DEFS.items()}
 QDII_CODES = {code for code, v in ETF_DEFS.items() if v[3]}
 
 # 3pp parameters
@@ -322,6 +323,111 @@ def fetch_positions(holdings: list[dict]) -> Tuple[list[dict], float, list[Tuple
 # 3pp evaluation
 # -----------------------------------------------------------------------------
 
+def merged_shares_by_code(grid_state: dict) -> dict[str, float]:
+    """Map ETF code → shares the grid has merged into the portfolio.
+
+    The grid's take-profit sells back only the principal; the leftover
+    shares are handed over to the rebalance portfolio (模拟口径 — they are
+    NOT written to trades.json, which records real fills only).  From that
+    point on they are ordinary portfolio holdings and must be counted in
+    the position's value, the 3pp weight and the total.
+    """
+    out: dict[str, float] = {}
+    for name, asset in (grid_state or {}).items():
+        if not isinstance(asset, dict):
+            continue
+        code = NAME_TO_CODE.get(name)
+        if not code:
+            continue
+        shares = float(asset.get("merged_shares", 0.0) or 0.0)
+        if shares > 0:
+            out[code] = shares
+    return out
+
+
+def fetch_extra_prices(codes: list[str]) -> Tuple[dict[str, float], list[str]]:
+    """Fetch latest prices for codes that carry merged (grid) shares but
+    aren't held in the real portfolio — they still need a valuation.
+
+    Returns (price_by_code, errors).
+    """
+    prices: dict[str, float] = {}
+    errors: list[Tuple[str, str]] = []
+    for code in codes:
+        if code not in ETF_DEFS:
+            errors.append((code, "unknown code (not in ETF_DEFS)"))
+            continue
+        sina, em, _, _ = ETF_DEFS[code]
+        try:
+            price, _pdate = latest(sina, em)
+            prices[code] = float(price)
+        except Exception as ex:
+            errors.append((code, str(ex)))
+    return prices, errors
+
+
+def merge_grid_shares_into_positions(
+    positions: list[dict],
+    merged_by_code: dict[str, float],
+    extra_prices: dict[str, float] | None = None,
+) -> list[dict]:
+    """Fold the grid's merged shares into the portfolio positions.
+
+    Returns a new list of position dicts (the input is not mutated).  Each
+    position gains:
+        merged_shares  — shares handed over by the grid (模拟口径)
+        merged_value   — their market value
+        total_shares   — real shares + merged shares
+    and `value` becomes total_shares × price, so the 3pp weight and the
+    portfolio total see the merged exposure.
+
+    A code that has merged shares but no real holding becomes a position
+    of its own (shares = 0, all of it merged) — the portfolio genuinely
+    holds it.  Its price comes from `extra_prices`; a code we couldn't
+    price is skipped (and reported by the caller as an error).
+    """
+    extra_prices = extra_prices or {}
+    out: list[dict] = []
+    seen: set[str] = set()
+    for p in positions:
+        code = str(p.get("code", ""))
+        # 份额先定到 2 位小数, 再由它算市值 —— 页面上的"多少份"和"多少钱"
+        # 必须自洽 (用户拿显示的份额 × 价格验算要能对上)。
+        merged = round(float(merged_by_code.get(code, 0.0) or 0.0), 2)
+        seen.add(code)
+        real_shares = float(p.get("shares", 0.0))
+        price = float(p.get("price", 0.0))
+        new = dict(p)
+        new["merged_shares"] = merged
+        new["total_shares"] = round(real_shares + merged, 2)
+        new["merged_value"] = round(merged * price, 2)
+        new["value"] = round(new["total_shares"] * price, 2)
+        out.append(new)
+    # Codes with merged shares but no real holding → new position rows.
+    for code, merged in merged_by_code.items():
+        if code in seen:
+            continue
+        price = extra_prices.get(code)
+        if not price:
+            continue
+        name = ETF_DEFS[code][2]
+        merged = round(float(merged), 2)
+        merged_value = round(merged * float(price), 2)
+        out.append({
+            "name": name,
+            "code": code,
+            "shares": 0.0,
+            "merged_shares": merged,
+            "total_shares": merged,
+            "merged_value": merged_value,
+            "price": round(float(price), 4),
+            "date": "",
+            "value": merged_value,
+            "merged_only": True,
+        })
+    return out
+
+
 def evaluate(positions: list[dict], cash_rebalance: float, cash_grid: float
               ) -> Tuple[float, list[float], bool, list[dict]]:
     """Return (total, weights, triggered, plan). plan is empty when not triggered.
@@ -330,6 +436,10 @@ def evaluate(positions: list[dict], cash_rebalance: float, cash_grid: float
     part of the portfolio (so weights and trigger check include it),
     but the grid engine itself is fully virtual and doesn't touch the
     cash pool — see src/grid.py.
+
+    `positions` must already include the grid's merged shares (see
+    merge_grid_shares_into_positions) — they are portfolio holdings now,
+    so they have to be in the value the weights are computed on.
 
     TARGET_W is dynamic: 1/len(positions) — works for 3, 4, 5 asset configs.
     """
@@ -435,6 +545,11 @@ def build_record(today: str, positions: list[dict],
                if isinstance(asset, dict) else asset)
         for name, asset in (grid_state or {}).items()
     }
+    # 网格归并到再平衡的份额合计 —— 页面/邮件在再平衡那一栏显示它。
+    merged_shares_total = sum(float(p.get("merged_shares", 0.0) or 0.0)
+                              for p in positions)
+    merged_value_total = sum(float(p.get("merged_value", 0.0) or 0.0)
+                             for p in positions)
     return {
         "date": today,
         "total": round(total, 2),
@@ -450,6 +565,8 @@ def build_record(today: str, positions: list[dict],
         "plan": plan,
         "grid_signals": grid_signals,
         "grid_state": slim_grid_state,
+        "merged_shares_total": round(merged_shares_total, 2),
+        "merged_value_total": round(merged_value_total, 2),
         "qdii_premiums": qdii_premiums or [],
     }
 
@@ -505,14 +622,14 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
             "in_cycle": snap["in_cycle"],
             "num_buys": snap["num_buys"],
             "avg_cost": snap["avg_cost"],
+            # 网格自己的资金占用 = 只算在周期内的层 (出场后本金回来, 占用回落)
             "current_value": snap["current_value"],
             "unrealized_pnl": snap["unrealized_pnl"],
             "return_pct": snap["return_pct"],
-            # 零成本份额: 止盈时转出, 此后永久持有不再卖。即使 in_cycle=False
-            # 也可能非零 —— 消费方不能靠 in_cycle 判断"这个资产没有市值"。
-            "free_shares": snap["free_shares"],
-            "free_value": snap["free_value"],
-            "in_use": snap["in_use"],
+            # 已归并到再平衡持仓的份额 (不再是网格的资产) —— 页面在再平衡
+            # 那一栏显示, 网格这一栏不重复计入资金占用。
+            "merged_shares": snap["merged_shares"],
+            "merged_value": snap["merged_value"],
             "trigger_pct": round(trigger_pct, 2),
             "trigger_kind": trigger_kind,
         })
@@ -596,14 +713,33 @@ def main() -> None:
         except Exception as ex:
             print(f"WARN QDII unheld premium {code} failed: {ex}", file=sys.stderr)
 
-    total, weights, triggered_3pp, plan = evaluate(
-        positions, cash_rebalance, cash_grid,
+    # --- Grid-merged shares → portfolio -------------------------------
+    # The grid's take-profit hands its leftover shares to the rebalance
+    # portfolio.  Those shares are portfolio holdings from then on, so they
+    # have to be in the value the 3pp weights are computed on.
+    #
+    # Two passes: the pre-merge value sizes today's grid layer, the
+    # post-merge value is what the record reports (a take-profit today
+    # changes the portfolio, and the 3pp check should see the portfolio
+    # the user will actually hold).
+    state = load_grid_state()
+    merged_before = merged_shares_by_code(state)
+    held_codes = {p["code"] for p in positions}
+    extra_codes = [c for c in merged_before if c not in held_codes]
+    extra_prices, extra_errors = fetch_extra_prices(extra_codes)
+    for code, msg in extra_errors:
+        print(f"WARN merged-share price {code}: {msg}", file=sys.stderr)
+    positions_eff = merge_grid_shares_into_positions(
+        positions, merged_before, extra_prices,
+    )
+    total_pre, _w_pre, _t_pre, _p_pre = evaluate(
+        positions_eff, cash_rebalance, cash_grid,
     )
 
     # 3pp pool for grid layer sizing (history.totals + today)
     history = load_history()
     pool = pd.Series(
-        [r["total"] for r in history if "total" in r] + [total],
+        [r["total"] for r in history if "total" in r] + [total_pre],
         index=pd.to_datetime(
             [r["date"] for r in history if "total" in r] + [today]
         ),
@@ -614,10 +750,15 @@ def main() -> None:
     # Advance grid
     # Today uses the K-line LOW (intraday low) so the trigger can fire on
     # intraday dips even if the close is above yesterday's close.
-    state = load_grid_state()
-    prices_by_name = {p["name"]: p["price"] for p in positions if p["name"] in ASSET_NAMES}
+    #
+    # `positions_eff` (not `positions`) is the source: it also carries the
+    # codes the grid tracks but the portfolio doesn't hold — those rows exist
+    # only because the grid merged shares into them, and the grid still has
+    # to advance on them.
+    prices_by_name = {p["name"]: p["price"] for p in positions_eff
+                      if p["name"] in ASSET_NAMES}
     lows_by_name: dict[str, float] = {}
-    for p in positions:
+    for p in positions_eff:
         if p["name"] not in ASSET_NAMES:
             continue
         code = p["code"]
@@ -627,7 +768,7 @@ def main() -> None:
     # If K-line fetch failed for an asset, fall back to the realtime close
     grid_prices = {n: lows_by_name.get(n, prices_by_name.get(n)) for n in ASSET_NAMES}
     new_state, grid_signals = advance_all_grids(
-        state, today, grid_prices, total, recent_min,
+        state, today, grid_prices, total_pre, recent_min,
     )
     # Annotate signals with the (intraday) low that drove the decision so
     # the daily record shows the actual trigger price, not the close.
@@ -635,6 +776,21 @@ def main() -> None:
         if s["name"] in lows_by_name:
             s["intraday_low"] = round(lows_by_name[s["name"]], 4)
     save_grid_state(new_state)
+
+    # Re-merge: today's take-profit may have added new merged shares.
+    merged_after = merged_shares_by_code(new_state)
+    extra_codes = [c for c in merged_after if c not in held_codes]
+    if extra_codes:
+        extra_prices, extra_errors = fetch_extra_prices(extra_codes)
+        for code, msg in extra_errors:
+            print(f"WARN merged-share price {code}: {msg}", file=sys.stderr)
+    positions_eff = merge_grid_shares_into_positions(
+        positions, merged_after, extra_prices,
+    )
+    total, weights, triggered_3pp, plan = evaluate(
+        positions_eff, cash_rebalance, cash_grid,
+    )
+    positions = positions_eff
 
     # Persist record
     record = build_record(
@@ -663,7 +819,9 @@ def main() -> None:
     for p, w in zip(positions, weights):
         delta = (w - dyn_target) * 100
         flag = " ⚠" if abs(delta) > THRESHOLD_PP else ""
-        print(f"    {p['name']:<14} {w:>6.2%}  Δ={delta:+.2f}pp{flag}")
+        merged_tag = (f"  (含归并 {p['merged_shares']:,.0f}份)"
+                      if p.get("merged_shares") else "")
+        print(f"    {p['name']:<14} {w:>6.2%}  Δ={delta:+.2f}pp{flag}{merged_tag}")
     print(f"  grid layer: ¥{grid_mod.layer_yuan(total, recent_min):,.0f} "
           f"(pool ¥{total:,.0f}, recent_min ¥{recent_min:,.0f})")
     for s in grid_signals:
@@ -671,8 +829,8 @@ def main() -> None:
         print(f"    {s['name']:<14} {tag:<4}  layer=¥{s['layer_yuan']:,.0f}  "
               f"in_cycle={s['in_cycle']}  buys={s['num_buys']}  "
               f"unreal={s['unrealized_pnl']:+,.0f}  "
-              f"free={s['free_shares']:,.0f}份(¥{s['free_value']:,.0f})  "
-              f"in_use=¥{s['in_use']:,.0f}")
+              f"占用=¥{s['current_value']:,.0f}  "
+              f"已归并={s['merged_shares']:,.0f}份(¥{s['merged_value']:,.0f})")
 
     write_github_output(today, total, any_signal)
 

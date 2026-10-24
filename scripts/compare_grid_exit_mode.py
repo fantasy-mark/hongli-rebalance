@@ -1,25 +1,25 @@
-"""回测: 网格止盈时「只卖出成本金额」(现行规则) vs「全部卖出」(旧规则)。
+"""回测: 网格出场时「只卖出成本金额」(现行规则) vs「全部卖出」(旧规则)。
 
-现行规则 (src/grid.py run_compound_grid + split_take_profit): 止盈时只卖
+现行规则 (src/grid.py run_compound_grid + split_take_profit): 出场时只卖
 `total_invested / price` 份, 恰好取回本金 -> 已实现盈亏恒为 0; 剩余
-`total_shares - total_invested/price` 份变成**零成本份额**永久持有
-(不再卖出), 后续全部收益来自这些免费份额的累积涨幅。网格实质上变成了
+`total_shares - total_invested/price` 份**归并到再平衡的持仓**
+(merged_shares), 此后按组合的规则参与权重计算 —— 网格实质上变成了
 「买入持有」。
 
-对照 exit_mode="all": 旧规则, 止盈时卖出**全部**份额, 把利润一次性
+对照 exit_mode="all": 旧规则, 出场时卖出**全部**份额, 把利润一次性
 落袋变成闲置现金, 不再产生收益。留着这个口径是为了回答「换规则到底
 赚了多少」—— 它不是候选方案。
 
 WHY A RE-IMPLEMENTATION INSTEAD OF A PARAMETER:
-`run_compound_grid` 的返回值不暴露「跨周期累计的零成本份额」和
+`run_compound_grid` 的返回值不暴露「跨周期累计的归并份额」和
 「逐日资金占用」, 而这两个都是本次比较必需的量。这里重写一遍循环,
 并用 `--selftest` 断言 exit_mode="cost" 模式下 cum_realized / 周期数 /
-入场笔数 / 累计投入 / 零成本份额 与 run_compound_grid 逐项相等 ——
+入场笔数 / 累计投入 / 归并份额 与 run_compound_grid 逐项相等 ——
 重实现若与生产逻辑漂移, 这个断言会先炸。
 
-口径与 data/grid_chart.png 的「网格 ROI」完全一致 (src/chart.py:316-332):
-    网格 ROI   = (Σ已实现 + Σ浮盈 + Σ零成本份额市值) / 峰值资金占用 × 100
-    资金占用   = 网格持有的总市值 (含零成本份额, 故只涨不落)
+口径与 data/grid_chart.png 的「网格 ROI」完全一致 (src/chart.py):
+    网格 ROI   = (Σ已实现 + Σ浮盈 + Σ归并份额市值) / 峰值资金占用 × 100
+    资金占用   = 网格**在周期内**的层 (出场后本金收回, 占用回落)
 另加一个更诚实的口径 (本金反复周转时分母会很大):
     本金收益率 = 期末总盈亏 / 期间累计投入本金 × 100
 
@@ -70,7 +70,7 @@ def replay(prices: pd.Series, exit_mode: str,
     """run_compound_grid 的忠实重写 + exit_mode 开关。
 
     exit_mode="cost" — 与 run_compound_grid 逐位一致 (由 --selftest 断言);
-                      止盈只回本, 剩余份额转零成本永久持有
+                      出场只回本, 剩余份额归并到再平衡持仓
     exit_mode="all"  — 旧规则, 止盈卖光 (留作对照口径)
     """
     pos_yuan = grid_mod.GRID_BASE_YUAN if pos_yuan is None else pos_yuan
@@ -84,7 +84,7 @@ def replay(prices: pd.Series, exit_mode: str,
     cycles: list[dict] = []
     cum_realized = 0.0      # 变体下恒为 0
     cum_invested = 0.0      # 累计投入本金 (每次加仓 +pos_yuan)
-    free_shares = 0.0       # 变体专属: 累计零成本份额
+    merged_shares = 0.0       # 变体专属: 累计归并到再平衡的份额
     n_buys = 0
     history = []
     s = prices.sort_index()
@@ -122,17 +122,17 @@ def replay(prices: pd.Series, exit_mode: str,
                         "entries": entries, "exit_date": date,
                         "exit_price": float(price), "num_buys": len(entries),
                         "total_invested": total_invested, "exit_value": exit_value,
-                        "pnl": pnl, "free_gained": 0.0,
+                        "pnl": pnl, "merged_gained": 0.0,
                     })
                 else:  # exit_mode == "cost"
                     sold = total_invested / price      # 恰好回本
-                    leftover = total_shares - sold     # 转零成本, 永久持有
-                    free_shares += leftover
+                    leftover = total_shares - sold     # 归并到再平衡持仓
+                    merged_shares += leftover
                     cycles.append({
                         "entries": entries, "exit_date": date,
                         "exit_price": float(price), "num_buys": len(entries),
                         "total_invested": total_invested, "exit_value": sold * price,
-                        "pnl": 0.0, "free_gained": leftover,
+                        "pnl": 0.0, "merged_gained": leftover,
                     })
                 in_cycle = False
                 entries = []
@@ -146,26 +146,27 @@ def replay(prices: pd.Series, exit_mode: str,
             current_value = 0.0
             unrealized = 0.0
 
-        free_value = free_shares * price
-        # 资金占用 = 网格持有的总市值。变体下零成本份额一直持有, 故只涨不落。
-        in_use = current_value + free_value
+        merged_value = merged_shares * price
+        # 资金占用 = 网格**在周期内**的层。出场时本金全额收回, 所以占用会
+        # 回落 —— 归并出去的那批份额归再平衡组合管, 不占网格的钱。
+        capital = current_value
         history.append({
             "date": date, "in_cycle": in_cycle,
-            "in_use": in_use, "cum_realized": cum_realized,
-            "unrealized": unrealized, "free_value": free_value,
-            "total_pnl": cum_realized + unrealized + free_value,
-            "cum_invested": cum_invested, "free_shares": free_shares,
+            "capital": capital, "cum_realized": cum_realized,
+            "unrealized": unrealized, "merged_value": merged_value,
+            "total_pnl": cum_realized + unrealized + merged_value,
+            "cum_invested": cum_invested, "merged_shares": merged_shares,
         })
 
     return {"cycles": cycles, "history": pd.DataFrame(history).set_index("date"),
             "cum_realized": cum_realized, "cum_invested": cum_invested,
-            "n_buys": n_buys, "free_shares": free_shares}
+            "n_buys": n_buys, "merged_shares": merged_shares}
 
 
 def summarize(res: dict, label: str) -> dict:
     h = res["history"]
     final_pnl = float(h["total_pnl"].iloc[-1])
-    peak_in_use = float(h["in_use"].max())
+    peak_capital = float(h["capital"].max())
     cum_inv = res["cum_invested"]
     return {
         "label": label,
@@ -173,12 +174,12 @@ def summarize(res: dict, label: str) -> dict:
         "n_buys": res["n_buys"],
         "total_invested": cum_inv,
         "cum_realized": res["cum_realized"],
-        "free_shares": res["free_shares"],
-        "final_free_value": float(h["free_value"].iloc[-1]),
+        "merged_shares": res["merged_shares"],
+        "final_merged_value": float(h["merged_value"].iloc[-1]),
         "final_pnl": final_pnl,
-        "peak_in_use": peak_in_use,
+        "peak_capital": peak_capital,
         # 与 chart.py:331-332 同口径
-        "chart_roi_pct": final_pnl / peak_in_use * 100 if peak_in_use else 0.0,
+        "chart_roi_pct": final_pnl / peak_capital * 100 if peak_capital else 0.0,
         # 累计投入本金收益率
         "capital_roi_pct": final_pnl / cum_inv * 100 if cum_inv else 0.0,
     }
@@ -203,7 +204,7 @@ def selftest(prices: dict) -> None:
             ("cum_invested",
              sum(c["total_invested"] for c in ref["cycles"]) + (ref["open_invested"] or 0),
              mine["cum_invested"]),
-            ("free_shares", ref["free_shares"], mine["free_shares"]),
+            ("merged_shares", ref["merged_shares"], mine["merged_shares"]),
         ]
         line = []
         for k, a, b in checks:
@@ -245,37 +246,37 @@ def main() -> None:
                      "asset": name, "mode": "cost"})
 
     hdr = f"{'资产 / 模式':<26}{'周期':>5}{'投入本金':>11}{'已实现':>10}" \
-          f"{'零成本份额':>11}{'期末总盈亏':>12}{'峰值占用':>10}" \
+          f"{'归并份额':>11}{'期末总盈亏':>12}{'峰值占用':>10}" \
           f"{'图表ROI':>9}{'本金ROI':>9}"
     print(hdr)
     print("-" * len(hdr.encode("gbk", errors="replace")))
     for r in rows:
         print(f"{r['label']:<26}{r['n_cycles']:>5}{r['total_invested']:>11,.0f}"
-              f"{r['cum_realized']:>10,.0f}{r['free_shares']:>11,.0f}"
-              f"{r['final_pnl']:>12,.0f}{r['peak_in_use']:>10,.0f}"
+              f"{r['cum_realized']:>10,.0f}{r['merged_shares']:>11,.0f}"
+              f"{r['final_pnl']:>12,.0f}{r['peak_capital']:>10,.0f}"
               f"{r['chart_roi_pct']:>8.2f}%{r['capital_roi_pct']:>8.2f}%")
 
     tot = {}
     for m in ("all", "cost"):
         h = pd.concat([results[m][n]["history"]["total_pnl"] for n in prices],
                       axis=1).sum(axis=1)
-        use = pd.concat([results[m][n]["history"]["in_use"] for n in prices],
+        use = pd.concat([results[m][n]["history"]["capital"] for n in prices],
                         axis=1).sum(axis=1)
         inv = sum(results[m][n]["cum_invested"] for n in prices)
-        # 「永久持有」的风险不在期末而在路径: 免费份额会跟着一起跌。峰值
+        # 「归并到组合」的风险不在期末而在路径: 归并份额会跟着一起跌。峰值
         # 占用取的是 max(), 完全看不到中间的回撤, 所以把最低浮盈单列出来。
         trough = h.idxmin()
         tot[m] = {
             "final_pnl": float(h.iloc[-1]),
-            "peak_in_use": float(use.max()),
+            "peak_capital": float(use.max()),
             "peak_date": use.idxmax().date(),
             "trough_pnl": float(h.min()),
             "trough_date": trough.date(),
             "cum_invested": inv,
-            "free_shares": sum(results[m][n]["free_shares"] for n in prices),
+            "merged_shares": sum(results[m][n]["merged_shares"] for n in prices),
             "n_cycles": sum(len(results[m][n]["cycles"]) for n in prices),
         }
-        tot[m]["chart_roi_pct"] = tot[m]["final_pnl"] / tot[m]["peak_in_use"] * 100
+        tot[m]["chart_roi_pct"] = tot[m]["final_pnl"] / tot[m]["peak_capital"] * 100
         tot[m]["capital_roi_pct"] = tot[m]["final_pnl"] / tot[m]["cum_invested"] * 100
 
     print("-" * len(hdr.encode("gbk", errors="replace")))
@@ -283,8 +284,8 @@ def main() -> None:
                      ("cost", "合计 · 只卖出成本 (现行)")):
         t = tot[m]
         print(f"{label:<26}{t['n_cycles']:>5}{t['cum_invested']:>11,.0f}"
-              f"{'':>10}{t['free_shares']:>11,.0f}{t['final_pnl']:>12,.0f}"
-              f"{t['peak_in_use']:>10,.0f}"
+              f"{'':>10}{t['merged_shares']:>11,.0f}{t['final_pnl']:>12,.0f}"
+              f"{t['peak_capital']:>10,.0f}"
               f"{t['chart_roi_pct']:>8.2f}%{t['capital_roi_pct']:>8.2f}%")
 
     a, c = tot["all"], tot["cost"]
@@ -294,9 +295,9 @@ def main() -> None:
     print(f"本金收益率  {a['capital_roi_pct']:.2f}%  →  {c['capital_roi_pct']:.2f}%"
           f"   ({c['capital_roi_pct'] - a['capital_roi_pct']:+.2f}pp)")
     print(f"期末总盈亏  ¥{a['final_pnl']:,.0f}  →  ¥{c['final_pnl']:,.0f}")
-    print(f"峰值占用    ¥{a['peak_in_use']:,.0f} ({a['peak_date']})"
-          f"  →  ¥{c['peak_in_use']:,.0f} ({c['peak_date']})")
-    print(f"累计零成本份额 {c['free_shares']:,.0f} 份 (现行规则, 永久持有)")
+    print(f"峰值占用    ¥{a['peak_capital']:,.0f} ({a['peak_date']})"
+          f"  →  ¥{c['peak_capital']:,.0f} ({c['peak_date']})")
+    print(f"累计归并份额 {c['merged_shares']:,.0f} 份 (现行规则, 归并到再平衡持仓)")
     print()
     print(f"路径风险 (全程最低浮盈):")
     print(f"  旧规则  ¥{a['trough_pnl']:>9,.0f}  ({a['trough_date']})")

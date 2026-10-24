@@ -17,8 +17,8 @@ For each op, the math is run inlined (mirroring scripts/apply_holdings.py)
 so the workflow doesn't need to install pandas/akshare. The mutator is
 the same as src/grid.py:manual_op, INCLUDING the take-profit rule: a `tp`
 sells only `total_invested / price` shares (recovering exactly the
-principal) and transfers the remainder to permanently-held `free_shares`,
-so realized P&L is 0 on a normal exit. State is read from
+principal) and merges the remainder into the rebalance portfolio
+(`merged_shares`), so realized P&L is 0 on a normal exit. State is read from
 data/grid_state.json, mutated in memory, and written back atomically.
 
 Validation rules:
@@ -87,14 +87,14 @@ def split_take_profit(total_shares: float, total_invested: float,
     if not price > 0:
         raise ValueError(f"price must be > 0, got {price}")
     if total_shares <= 0:
-        return {"shares_sold": 0.0, "proceeds": 0.0, "free_gained": 0.0, "pnl": 0.0}
+        return {"shares_sold": 0.0, "proceeds": 0.0, "merged_shares": 0.0, "pnl": 0.0}
     want = total_invested / price
     if want >= total_shares:
         proceeds = total_shares * price
         return {"shares_sold": total_shares, "proceeds": proceeds,
-                "free_gained": 0.0, "pnl": proceeds - total_invested}
+                "merged_shares": 0.0, "pnl": proceeds - total_invested}
     return {"shares_sold": want, "proceeds": total_invested,
-            "free_gained": total_shares - want, "pnl": 0.0}
+            "merged_shares": total_shares - want, "pnl": 0.0}
 
 
 def inline_manual_op(state: dict, op: str, today: str,
@@ -104,7 +104,8 @@ def inline_manual_op(state: dict, op: str, today: str,
 
     For `tp` the "sell cost only" rule applies (see split_take_profit):
     pnl_delta is 0 on a normal above-cost exit, because only the principal
-    is sold and the remainder moves to permanently-held `free_shares`. It
+    is sold and the remainder is merged into the rebalance portfolio
+    (`merged_shares`). It
     is negative only if the user exits BELOW cost, where we sell out and
     book the loss. For `open`/`add` it is 0.
 
@@ -129,7 +130,7 @@ def inline_manual_op(state: dict, op: str, today: str,
         "last_prices": list(state.get("last_prices", [])),
         "cum_realized": float(state.get("cum_realized", 0.0)),
         "ops": list(state.get("ops", [])),
-        "free_shares": float(state.get("free_shares", 0.0)),
+        "merged_shares": float(state.get("merged_shares", 0.0)),
     }
     pnl_delta = 0.0
 
@@ -154,7 +155,7 @@ def inline_manual_op(state: dict, op: str, today: str,
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
         split = split_take_profit(total_shares, total_invested, float(price))
-        new_state["free_shares"] += split["free_gained"]
+        new_state["merged_shares"] += split["merged_shares"]
         # Capture per-event exit stats BEFORE clearing `entries`.
         new_state["ops"].append({
             "date": today, "op": "tp", "source": "manual",
@@ -162,10 +163,10 @@ def inline_manual_op(state: dict, op: str, today: str,
             "note": note,
             "pnl": float(split["pnl"]),
             "num_buys_exited": len(entries),
-            # "出场"的全部份额 = 卖出的 + 转成零成本的 (== 原持仓)
+            # "出场"的全部份额 = 卖出的 + 归并出去的 (== 原持仓)
             "total_shares_exited": float(split["shares_sold"]
-                                         + split["free_gained"]),
-            "shares_to_free": float(split["free_gained"]),
+                                         + split["merged_shares"]),
+            "shares_to_merge": float(split["merged_shares"]),
         })
         new_state["cum_realized"] += split["pnl"]
         new_state["entries"] = []
@@ -291,7 +292,7 @@ def main() -> None:
                 "in_cycle": False, "entries": [],
                 "last_prices": [], "cum_realized": 0.0,
                 "ops": [],
-                "free_shares": 0.0,   # 零成本份额, 止盈时转入, 永不再卖
+                "merged_shares": 0.0,  # 归并份额, 止盈时并入再平衡持仓
             }
         # Compat: legacy last_120d_min → seed last_prices with it
         if not state[name].get("last_prices") and state[name].get("last_120d_min") is not None:

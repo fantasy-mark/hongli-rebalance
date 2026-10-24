@@ -12,10 +12,11 @@ Rules (per asset, independent):
   - Take-profit: when price >= first_buy_price * (1 + tp_pct/100), sell
     **only the cost amount** (`total_invested / price` shares, recovering
     exactly the principal), then wait for the next trigger. The leftover
-    `total_shares - total_invested/price` shares become **zero-cost shares
-    held permanently** and are never sold again — see `split_take_profit`.
+    `total_shares - total_invested/price` shares are **merged into the
+    rebalance portfolio** (`merged_shares`) — they leave the grid's book
+    and become ordinary portfolio holdings — see `split_take_profit`.
     So realized P&L per cycle is 0 by construction, and all return comes
-    from the free shares' appreciation.
+    from the merged shares' appreciation.
 
 State persistence: `advance_one_day()` mutates a JSON-serializable dict so
 the Action can commit `data/grid_state.json` after each run.
@@ -56,28 +57,32 @@ def layer_yuan(pool_value: float, recent_min: float) -> float:
 # 止盈规则 (single source of truth)
 # -----------------------------------------------------------------------------
 # 网格止盈时**只卖出成本金额**: 卖出 `total_invested / price` 份, 恰好把本金
-# 取回来, 于是每个周期的已实现盈亏恒为 0; 剩下的份额变成**零成本份额**永久
-# 持有, 之后再也不会卖出 —— 该资产此后的全部收益都来自这些份额的累积涨幅。
+# 取回来, 于是每个周期的已实现盈亏恒为 0; 剩下的份额**归并到再平衡的持仓**
+# (merged shares) —— 它们不再是网格的资产, 而是组合的一部分, 此后按再平衡
+# 的规则参与权重计算。
 #
-# 这实质上把网格变成了买入持有: 止盈不再兑现浮盈, 只是把它永久化。网格仍然
-# 决定加仓的层数和时点, 但不再有退出机制。零成本份额**没有卖出入口**。
+# 这实质上把网格变成了买入持有: 止盈不再兑现浮盈, 只是把它永久化并交给组合。
+# 网格仍然决定加仓的层数和时点, 但不再有退出机制。
 #
 # 口径后果 (所有消费方都必须同步, 否则指标会说谎):
 #   - `cum_realized` 恒为 0 —— 已实现盈亏不再是有效的收益指标;
-#   - 收益全部体现在 `free_shares * price`, 即一笔永不兑现的浮动收益;
-#   - 资金占用只涨不落 (零成本份额一直拿着), 图表 ROI 的分母会持续变大,
-#     而分子只反映当前市价 —— 这个指标对回撤极度敏感。
+#   - 收益体现在**再平衡那一栏的持仓**里 (归并份额 × 市价), 不在网格账上;
+#   - 网格的**资金占用只算在周期内的层** —— 出场后本金回来了, 资金占用回落;
+#   - 再平衡的权重/总市值要**把归并份额算进去**, 否则组合的真实敞口被低估。
+#
+# 归并份额是**模拟口径**: 网格本身是虚拟策略, 所以归并进组合的份额也是模拟
+# 的, 不写进 data/trades.json (那里只记录真实成交)。
 
 def split_take_profit(total_shares: float, total_invested: float,
                       price: float) -> dict:
     """按"只卖成本金额"规则拆分一次止盈。
 
-    Returns {shares_sold, proceeds, free_gained, pnl}:
+    Returns {shares_sold, proceeds, merged_shares, pnl}:
       shares_sold  实际卖出的份额 (= 本金 / 价格, 取回全部本金)
-      free_gained  转成零成本永久持有的份额
+      merged_shares 归并到再平衡持仓的份额 (网格不再持有)
       pnl          已实现盈亏; 正常路径恒为 0, 亏本出场时为负
 
-    当 `price` 低于持仓均价时要卖的份额会超过持仓, 转出"负的零成本份额"没有
+    当 `price` 低于持仓均价时要卖的份额会超过持仓, 归并出"负的份额"没有
     意义, 此时退化为全部卖出并认亏。这只可能由**手动**止盈触发 —— 自动止盈的
     触发价 (`first_buy * 1.03` 或 `avg_cost * 1.03`) 必然高于均价, 因为金字塔
     只在更低处加仓, 所以 `first_buy >= avg_cost`。
@@ -85,15 +90,15 @@ def split_take_profit(total_shares: float, total_invested: float,
     if not price > 0:
         raise ValueError(f"price must be > 0, got {price}")
     if total_shares <= 0:
-        return {"shares_sold": 0.0, "proceeds": 0.0, "free_gained": 0.0, "pnl": 0.0}
+        return {"shares_sold": 0.0, "proceeds": 0.0, "merged_shares": 0.0, "pnl": 0.0}
     want = total_invested / price
     if want >= total_shares:
         # 亏本出场 (只有手动路径可能): 卖光并认亏
         proceeds = total_shares * price
         return {"shares_sold": total_shares, "proceeds": proceeds,
-                "free_gained": 0.0, "pnl": proceeds - total_invested}
+                "merged_shares": 0.0, "pnl": proceeds - total_invested}
     return {"shares_sold": want, "proceeds": total_invested,
-            "free_gained": total_shares - want, "pnl": 0.0}
+            "merged_shares": total_shares - want, "pnl": 0.0}
 
 
 # -----------------------------------------------------------------------------
@@ -117,7 +122,7 @@ def run_compound_grid(
         "global" — open cycle when price < min of all prior history (rolling global low)
 
     Returns dict with: cycles (closed), history (daily DataFrame), cum_realized,
-    open_cycle, open_avg_cost, open_invested, open_shares, free_shares.
+    open_cycle, open_avg_cost, open_invested, open_shares, merged_shares.
     """
     import pandas as pd  # local import keeps the module lightweight
 
@@ -125,7 +130,8 @@ def run_compound_grid(
     entries: list[dict] = []
     cycles: list[dict] = []
     cum_realized = 0.0
-    free_shares = 0.0     # 零成本份额累计 (止盈时转出, 永不再卖)
+    # 已归并到再平衡持仓的份额 (止盈时从网格账上转出, 此后归组合所有)
+    merged_shares = 0.0
     history: list[dict] = []
     prices_sorted = prices.sort_index()
 
@@ -159,7 +165,7 @@ def run_compound_grid(
                 tp_target = avg_cost * (1 + tp_pct / 100)
             if price >= tp_target:
                 split = split_take_profit(total_shares, total_invested, float(price))
-                free_shares += split["free_gained"]
+                merged_shares += split["merged_shares"]
                 cum_realized += split["pnl"]
                 cycles.append({
                     "entries": entries,
@@ -169,7 +175,7 @@ def run_compound_grid(
                     "avg_cost": avg_cost,
                     # 卖出的是"回本所需"那部分, 不是全部持仓 —— 见 split_take_profit
                     "total_shares": split["shares_sold"],
-                    "shares_transferred": split["free_gained"],
+                    "shares_transferred": split["merged_shares"],
                     "total_invested": total_invested,
                     "exit_value": split["proceeds"],
                     "pnl": split["pnl"],
@@ -191,8 +197,9 @@ def run_compound_grid(
             current_value = 0.0
             unrealized = 0.0
 
-        # 零成本份额是本金早已收回后的净多头, 它的市值就是累计收益。
-        free_value = free_shares * price
+        # 归并份额的市值 = 网格累计赚到的钱 (本金早已收回后的净多头)。
+        # 它归**再平衡**所有, 不算网格的资金占用。
+        merged_value = merged_shares * price
 
         history.append({
             "date": date,
@@ -200,13 +207,12 @@ def run_compound_grid(
             "num_buys": len(entries),
             "avg_cost": avg_cost,
             "total_invested": total_invested,
+            # 网格自己的资金占用 = 只算在周期内的层 (出场后本金回来, 占用回落)
             "current_value": current_value,
             "unrealized_pnl": unrealized,
             "cum_realized": cum_realized,
-            "free_shares": free_shares,
-            "free_value": free_value,
-            # 资金占用 = 在周期内的持仓 + 永久持有的零成本份额
-            "in_use": current_value + free_value,
+            "merged_shares": merged_shares,
+            "merged_value": merged_value,
         })
 
     df = pd.DataFrame(history).set_index("date")
@@ -218,7 +224,7 @@ def run_compound_grid(
         "open_avg_cost": avg_cost if in_cycle else None,
         "open_invested": total_invested if in_cycle else None,
         "open_shares": total_shares if in_cycle else None,
-        "free_shares": free_shares,
+        "merged_shares": merged_shares,
     }
 
 
@@ -248,7 +254,7 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
       cycle.entries[i > 0] -> op="add",  note "回测·金字塔第i+1层"
       cycle exit           -> op="tp",   note "回测·回本出场", plus pnl /
                               num_buys_exited / total_shares_exited /
-                              shares_to_free (转成永久零成本份额的部分)
+                              shares_to_merge (归并到再平衡持仓的部分)
       open_cycle entries   -> open/add only (no tp — that cycle is open)
 
     Sorted date ASC, with open/add before tp on a tie: in
@@ -274,10 +280,10 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
 
     for c in cycles or []:
         _entries(c["entries"])
-        # 出场现在是两条腿: 卖"回本所需"那部分, 余量转成永久持有的零成本
-        # 份额。`total_shares` 已经是"卖出的份额", 转出的份额另计。
+        # 出场现在是两条腿: 卖"回本所需"那部分, 余量归并到再平衡持仓。
+        # `total_shares` 已经是"卖出的份额", 归并出去的那部分另计。
         sold = float(c.get("total_shares", 0.0))
-        to_free = float(c.get("shares_transferred", 0.0) or 0.0)
+        to_merge = float(c.get("shares_transferred", 0.0) or 0.0)
         ops.append({
             "date": _iso_date(c["exit_date"]),
             "op": "tp",
@@ -287,8 +293,8 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
             "note": "回测·回本出场",
             "pnl": round(float(c["pnl"]), 2),
             "num_buys_exited": int(c["num_buys"]),
-            "total_shares_exited": round(sold + to_free, 2),
-            "shares_to_free": round(to_free, 2),
+            "total_shares_exited": round(sold + to_merge, 2),
+            "shares_to_merge": round(to_merge, 2),
         })
 
     # The still-open cycle has no exit yet — entries only, no tp.
@@ -347,14 +353,15 @@ def fresh_asset_state() -> dict:
         #   "backtest" — ops_from_cycles() replay of historical prices, i.e.
         #                SIMULATED (see scripts/backfill_grid_ops.py)
         "ops": [],
-        # 零成本份额 (float, shares). 每次止盈时 `total_shares -
-        # total_invested/price` 转入这里, 此后**永不再卖** —— 见
-        # split_take_profit 的说明。旧版 state 没有这个 key, 读取一律走
-        # .get("free_shares", 0.0) 以保持向后兼容。
+        # 归并份额 (float, shares). 每次止盈时 `total_shares -
+        # total_invested/price` 归并到这里 —— 这批份额**离开网格的账, 变成
+        # 再平衡持仓的一部分** (模拟口径, 见 split_take_profit 的说明)。
+        # 旧版 state 没有这个 key, 读取一律走 .get("merged_shares", 0.0)
+        # 以保持向后兼容。
         #
         # ⚠️ state 是用**字面量 dict** 重建的 (见 advance_one_day /
         # inline_manual_op), 少写一个 key 就会被静默丢弃而不报错。
-        "free_shares": 0.0,
+        "merged_shares": 0.0,
     }
 
 
@@ -396,7 +403,8 @@ def advance_one_day(
     if not last_prices and legacy_min is not None:
         last_prices = [float(legacy_min)]
     cum_realized = float(state.get("cum_realized", 0.0))
-    free_shares = float(state.get("free_shares", 0.0))   # 零成本份额, 永不再卖
+    # 归并份额: 已交给再平衡持仓的份额 (不再是网格的资产)
+    merged_shares = float(state.get("merged_shares", 0.0))
     ops: list[dict] = list(state.get("ops", []))   # append-only op log
 
     signal: Optional[str] = None
@@ -439,21 +447,22 @@ def advance_one_day(
             if price >= tp_target:
                 split = split_take_profit(total_shares, total_invested,
                                           float(price))
-                free_shares += split["free_gained"]
+                merged_shares += split["merged_shares"]
                 # Capture per-event exit stats BEFORE clearing `entries`.
                 # `shares` is what was actually SOLD (回本所需), not the whole
-                # position — the rest moved to free_shares. Both are logged so
-                # the ops table reconciles against the trade ledger.
+                # position — the rest was merged into the rebalance portfolio.
+                # Both are logged so the ops table reconciles against the
+                # trade ledger.
                 ops.append({
                     "date": date_str, "op": "tp", "source": "auto",
                     "price": float(price), "shares": split["shares_sold"],
-                    "note": "自动止盈·转零成本",
+                    "note": "自动止盈·归并再平衡",
                     "pnl": float(split["pnl"]),
                     "num_buys_exited": len(entries),
-                    # "出场"的全部份额 = 卖出的 + 转成零成本的 (== 原持仓)
+                    # "出场"的全部份额 = 卖出的 + 归并出去的 (== 原持仓)
                     "total_shares_exited": float(split["shares_sold"]
-                                                 + split["free_gained"]),
-                    "shares_to_free": float(split["free_gained"]),
+                                                 + split["merged_shares"]),
+                    "shares_to_merge": float(split["merged_shares"]),
                 })
                 cum_realized += split["pnl"]
                 in_cycle = False
@@ -471,7 +480,7 @@ def advance_one_day(
         "last_prices": last_prices,
         "cum_realized": cum_realized,
         "ops": ops,
-        "free_shares": free_shares,
+        "merged_shares": merged_shares,
     }
     return new_state, signal
 
@@ -483,16 +492,23 @@ def advance_one_day(
 def asset_snapshot(state: dict, current_price: float) -> dict:
     """Return a read-only summary for a single asset's state.
 
-    `free_shares` / `free_value` / `in_use` describe the permanently-held
-    zero-cost shares. They are populated whether or not a cycle is open —
-    free shares outlive every cycle, so an asset sitting in `in_cycle=False`
-    can still hold real value. Callers that used to assume
-    `in_cycle == False` ⇒ 市值 0 must now read `in_use`.
+    `current_value` is the **grid's own capital still tied up** — the layers
+    of the currently-open cycle, and nothing else. It drops back to 0 after
+    a take-profit, because the principal came back.
+
+    `merged_shares` / `merged_value` are the shares that were handed over to
+    the **rebalance portfolio** at earlier take-profits. They are NOT the
+    grid's holdings: the grid no longer has a say in them, and the
+    rebalance side owns them (they must be counted in the portfolio's
+    weights). They are reported here only so the caller can fold them into
+    the portfolio — `src/record.py:evaluate` does exactly that.
     """
     entries = state.get("entries", [])
     in_cycle = bool(state.get("in_cycle", False))
-    free_shares = float(state.get("free_shares", 0.0))
-    free_value = free_shares * float(current_price)
+    # 份额先定到 2 位小数, 再由它算市值 —— 这样页面/邮件上"多少份"和
+    # "多少钱"是自洽的 (用户拿 3.89 份 × 103 验算能对上 400.67)。
+    merged_shares = round(float(state.get("merged_shares", 0.0) or 0.0), 2)
+    merged_value = round(merged_shares * float(current_price), 2)
     if in_cycle and entries:
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
@@ -507,9 +523,8 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
             "current_value": round(current_value, 2),
             "unrealized_pnl": round(unrealized, 2),
             "return_pct": round(unrealized / total_invested * 100, 2) if total_invested else 0.0,
-            "free_shares": round(free_shares, 2),
-            "free_value": round(free_value, 2),
-            "in_use": round(current_value + free_value, 2),
+            "merged_shares": round(merged_shares, 2),
+            "merged_value": round(merged_value, 2),
         }
     return {
         "in_cycle": False,
@@ -519,9 +534,8 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
         "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
-        "free_shares": round(free_shares, 2),
-        "free_value": round(free_value, 2),
-        "in_use": round(free_value, 2),
+        "merged_shares": round(merged_shares, 2),
+        "merged_value": round(merged_value, 2),
     }
 
 
@@ -541,8 +555,8 @@ def manual_op(state: dict, op: str, today: str,
         touched. `entries[-1].price` becomes the new "加仓参考价" for the
         next auto pyramid, matching advance_one_day's behavior.
       - tp:   in_cycle must be True. Applies the "sell cost only" rule
-        (split_take_profit): sell back exactly the principal, keep the
-        remainder as permanently-held zero-cost shares, set in_cycle=False,
+        (split_take_profit): sell back exactly the principal, merge the
+        remainder into the rebalance portfolio, set in_cycle=False,
         clear entries. `last_prices` is NOT touched.
     """
     if op not in ("open", "add", "tp"):
@@ -566,7 +580,7 @@ def manual_op(state: dict, op: str, today: str,
         "last_prices": list(state.get("last_prices", [])),
         "cum_realized": float(state.get("cum_realized", 0.0)),
         "ops": list(state.get("ops", [])),
-        "free_shares": float(state.get("free_shares", 0.0)),
+        "merged_shares": float(state.get("merged_shares", 0.0)),
     }
 
     if op in ("open", "add"):
@@ -592,7 +606,7 @@ def manual_op(state: dict, op: str, today: str,
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
         split = split_take_profit(total_shares, total_invested, float(price))
-        new_state["free_shares"] += split["free_gained"]
+        new_state["merged_shares"] += split["merged_shares"]
         # Capture per-event exit stats BEFORE clearing `entries`.
         new_state["ops"].append({
             "date": today, "op": "tp", "source": "manual",
@@ -600,10 +614,10 @@ def manual_op(state: dict, op: str, today: str,
             "note": "",
             "pnl": float(split["pnl"]),
             "num_buys_exited": len(entries),
-            # "出场"的全部份额 = 卖出的 + 转成零成本的 (== 原持仓)
+            # "出场"的全部份额 = 卖出的 + 归并出去的 (== 原持仓)
             "total_shares_exited": float(split["shares_sold"]
-                                         + split["free_gained"]),
-            "shares_to_free": float(split["free_gained"]),
+                                         + split["merged_shares"]),
+            "shares_to_merge": float(split["merged_shares"]),
         })
         new_state["cum_realized"] += split["pnl"]
         new_state["entries"] = []

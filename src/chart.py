@@ -313,27 +313,36 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     # Replay grid with trigger_mode="window" (120-day rolling low) — the live rule.
     grid_state = _load_grid_state_safe()
     grid_histories = _replay_grid_for_chart(etf_w, grid_state)
-    # 资金占用 = 在周期内的持仓市值 + 永久持有的零成本份额市值 (`in_use`).
-    # 只算 current_value 会漏掉止盈后仍持有的部分, 分母被低估 → ROI 虚高。
-    grid_in_use_by_asset = {n: grid_histories[n]["in_use"] for n in ASSET_NAMES}
-    grid_in_use_total = sum(grid_in_use_by_asset[n] for n in ASSET_NAMES)
-    # 收益 = 已实现 + 在周期内浮盈 + 零成本份额市值.
-    # 止盈只卖成本金额, 所以 cum_realized 恒为 0, 全部收益都在 free_value 里。
+    # 资金占用 = 网格**在周期内**的层 (`current_value`)。止盈时本金全额收回,
+    # 所以占用会回落 —— 这正是"只卖成本金额"规则的直接后果。
+    # 归并到再平衡的那批份额**不再算网格的占用**: 它们已经离开网格的账,
+    # 变成再平衡组合的持仓 (见 src/grid.py:split_take_profit 的说明)。
+    grid_capital_by_asset = {n: grid_histories[n]["current_value"]
+                             for n in ASSET_NAMES}
+    grid_capital_total = sum(grid_capital_by_asset[n] for n in ASSET_NAMES)
+    # 归并份额的市值 —— 网格累计赚到的钱, 现在记在再平衡那一栏。
+    grid_merged_total = sum(grid_histories[n]["merged_value"]
+                            for n in ASSET_NAMES)
+    # 收益 = 已实现 + 在周期内浮盈 + 归并份额市值.
+    # 止盈只卖成本金额, 所以 cum_realized 恒为 0, 全部收益都在归并份额里。
     grid_pnl_total = (
         sum(grid_histories[n]["cum_realized"] for n in ASSET_NAMES)
         + sum(grid_histories[n]["unrealized_pnl"] for n in ASSET_NAMES)
-        + sum(grid_histories[n]["free_value"] for n in ASSET_NAMES)
+        + sum(grid_histories[n]["merged_value"] for n in ASSET_NAMES)
     )
 
     # Clip to common window
     def _clip(s, lo=start_date, hi=end_date):
         return s[(s.index >= lo) & (s.index <= hi)]
-    grid_in_use_total = _clip(grid_in_use_total)
+    grid_capital_total = _clip(grid_capital_total)
+    grid_merged_total = _clip(grid_merged_total)
     grid_pnl_total = _clip(grid_pnl_total)
     for n in ASSET_NAMES:
-        grid_in_use_by_asset[n] = _clip(grid_in_use_by_asset[n])
+        grid_capital_by_asset[n] = _clip(grid_capital_by_asset[n])
 
-    GRID_DENOMINATOR = float(grid_in_use_total.max()) if not grid_in_use_total.empty else 1.0
+    # 分母 = 网格资金占用的峰值。归并份额不在分母里 —— 那笔钱已经回到组合,
+    # 再算一遍就是重复计资。
+    GRID_DENOMINATOR = float(grid_capital_total.max()) if not grid_capital_total.empty else 1.0
     grid_roi_pct = grid_pnl_total / GRID_DENOMINATOR * 100 if GRID_DENOMINATOR else grid_pnl_total * 0
     grid_roi_log = pd.Series(pct_to_log_vec(grid_roi_pct.values),
                              index=grid_roi_pct.index, name="网格 ROI")
@@ -460,36 +469,43 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     span = (x_right - x_left)
     ax1.set_xlim(x_left, x_right + span * 0.02)
 
-    # ---- Bottom: stacked in-use (C variant, opaque) ----
-    stack_df = pd.concat(grid_in_use_by_asset, axis=1).fillna(0.0)
+    # ---- Bottom: stacked grid capital + merged-value line ----
+    stack_df = pd.concat(grid_capital_by_asset, axis=1).fillna(0.0)
     # Reorder columns to ASSET_NAMES order (stackplot requires explicit series)
     stack_df = stack_df.reindex(columns=ASSET_NAMES).fillna(0.0)
 
     ax2.stackplot(
         stack_df.index,
         *(stack_df[n].values for n in ASSET_NAMES),
-        labels=[f"{n} (in-use)" for n in ASSET_NAMES],
+        labels=[f"{n} (占用)" for n in ASSET_NAMES],
         colors=[ASSET_COLORS[n] for n in ASSET_NAMES],
         alpha=0.95,
         edgecolor="white",
         linewidth=0.8,
     )
+    # 归并到再平衡持仓的市值 —— 网格累计赚到的钱, 已经不在网格账上了。
+    if not grid_merged_total.empty:
+        ax2.plot(grid_merged_total.index, grid_merged_total.values,
+                 color="#B03A2E", lw=2.0, ls="--", alpha=0.95,
+                 label="归并到再平衡 (¥)")
 
     ax2.set_facecolor("#FAFAFA")
-    if not grid_in_use_total.empty:
-        last_val = float(grid_in_use_total.values[-1])
-        ax2.annotate(f" 合计 ¥{last_val:,.0f}",
-                     xy=(grid_in_use_total.index[-1], last_val),
+    if not grid_capital_total.empty:
+        last_val = float(grid_capital_total.values[-1])
+        ax2.annotate(f" 占用 ¥{last_val:,.0f}",
+                     xy=(grid_capital_total.index[-1], last_val),
                      xytext=(8, 4), textcoords="offset points",
                      fontsize=10, color="#1B4F72", fontweight="bold", va="bottom")
-    ax2.set_ylabel("资金占用 (¥)", fontsize=10, color="#1B4F72")
+    ax2.set_ylabel("资金占用 / 归并市值 (¥)", fontsize=10, color="#1B4F72")
     ax2.tick_params(axis="y", labelcolor="#1B4F72")
     ax2.set_xlabel("日期", fontsize=11)
     ax2.grid(True, which="major", color="#888888", alpha=0.55, ls=":", lw=0.9)
     ax2.grid(True, which="minor", color="#AAAAAA", alpha=0.30, ls=":", lw=0.6)
     ax2.set_axisbelow(True)
-    if not grid_in_use_total.empty:
-        ax2.set_ylim(0, max(grid_in_use_total.values.max() * 1.2, 1))
+    if not grid_capital_total.empty:
+        top = max(grid_capital_total.values.max(),
+                  grid_merged_total.values.max() if not grid_merged_total.empty else 0.0)
+        ax2.set_ylim(0, max(top * 1.2, 1))
     leg2 = ax2.legend(loc="upper left", frameon=True, framealpha=0.92,
                       fontsize=10, edgecolor="grey")
     if leg2 is not None:

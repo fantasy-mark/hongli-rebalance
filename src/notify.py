@@ -55,23 +55,23 @@ def fmt_delta_pp(d: float) -> str:
 
 
 def fmt_signal(sig: str | None) -> str:
-    # "sell" 不再是止盈: 只卖成本金额, 已实现盈亏恒为 0, 浮盈转成永久持有的
-    # 零成本份额。叫它"止盈"会让人以为兑现了收益。
+    # "sell" 不再是止盈: 只卖成本金额, 已实现盈亏恒为 0, 浮盈转成**归并到
+    # 再平衡持仓**的份额。叫它"止盈"会让人以为兑现了收益。
     return {"buy": "⚠ 买入", "sell": "✓ 回本"}.get(sig or "", "持有")
 
 
-def _grid_free_note(grid_signals: list[dict]) -> str:
-    """One-line summary of permanently-held zero-cost shares.
+def _grid_merged_note(grid_signals: list[dict]) -> str:
+    """One-line summary of the shares merged into the rebalance portfolio.
 
     Only shown once something has actually been transferred, so the email
     stays quiet until the rule has bitten.
     """
-    total_value = sum(float(s.get("free_value", 0.0) or 0.0)
+    total_value = sum(float(s.get("merged_value", 0.0) or 0.0)
                       for s in grid_signals)
     if total_value <= 0:
         return ""
-    return (f"零成本份额(永久持有, 不再卖出): 合计市值 "
-            f"{fmt_money(total_value)}  ← 网格的全部收益都在这里")
+    return (f"已归并到再平衡持仓的份额: 合计市值 "
+            f"{fmt_money(total_value)}  ← 网格的全部收益都在这里(已计入上方再平衡)")
 
 
 def _qdii_premium_view(p: dict) -> tuple[str, str, str]:
@@ -129,19 +129,23 @@ def build_text(r: dict) -> str:
         f"目标权重:  {fmt_pct(r['target_w'])}    阈值: ±{r['threshold_pp']:.1f}pp",
         "",
         "[3pp 再平衡]",
-        f"{'名称':<14}{'权重':>8}{'偏离':>10}{'当前价':>10}{'数量':>14}{'触发':>6}",
-        "-" * 62,
+        f"{'名称':<14}{'权重':>8}{'偏离':>10}{'当前价':>10}{'数量':>14}{'含归并':>10}{'触发':>6}",
+        "-" * 74,
     ]
     for p, w in zip(r["positions"], r["weights"]):
         delta = (w - r["target_w"]) * 100
         over = abs(delta) > r["threshold_pp"]
         flag = " ⚠" if over else "  "
+        # 数量 = 持仓 + 网格归并进来的份额 (模拟口径, 见 src/grid.py)。
+        total_sh = int(p.get("total_shares", p["shares"]))
+        merged = float(p.get("merged_shares", 0.0) or 0.0)
+        merged_cell = f"{int(merged):,}" if merged > 0 else f"{'—':>10}"
         lines.append(
             f"{p['name']:<14}{fmt_pct(w):>7}{fmt_delta_pp(delta):>9}"
-            f"{p['price']:>10.3f}{int(p['shares']):>14,}{flag}"
+            f"{p['price']:>10.3f}{total_sh:>14,}{merged_cell}{flag}"
         )
     lines += [
-        "-" * 62,
+        "-" * 74,
         "",
         f"3pp 结论: {'⚠ 触发调仓' if r['triggered'] else '✓ 无需调仓'}",
         "",
@@ -174,10 +178,10 @@ def build_text(r: dict) -> str:
     grid_signals = r.get("grid_signals", [])
     if grid_signals:
         lines += [
-            "[复合网格]  120 日新低 + 3% 加仓 + 3% 回本止盈(余量转零成本永久持有)",
+            "[复合网格]  120 日新低 + 3% 加仓 + 3% 回本出场(余量归并再平衡持仓)",
             f"{'名称':<14}{'信号':>8}{'层数':>5}{'均价':>10}{'现价':>10}"
-            f"{'资金占用(¥)':>11}{'浮盈%':>8}{'距下次触发':>13}",
-            "-" * 86,
+            f"{'资金占用(¥)':>11}{'浮盈%':>8}{'已归并':>10}{'距下次触发':>13}",
+            "-" * 96,
         ]
         for s in grid_signals:
             sig_label = fmt_signal(s.get("signal"))
@@ -191,20 +195,24 @@ def build_text(r: dict) -> str:
             # 显示 "—", 免得 "+0.00%" 被读成"没赚没亏"。
             in_cycle = bool(s.get("in_cycle", False))
             ret = (f"{s['return_pct']:>+7.2f}%" if in_cycle else f"{'—':>8}")
-            in_use = float(s.get("in_use", s.get("current_value", 0.0)) or 0.0)
-            use = (f"{in_use:>11,.0f}" if in_use > 0 else f"{'—':>11}")
+            # 资金占用 = 网格**在周期内**的层 (出场后本金收回, 占用回落)。
+            use_val = float(s.get("current_value", 0.0) or 0.0)
+            use = (f"{use_val:>11,.0f}" if use_val > 0 else f"{'—':>11}")
+            merged = float(s.get("merged_shares", 0.0) or 0.0)
+            merged_cell = f"{int(merged):>9,}" if merged > 0 else f"{'—':>10}"
             lines.append(
                 f"{s['name']:<14}{sig_label:>8}{s['num_buys']:>5}"
-                f"{s['avg_cost']:>10.3f}{s['price']:>10.3f}{use}{ret}{trig_label:>13}"
+                f"{s['avg_cost']:>10.3f}{s['price']:>10.3f}{use}{ret}"
+                f"{merged_cell}{trig_label:>13}"
             )
         lines += [
-            "-" * 86,
+            "-" * 96,
             f"加仓额(本笔): ¥{grid_signals[0]['layer_yuan']:,.0f}  "
             f"= ¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%",
         ]
-        free_note = _grid_free_note(grid_signals)
-        if free_note:
-            lines.append(free_note)
+        merged_note = _grid_merged_note(grid_signals)
+        if merged_note:
+            lines.append(merged_note)
         lines.append("")
 
     lines += [
@@ -220,7 +228,12 @@ def _position_row(p: dict, w: float, target_w: float, threshold_pp: float) -> st
     over = abs(delta) > threshold_pp
     delta_color = COLOR_WARN if over else "#222"
     delta_str = fmt_delta_pp(delta)
-    shares_int = int(p["shares"])
+    # 数量 = 真实持仓 + 网格归并进来的份额 (模拟口径)。
+    shares_int = int(p.get("total_shares", p["shares"]))
+    merged = float(p.get("merged_shares", 0.0) or 0.0)
+    merged_cell = (f'<span style="color:#B03A2E;font-weight:600;">{int(merged):,}</span>'
+                   if merged > 0 else
+                   '<span style="color:#bbb;">—</span>')
     weight_bold = "bold" if over else "normal"
     return (
         f'<tr>'
@@ -229,6 +242,7 @@ def _position_row(p: dict, w: float, target_w: float, threshold_pp: float) -> st
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{delta_color};font-weight:{weight_bold};">{delta_str}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:#555;">¥{p["price"]:.3f}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{shares_int:,}</td>'
+        f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{merged_cell}</td>'
         f'</tr>'
     )
 
@@ -271,10 +285,14 @@ def _grid_row(s: dict) -> str:
             trig_color = "#E67E22"; trig_label = f"距开仓 {trigger_pct:+.2f}%"
         else:
             trig_color = COLOR_OK; trig_label = f"距开仓 {trigger_pct:+.2f}%"
-    # 资金占用 = 周期内持仓 + 永久持有的零成本份额。in_cycle=False 不再代表
-    # 市值归零 —— 止盈转出的零成本份额一直躺在账上。
-    in_use = float(s.get("in_use", s.get("current_value", 0.0)) or 0.0)
-    value_cell = f"¥{in_use:,.0f}" if in_use > 0 else "—"
+    # 资金占用 = 网格**在周期内**的层 (出场后本金收回, 占用回落)。
+    # 已归并的份额不再占网格的钱 —— 它们是再平衡组合的持仓了。
+    use_val = float(s.get("current_value", 0.0) or 0.0)
+    value_cell = f"¥{use_val:,.0f}" if use_val > 0 else "—"
+    merged = float(s.get("merged_shares", 0.0) or 0.0)
+    merged_cell = (f'<span style="color:#B03A2E;font-weight:600;">{int(merged):,}</span>'
+                   if merged > 0 else
+                   '<span style="color:#bbb;">—</span>')
     return (
         f'<tr>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};font-weight:600;">{s["name"]}</td>'
@@ -284,6 +302,7 @@ def _grid_row(s: dict) -> str:
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">¥{s["price"]:.3f}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{value_cell}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{ret_color};font-weight:600;">{ret_cell}</td>'
+        f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;">{merged_cell}</td>'
         f'<td style="padding:8px 6px;border-bottom:1px solid {COLOR_BORDER};text-align:right;color:{trig_color};font-weight:600;">{trig_label}</td>'
         f'</tr>'
     )
@@ -364,19 +383,19 @@ def build_html(r: dict, pages_url: str = "") -> str:
         any_grid_action = any(s.get("signal") for s in grid_signals)
         grid_accent = COLOR_WARN if any_grid_action else COLOR_GRID
         grid_title = "⚠ 网格信号" if any_grid_action else "✓ 网格无操作"
-        free_total = sum(float(s.get("free_value", 0.0) or 0.0)
-                          for s in grid_signals)
-        grid_free_note_html = (
+        merged_total = sum(float(s.get("merged_value", 0.0) or 0.0)
+                           for s in grid_signals)
+        grid_merged_note_html = (
             f'<div style="font-size:12px;color:#666;margin-top:10px;">'
-            f'零成本份额(永久持有, 不再卖出): 合计市值 '
-            f'<strong>{fmt_money(free_total)}</strong>'
-            f' ← 网格的全部收益都在这里</div>'
-        ) if free_total > 0 else ""
+            f'已归并到再平衡持仓的份额: 合计市值 '
+            f'<strong>{fmt_money(merged_total)}</strong>'
+            f' ← 网格的全部收益都在这里(已计入上方再平衡)</div>'
+        ) if merged_total > 0 else ""
         grid_section = f"""
     <div style="padding:20px 24px;border-top:1px solid #eee;">
       <div style="background:{grid_accent};padding:10px 16px;color:#fff;border-radius:6px;margin-bottom:12px;font-weight:bold;font-size:14px;">{grid_title}</div>
       <div style="font-size:12px;color:#666;margin-bottom:10px;">
-        复合网格 · 120 日新低 + 3% 加仓 + 3% 回本止盈(余量转零成本永久持有) · 加仓额 <strong>¥{layer:,.0f}</strong>
+        复合网格 · 120 日新低 + 3% 加仓 + 3% 回本出场(余量归并再平衡持仓) · 加仓额 <strong>¥{layer:,.0f}</strong>
         (¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%)
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
@@ -389,12 +408,13 @@ def build_html(r: dict, pages_url: str = "") -> str:
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">现价</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">资金占用</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">浮盈%</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">已归并</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">距下次触发</th>
           </tr>
         </thead>
         <tbody>{grid_rows}</tbody>
       </table>
-      {grid_free_note_html}
+      {grid_merged_note_html}
     </div>
 """
 
@@ -453,10 +473,14 @@ def build_html(r: dict, pages_url: str = "") -> str:
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">偏离</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">价格</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">数量</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">含归并</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
       </table>
+      <div style="font-size:11px;color:#999;margin-top:6px;">
+        数量含网格归并进来的份额(模拟口径) · 含归并 = 其中来自网格的部分
+      </div>
     </div>
 {grid_section}
 {qdii_section}
