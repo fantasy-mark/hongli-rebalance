@@ -1,10 +1,10 @@
 # 稳健再平衡 · 自动监控
 
-等权 3 资产 (黄金ETF博时 + 红利ETF易方达 + 可转债ETF博时) 再平衡 + 4 资产 (含 纳斯达克ETF华夏) 网格 双策略监控：
+等权 4 资产 (黄金ETF博时 + 红利ETF易方达 + 可转债ETF博时 + 纳斯达克ETF华夏) 再平衡 + 4 资产 网格 双策略监控：
 
-1. **3pp 再平衡** —— 任何 ETF 权重偏离 1/3 超过 3pp → 触发全调仓 (snap-back)
-   (纳指 513300 网格-only，不参与再平衡)
-2. **复合网格 (pyramid grid)** —— 120 日新低 + 3% 加仓金字塔 + 3% 止盈；
+1. **3pp 再平衡** —— 任何 ETF 权重偏离 1/4 超过 3pp → 触发全调仓 (snap-back)
+2. **复合网格 (pyramid grid)** —— 120 日新低 + 3% 加仓金字塔 + 3% 回本出场
+   (只卖成本金额, 余量归并进再平衡持仓);
    加仓金额 = ¥10,000 底仓 + 3pp 池子近 3 年浮盈 × 5%
 
 每日 9:00 (北京时间) 由外部 cron 服务
@@ -75,20 +75,23 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
 
 ### 3pp 再平衡
 
-- **目标权重**: 1/3 each (黄金 / 红利 / 可转债 各 33.3%)
-- **触发**: 任一 ETF 权重偏离 1/3 > 3pp → 全部 snap-back 到 1/3
+- **目标权重**: 1/4 each (黄金 / 红利 / 可转债 / 纳指 各 25%) — `target_w = 1/n`
+  在 `evaluate()` 里动态计算, n = 组合里的持仓数
+- **触发**: 任一 ETF 权重偏离 1/4 > 3pp → 全部 snap-back 到 1/4
 - **信号**: `record.triggered = True` 时, `plan` 字段给出每个 ETF 的
   target_value / current_value / delta_value (供券商调仓参考)
-- **纳指 (513300) 不参与再平衡**: 仅作为网格策略的第 4 资产 (grid-only)，
-  由 `REBALANCE_CODES` (app.js) 显式排除。`target_w = 1/n` 在 evaluate() 中
-  动态化 (1/3 for rebalance / 1/4 for grid)，所以加纳指不影响再平衡逻辑。
+- **纳指 (513300) 参与再平衡** —— 2026-10-14 起组合是 4 资产等权, 纳指
+  和网格一样覆盖全部 4 个品种 (网格对 4 个品种各跑一套独立的金字塔)
 
 ### 复合网格 (per-asset, independent)
 
 - **触发 (开仓)**: 今日收盘 < 过去 120 日 (含今日) 最低价 → 买 1 层
 - **加仓金字塔**: 在 cycle 中, 今日收盘 ≤ 上一笔买入价 × 97% → 再买 1 层
-- **止盈 (first_buy 基准)**: 今日收盘 ≥ **第一笔买入价** × 103% → 全部卖出,
-  锁住 realized P&L, 进入等待下一次 120 日新低
+- **回本出场 (first_buy 基准)**: 今日收盘 ≥ **第一笔买入价** × 103% → 出场,
+  但**只卖出「累计投入 / 出场价」份** (恰好取回本金), 余下的份额**归并进
+  再平衡组合的持仓** (`merged_shares`), 进入等待下一次 120 日新低
+  - 正常出场时 `cum_realized` 恒为 0 —— 网格的全部收益沉淀在归并份额的
+    市值里, 网格实质上变成了「买入持有」
   - **为什么不用均价**：均价随加仓下移, 容易被小幅反弹提前平掉。
     固定以第一笔为基准, 必须真正回到起点 +3% 才卖, 拿住更多反弹空间。
   - 回测 (2020-04 → 2026-10, 3 ETF): first_buy 比 avg_cost 多赚 +33.9% 网格 PnL,
@@ -109,8 +112,9 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
 
 - 每日 Action 跑完后用 matplotlib 服务端渲染 (150 dpi)
 - 包含两部分:
-  - **上子图**: 5 条线对数 Y 轴 — 3 ETF (再平衡) + 纳指 (grid-only) 持有不动、3pp 净值、网格 ROI
-  - **下子图**: 堆叠面积 — 每个 ETF 当前网格在用资金
+  - **上子图**: 5 条线对数 Y 轴 — 4 ETF 持有不动、3pp 净值、网格 ROI
+  - **下子图**: 堆叠面积 — 每个 ETF 当前网格的**资金占用** (只算周期内的层)
+    + 一条虚线是**归并到再平衡的份额市值**
 - GitHub Pages 通过 `<img id="grid-chart" src="data/grid_chart.png?t=...">`
   嵌入；`?t=Date.now()` 强制每次访问都重新拉图
 - Linux runner 安装 `fonts-noto-cjk` 解决中文字体问题
@@ -207,12 +211,13 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
   余额 = 可立即动用的现金 (再平衡: 真实现金; 网格: 虚拟现金)。
   6 种方向（见下方说明）。提现/转换不足时前端拦截 (服务端也会二次拒绝)。
 - **复合网格手动操作**（open / add / tp） —— 网格是**虚拟**的，不与真实交易挂钩，
-  但开仓/加仓/止盈会修改 `data/grid_state.json`。表头：日期 / 资产 / 操作 / 单价 / 数量 / 金额 / 备注
+  但开仓/加仓/出场会修改 `data/grid_state.json`。表头：日期 / 资产 / 操作 / 单价 / 数量 / 金额 / 备注
   顶部显示「当前网格: 515180 待开仓 | 159937 待开仓 | ...」。操作后 30 秒内
   history + chart + 邮件同步重跑。
   - `open` = 强制开仓 (要求 `in_cycle=false`；新单价会 push 到 120 日滚动窗口)
   - `add`  = 加仓 (要求 `in_cycle=true`；新单价成为 `entries[-1].price`，即"加仓参考价")
-  - `tp`   = 止盈 (要求 `in_cycle=true`；按 manual 价算 realized P&L 累加到 `cum_realized`)
+  - `tp`   = 回本出场 (要求 `in_cycle=true`；按 manual 价只卖成本金额, 余量
+    累加到 `merged_shares` 归并进再平衡持仓; 正常出场 `cum_realized` 不变)
 
 **双池 cash 模型 (v2 schema)**：`data/holdings.json` 里 `cash` 字段被拆成两个：
 - `cash_rebalance` —— 真实现金, buy/sell/deposit_rebalance/withdraw_rebalance 路由到这里

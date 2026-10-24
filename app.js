@@ -339,16 +339,26 @@ const ETF_CATALOG = {
 };
 
 // Asset lists shown in 资金管理's "资产" column.
-//   再平衡: 3-asset equal-weight basket (excludes QDII).
-//   网格:    the 3 rebalance ETFs PLUS 513300 (QDII 纳斯达克, grid-only).
+//   再平衡: the basket the engine actually rebalances — derived from the
+//           latest record's positions (src/record.py: target_w =
+//           1/len(positions), 4 assets @ 25% each). Hardcoding the codes
+//           here is how this row silently under-reported 纳斯达克ETF华夏's
+//           ¥38,736 after the 2026-10-14 four-asset migration — the 3pp
+//           table above it and the 总市值 badge both showed 4 assets.
+//   网格:    every asset the grid tracks (mirrors src/record.py ASSET_NAMES).
 // Arrays (not Sets) so we can render in a fixed display order.
-const REBALANCE_CODES_LIST = ["515180", "159937", "511380"];
-const GRID_CODES_LIST      = ["515180", "159937", "511380", "513300"];
+const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
+
+// The rebalance basket, in the engine's own order. Falls back to the full
+// catalog when the record hasn't loaded yet.
+function rebalanceCodes(latestRec) {
+  const fromRecord = (latestRec?.positions || []).map(p => p.code);
+  return fromRecord.length ? fromRecord : Object.keys(ETF_CATALOG);
+}
 
 // Look up an asset's display name. Prefers the name from the latest record
 // (so the row shows exactly what 最新持仓's tables show), falling back to
-// the static ETF_CATALOG for codes not in the record (e.g. 513300, which is
-// grid-only and never appears in positions[]).
+// the static ETF_CATALOG for codes not in the record.
 function nameForCode(code, latestRec) {
   if (latestRec?.positions) {
     const p = latestRec.positions.find(x => x.code === code);
@@ -370,10 +380,6 @@ let originalHoldings = null;   // last fetched snapshot for cash reference
 // Used by renderEditor + post-save refresh to keep the table consistent.
 let latestEtfValue = 0;
 
-// The 3-asset equal-weight rebalance strategy. Only these codes count toward
-// the "再平衡 市值" cell; the QDII (513300) is grid-only and excluded.
-const REBALANCE_CODES = new Set(["515180", "159937", "511380"]);
-
 // Both 资金管理 市值 cells read from the SAME data that 最新持仓's tables
 // display (latestRec = the last record in history.json).  This guarantees
 // the cash table's "市值" row can never disagree with the snapshot the
@@ -387,9 +393,12 @@ const REBALANCE_CODES = new Set(["515180", "159937", "511380"]);
 // 最新持仓, not "freshest possible".
 function computeRebalanceMarketValue(latestRec) {
   if (!latestRec?.positions) return 0;
+  // Every position in the record IS part of the rebalance basket (the engine
+  // equal-weights all of them), and p.value already includes the grid's
+  // merged shares (模拟口径). So no code filter here — filtering is exactly
+  // what made this cell under-report the portfolio.
   let total = 0;
   for (const p of latestRec.positions) {
-    if (!REBALANCE_CODES.has(p.code)) continue;
     total += Number(p.value || 0);
   }
   return total;
@@ -430,7 +439,7 @@ function renderCashPoolSummary(latestRec, holdings) {
   setText('cash-total-balance', `¥${(cashReb + cashGr).toFixed(2)}`);
   const setHTML = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
   setHTML('cash-rebalance-assets',
-    REBALANCE_CODES_LIST
+    rebalanceCodes(latestRec)
       .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
       .join(''));
   // 复合网格 资产 column: only show assets the strategy actually holds.
