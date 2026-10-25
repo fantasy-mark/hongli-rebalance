@@ -13,13 +13,17 @@ payload on argv[1] with shape:
       ]
     }
 
-For each op, the math is run inlined (mirroring scripts/apply_holdings.py)
-so the workflow doesn't need to install pandas/akshare. The mutator is
-the same as src/grid.py:manual_op, INCLUDING the take-profit rule: a `tp`
+For each op, the math is run via `src/grid.py:manual_op` — the **single**
+implementation of the grid rules, so the workflow doesn't need to install
+pandas/akshare (src/grid.py's module level only imports os/typing; pandas
+is a local import inside run_compound_grid). The take-profit rule: a `tp`
 sells only `total_invested / price` shares (recovering exactly the
 principal) and merges the remainder into the rebalance portfolio
 (`merged_shares`), so realized P&L is 0 on a normal exit. State is read from
 data/grid_state.json, mutated in memory, and written back atomically.
+
+⚠️ This is the **only** live path for grid positions — the engine itself
+no longer trades (it only reports suggestions).
 
 Validation rules:
   - schema == "grid-ops-v1"
@@ -30,7 +34,7 @@ Validation rules:
   - code must be in ALLOWED_CODES whitelist
   - price > 0; for open/add: shares > 0; tp: shares is ignored
   - open requires no in_cycle; add/tp require in_cycle=True
-    (enforced inside inline_manual_op)
+    (enforced inside manual_op)
 """
 from __future__ import annotations
 
@@ -42,6 +46,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GRID_STATE = ROOT / "data" / "grid_state.json"
+
+# 复用 src/grid.py 的唯一实现。src/grid.py 模块级只 import os/typing
+# (pandas 是 run_compound_grid 里的局部 import) → 仍然是 stdlib-only,
+# workflow 不需要装 pandas/akshare。
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from src.grid import manual_op, split_take_profit  # noqa: E402,F401
+# split_take_profit 是 re-export (兼容既有 import), 规则本体在 src/grid.py。
 
 # Mirror scripts/apply_holdings.py — same whitelist as src/record.py:ETF_DEFS.
 ALLOWED_CODES = {
@@ -57,122 +69,41 @@ MAX_OPS = 20
 CODE_RE = re.compile(r"^\d{6}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 VALID_OPS = {"open", "add", "tp"}
-# Rolling-window length must match src/grid.py:GRID_LOOKBACK (120). The
-# apply_grid script doesn't import src/grid.py, so it duplicates the constant.
-GRID_LOOKBACK = 120
 
 
 def fail(msg: str) -> None:
     print(f"ERROR {msg}", file=sys.stderr)
+    # ::error:: 让失败原因直接显示在 Actions UI 和失败通知里 ——
+    # 否则用户只在页面看到"已提交"却找不到哪里错了。
+    print(f"::error::{msg}")
     sys.exit(1)
 
 
 # -----------------------------------------------------------------------------
-# Pure-Python mutator (intentionally duplicated from src/grid.py:manual_op
-# so this script has no external imports beyond stdlib).
+# Pure-Python mutator (thin wrapper over src/grid.py:manual_op)
 # -----------------------------------------------------------------------------
-
-def split_take_profit(total_shares: float, total_invested: float,
-                      price: float) -> dict:
-    """MIRROR of src/grid.py:split_take_profit — keep the two in sync.
-
-    This script cannot import src/grid.py (stdlib only, so the workflow
-    needs no pandas/akshare), so the rule is duplicated deliberately:
-    sell `total_invested / price` shares to recover exactly the principal,
-    transfer the remainder to permanently-held zero-cost shares. Realized
-    P&L is therefore 0 unless the exit is below cost, in which case we
-    sell everything and book the loss (reachable only via a manual tp —
-    the auto trigger price is always above avg cost).
-    """
-    if not price > 0:
-        raise ValueError(f"price must be > 0, got {price}")
-    if total_shares <= 0:
-        return {"shares_sold": 0.0, "proceeds": 0.0, "merged_shares": 0.0, "pnl": 0.0}
-    want = total_invested / price
-    if want >= total_shares:
-        proceeds = total_shares * price
-        return {"shares_sold": total_shares, "proceeds": proceeds,
-                "merged_shares": 0.0, "pnl": proceeds - total_invested}
-    return {"shares_sold": want, "proceeds": total_invested,
-            "merged_shares": total_shares - want, "pnl": 0.0}
-
 
 def inline_manual_op(state: dict, op: str, today: str,
                      price: float, shares: float,
                      note: str = "") -> tuple[dict, float]:
     """Apply a manual grid operation. Returns (new_state, pnl_delta).
 
+    Thin wrapper over `src.grid.manual_op` — **单一实现**, 不再复制规则。
+    保留 (state, pnl_delta) 的返回形状, 兼容既有调用方与测试。
+
     For `tp` the "sell cost only" rule applies (see split_take_profit):
     pnl_delta is 0 on a normal above-cost exit, because only the principal
     is sold and the remainder is merged into the rebalance portfolio
-    (`merged_shares`). It
-    is negative only if the user exits BELOW cost, where we sell out and
-    book the loss. For `open`/`add` it is 0.
+    (`merged_shares`). It is negative only if the user exits BELOW cost,
+    where we sell out and book the loss. For `open`/`add` it is 0.
 
     Raises ValueError on precondition failure.
     """
-    if op not in VALID_OPS:
-        raise ValueError(f"unknown op: {op!r}")
-    if not (price > 0):
-        raise ValueError(f"price must be > 0, got {price}")
-    if op in ("open", "add") and not (shares > 0):
-        raise ValueError(f"{op} requires shares > 0, got {shares}")
-
-    in_cycle = bool(state.get("in_cycle", False))
-    if op == "open" and in_cycle:
-        raise ValueError("open requires no open cycle (use tp to close first)")
-    if op in ("add", "tp") and not in_cycle:
-        raise ValueError(f"{op} requires an open cycle")
-
-    new_state = {
-        "in_cycle": in_cycle,
-        "entries": list(state.get("entries", [])),
-        "last_prices": list(state.get("last_prices", [])),
-        "cum_realized": float(state.get("cum_realized", 0.0)),
-        "ops": list(state.get("ops", [])),
-        "merged_shares": float(state.get("merged_shares", 0.0)),
-    }
+    new_state = manual_op(state, op=op, today=today, price=price,
+                          shares=shares, note=note)
     pnl_delta = 0.0
-
-    if op in ("open", "add"):
-        new_state["entries"].append({
-            "date": today, "price": float(price), "shares": float(shares),
-        })
-        new_state["in_cycle"] = True
-        if op == "open":
-            new_state["last_prices"].append(float(price))
-            if len(new_state["last_prices"]) > GRID_LOOKBACK:
-                new_state["last_prices"] = new_state["last_prices"][-GRID_LOOKBACK:]
-        # Append to ops log so the page's "复合网格 操作记录" table reflects
-        # manual ops. note = user-supplied string (may be empty).
-        new_state["ops"].append({
-            "date": today, "op": op, "source": "manual",
-            "price": float(price), "shares": float(shares),
-            "note": note,
-        })
-    else:  # tp
-        entries = new_state["entries"]
-        total_shares = sum(e["shares"] for e in entries)
-        total_invested = sum(e["shares"] * e["price"] for e in entries)
-        split = split_take_profit(total_shares, total_invested, float(price))
-        new_state["merged_shares"] += split["merged_shares"]
-        # Capture per-event exit stats BEFORE clearing `entries`.
-        new_state["ops"].append({
-            "date": today, "op": "tp", "source": "manual",
-            "price": float(price), "shares": float(split["shares_sold"]),
-            "note": note,
-            "pnl": float(split["pnl"]),
-            "num_buys_exited": len(entries),
-            # "出场"的全部份额 = 卖出的 + 归并出去的 (== 原持仓)
-            "total_shares_exited": float(split["shares_sold"]
-                                         + split["merged_shares"]),
-            "shares_to_merge": float(split["merged_shares"]),
-        })
-        new_state["cum_realized"] += split["pnl"]
-        new_state["entries"] = []
-        new_state["in_cycle"] = False
-        pnl_delta = split["pnl"]
-
+    if op == "tp":
+        pnl_delta = float(new_state["ops"][-1].get("pnl", 0.0))
     return new_state, pnl_delta
 
 
@@ -231,8 +162,10 @@ def _validate_op(op: dict, idx: int, today: str) -> dict:
 
 def _atomic_write(path: Path, doc: dict) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
+    # 不加尾随换行 —— 与 src/record.py:save_grid_state 同一口径, 否则两条
+    # 写盘路径会互相制造「只有一行之差」的假 diff。
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2,
-                              default=str) + "\n",
+                              default=str),
                    encoding="utf-8")
     tmp.replace(path)
 

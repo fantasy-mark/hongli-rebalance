@@ -517,6 +517,12 @@ def save_history(history: list[dict]) -> None:
 # -----------------------------------------------------------------------------
 
 def write_github_output(date_str: str, total: float, triggered: bool) -> None:
+    """Write the `date` / `total` / `trigger` step outputs.
+
+    ⚠️ `trigger=yes` now means "需人工关注" —— either the 3pp rebalance
+    fired, or the grid engine has a **suggestion** pending (the engine
+    never trades by itself). Only `outputs.date` is consumed downstream.
+    """
     out = os.environ.get("GITHUB_OUTPUT")
     if not out:
         return
@@ -577,7 +583,11 @@ def build_record(today: str, positions: list[dict],
 
 def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
                       pool_value: float, recent_min: float) -> tuple[dict, list[dict]]:
-    """Advance grid state for all 4 assets, returning (new_state, signals)."""
+    """Advance grid state for all 4 assets, returning (new_state, signals).
+
+    ⚠️ 引擎**不再自动交易** —— 这里只是滚动 120 日窗口 + 算出「建议」。
+    `signal` 是**建议提交哪种 op** (open/add/tp), 不是"已成交"。
+    """
     layer = grid_mod.layer_yuan(pool_value, recent_min)
     new_state: dict = {}
     signals: list[dict] = []
@@ -587,38 +597,19 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
         if price is None:
             new_state[name] = asset_state
             continue
+        # 建议基于**追加今天之前**的状态算 —— 今天的低价不能自己当门槛
+        adv = grid_mod.advisory(asset_state, float(price), layer)
         new_asset_state, signal = grid_mod.advance_one_day(
             asset_state, today, float(price), layer,
         )
         new_state[name] = new_asset_state
         snap = grid_mod.asset_snapshot(new_asset_state, float(price))
-        # Compute "distance to next trigger":
-        # - in_cycle=True  → 距离止盈位 (first_buy × 1.03) 还有多远
-        # - in_cycle=False → 距离开仓位 (窗口最低) 还有多远
-        if snap["in_cycle"]:
-            entries = new_asset_state.get("entries", [])
-            first_buy = entries[0]["price"] if entries else 0.0
-            tp_target = first_buy * (1 + grid_mod.GRID_TP_PCT / 100) if first_buy else 0.0
-            if tp_target > 0 and price > 0:
-                trigger_pct = (tp_target - price) / price * 100
-                trigger_kind = "tp"
-            else:
-                trigger_pct = 0.0
-                trigger_kind = "tp"
-        else:
-            window = new_asset_state.get("last_prices", [])
-            wmin = min(window) if window else None
-            if wmin and price > 0:
-                trigger_pct = (price - wmin) / wmin * 100
-                trigger_kind = "open"
-            else:
-                trigger_pct = 0.0
-                trigger_kind = "open"
         signals.append({
             "name": name,
             "price": round(float(price), 4),
             "layer_yuan": round(layer, 2),
-            "signal": signal,                          # "buy" | "sell" | None
+            # "open" | "add" | "tp" | None —— 建议提交哪种 op, 不是"已成交"
+            "signal": signal,
             "in_cycle": snap["in_cycle"],
             "num_buys": snap["num_buys"],
             "avg_cost": snap["avg_cost"],
@@ -630,8 +621,18 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
             # 那一栏显示, 网格这一栏不重复计入资金占用。
             "merged_shares": snap["merged_shares"],
             "merged_value": snap["merged_value"],
-            "trigger_pct": round(trigger_pct, 2),
-            "trigger_kind": trigger_kind,
+            # 距「最近的那个」触发位还有多远 (正数 = 还没触发, ≤0 = 已越过)
+            "trigger_pct": adv["trigger_pct"],
+            "trigger_kind": adv["trigger_kind"],
+            "trigger_price": adv["trigger_price"],
+            # 三个触发位各自的距离 (None = 当前状态下不适用)
+            "dist_open_pct": adv["dist_open_pct"],
+            "dist_add_pct": adv["dist_add_pct"],
+            "dist_tp_pct": adv["dist_tp_pct"],
+            # 建议成交价 / 份额 / 金额 (只有 open/add 有金额)
+            "suggest_price": adv["suggest_price"],
+            "suggest_shares": adv["suggest_shares"],
+            "suggest_amount": adv["suggest_amount"],
         })
     return new_state, signals
 
@@ -719,9 +720,11 @@ def main() -> None:
     # have to be in the value the 3pp weights are computed on.
     #
     # Two passes: the pre-merge value sizes today's grid layer, the
-    # post-merge value is what the record reports (a take-profit today
-    # changes the portfolio, and the 3pp check should see the portfolio
-    # the user will actually hold).
+    # post-merge value is what the record reports. Since the engine no
+    # longer trades, `merged_shares` can't change during a run — so the
+    # two totals are now always equal. The structure is kept because the
+    # manual path (apply_grid.py) *does* change merged shares, and the
+    # daily record must see the portfolio the user will actually hold.
     state = load_grid_state()
     merged_before = merged_shares_by_code(state)
     held_codes = {p["code"] for p in positions}
@@ -825,12 +828,14 @@ def main() -> None:
     print(f"  grid layer: ¥{grid_mod.layer_yuan(total, recent_min):,.0f} "
           f"(pool ¥{total:,.0f}, recent_min ¥{recent_min:,.0f})")
     for s in grid_signals:
-        tag = s["signal"] or "hold"
-        print(f"    {s['name']:<14} {tag:<4}  layer=¥{s['layer_yuan']:,.0f}  "
+        # ⚠️ 引擎只给建议, 不会自动下单 —— tag 是"建议提交哪种 op"
+        tag = f"建议{s['signal']}" if s["signal"] else "-"
+        print(f"    {s['name']:<14} {tag:<8}  layer=¥{s['layer_yuan']:,.0f}  "
               f"in_cycle={s['in_cycle']}  buys={s['num_buys']}  "
               f"unreal={s['unrealized_pnl']:+,.0f}  "
               f"占用=¥{s['current_value']:,.0f}  "
-              f"已归并={s['merged_shares']:,.0f}份(¥{s['merged_value']:,.0f})")
+              f"已归并={s['merged_shares']:,.0f}份(¥{s['merged_value']:,.0f})  "
+              f"距{s['trigger_kind']}={s['trigger_pct']:+.2f}%")
 
     write_github_output(today, total, any_signal)
 

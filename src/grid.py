@@ -1,24 +1,33 @@
-"""Compound (pyramid) grid engine + daily-state advancement.
+"""Compound (pyramid) grid engine — **advisory only, it never trades**.
 
-Rules (per asset, independent):
-  - Trigger: today's price < min(price of past `lookback` days) → start a
-    new cycle, buying `layer_yuan` worth. The "price" passed in by
-    record.py is the day's K-line LOW (intraday) so the trigger can fire
-    on an intraday dip even if the close is above yesterday's close;
-    `advance_one_day` itself is price-agnostic — any monotonic series
-    works.
-  - Pyramid: while in a cycle, every additional `step_pct` % drop from
-    the LAST buy price adds another `layer_yuan` layer.
-  - Take-profit: when price >= first_buy_price * (1 + tp_pct/100), sell
-    **only the cost amount** (`total_invested / price` shares, recovering
-    exactly the principal), then wait for the next trigger. The leftover
+⚠️ The live engine no longer opens/adds/exits positions. `advance_one_day()`
+only rolls the 120-day window and *reports* what the rules would suggest.
+Every real open/add/tp comes from the user submitting an op in the Pages
+editor ("交易记录 → 复合网格"), which lands in `data/grid_state.json` via
+`scripts/apply_grid.py` → `manual_op`.
+
+Rules (per asset, independent) — the **suggestion** the engine reports:
+  - open: today's price < min(price of past `lookback` days) → "建议开仓".
+    The "price" passed in by record.py is the day's K-line LOW (intraday)
+    so the suggestion can fire on an intraday dip even if the close is
+    above yesterday's close; the trigger logic is price-agnostic — any
+    monotonic series works.
+  - add:  while in a cycle, a further `step_pct` % drop from the LAST buy
+    price → "建议加仓" (another `layer_yuan` layer).
+  - tp:   when price >= first_buy_price * (1 + tp_pct/100) → "建议回本出场".
+    The exit rule is "sell only the cost amount" (`total_invested / price`
+    shares, recovering exactly the principal) and the leftover
     `total_shares - total_invested/price` shares are **merged into the
     rebalance portfolio** (`merged_shares`) — they leave the grid's book
     and become ordinary portfolio holdings — see `split_take_profit`.
     So realized P&L per cycle is 0 by construction, and all return comes
     from the merged shares' appreciation.
 
-State persistence: `advance_one_day()` mutates a JSON-serializable dict so
+One cycle = N buys + 1 exit.  The N buys are the open plus the pyramid
+adds; the exit is a single tp whose leftover (bought − sold) is merged
+into the rebalance portfolio.
+
+State persistence: `advance_one_day()` returns a JSON-serializable dict so
 the Action can commit `data/grid_state.json` after each run.
 
 Layer sizing:
@@ -83,9 +92,8 @@ def split_take_profit(total_shares: float, total_invested: float,
       pnl          已实现盈亏; 正常路径恒为 0, 亏本出场时为负
 
     当 `price` 低于持仓均价时要卖的份额会超过持仓, 归并出"负的份额"没有
-    意义, 此时退化为全部卖出并认亏。这只可能由**手动**止盈触发 —— 自动止盈的
-    触发价 (`first_buy * 1.03` 或 `avg_cost * 1.03`) 必然高于均价, 因为金字塔
-    只在更低处加仓, 所以 `first_buy >= avg_cost`。
+    意义, 此时退化为全部卖出并认亏。引擎**不再自动止盈**, 所以这个分支只能
+    由**手动** tp 触发 —— 用户在低于成本处出场时会真的认亏。
     """
     if not price > 0:
         raise ValueError(f"price must be > 0, got {price}")
@@ -312,8 +320,9 @@ def merge_backtest_ops(state: dict, name: str, ops: list[dict]) -> int:
     The idempotency rule for scripts/backfill_grid_ops.py: re-running drops
     every source=="backtest" op and re-appends the freshly generated ones,
     so repeated runs never accumulate duplicates, while live ops
-    (source "auto" from record.py / "manual" from the page editor) survive
-    untouched. No-op with a warning if the asset isn't in the state.
+    (source "manual" from the page editor — the only live source now that
+    the engine stopped trading) survive untouched. No-op with a warning if
+    the asset isn't in the state.
 
     Returns the number of live ops preserved.
     """
@@ -336,22 +345,25 @@ def fresh_asset_state() -> dict:
         "in_cycle": False,
         "entries": [],                # [{date: ISO, price: float, shares: float}]
         # Rolling window of past closes (length up to GRID_LOOKBACK). The
-        # trigger condition is `price < min(window)` — i.e. a new 120-day low.
-        # We persist a queue so the rule survives Action restarts and JSON
-        # round-trips.
+        # "建议开仓" condition is `price < min(window)` — i.e. a new 120-day
+        # low. We persist a queue so the rule survives Action restarts and
+        # JSON round-trips. This window is the **only** thing the engine
+        # mutates now, so it must not be wiped by the migration.
         "last_prices": [],
         "cum_realized": 0.0,
-        # Append-only log of every executed open/add/tp event (auto or manual).
+        # Append-only log of every executed open/add/tp event.
         # Schema per op: {date, op, source, price, shares, note, (tp-only:
-        # pnl, num_buys_exited, total_shares_exited)}. The page renders this
-        # as the "复合网格 操作记录" table under the strategy chart. Cleared on
-        # tp is `entries`, NOT `ops` — the op log is the permanent record.
+        # pnl, num_buys_exited, total_shares_exited, shares_to_merge)}.
+        # The page renders this as the "复合网格 操作记录" table under the
+        # strategy chart. Cleared on tp is `entries`, NOT `ops` — the op log
+        # is the permanent record.
         #
-        # `source` has three values:
-        #   "auto"     — record.py daily trigger (live)
-        #   "manual"   — page editor via apply_grid.py (live)
+        # `source` has two values now that the engine stopped trading:
+        #   "manual"   — page editor via apply_grid.py (**唯一的实盘来源**)
         #   "backtest" — ops_from_cycles() replay of historical prices, i.e.
         #                SIMULATED (see scripts/backfill_grid_ops.py)
+        # ("auto" is a legacy value from the auto-trading era; the migration
+        #  scripts/reset_grid_positions.py removes those rows.)
         "ops": [],
         # 归并份额 (float, shares). 每次止盈时 `total_shares -
         # total_invested/price` 归并到这里 —— 这批份额**离开网格的账, 变成
@@ -360,8 +372,163 @@ def fresh_asset_state() -> dict:
         # 以保持向后兼容。
         #
         # ⚠️ state 是用**字面量 dict** 重建的 (见 advance_one_day /
-        # inline_manual_op), 少写一个 key 就会被静默丢弃而不报错。
+        # manual_op), 少写一个 key 就会被静默丢弃而不报错。
         "merged_shares": 0.0,
+    }
+
+
+# -----------------------------------------------------------------------------
+# 建议 (advisory) —— 引擎**只回答"今天该做什么", 绝不自己下单**
+# -----------------------------------------------------------------------------
+# 三个触发位 (都用 record.py 传进来的当日 K 线最低价比较):
+#   open — 今日价 < 过去 120 日窗口最低             → 建议开仓
+#   add  — 今日价 ≤ 最近一笔买入价 × (1 - 3%)       → 建议加仓
+#   tp   — 今日价 ≥ 第一笔买入价 × (1 + 3%)          → 建议回本出场
+#
+# 距离口径 (正数 = 还没触发, ≤0 = 已越过触发线):
+#   open:     (今日价 - 窗口最低) / 窗口最低 × 100
+#   add / tp: (触发位 - 今日价) / 今日价 × 100
+#
+# ⚠️ 窗口是**追加今天之前**的 —— 今天的低价不能自己当自己的门槛, 否则
+#    "今天是否创新低"永远等于"没创新低"。
+
+def _triggers(state: dict, price: float, step_pct: float, tp_pct: float,
+              tp_basis: str) -> dict:
+    """算出三个触发位与今日价的关系。**纯函数, 不改 state。**
+
+    Returns:
+      signal  "open"|"add"|"tp"|None  —— 已触发的建议 (至多一个)
+      kind    "open"|"add"|"tp"        —— **最近**的那个触发位
+      pct     float                    —— 距 kind 的百分比 (≤0 = 已触发)
+      price   float                    —— kind 的绝对价格
+      dist_open_pct / dist_add_pct / dist_tp_pct: float|None
+      open_price / add_price / tp_price: float|None
+    """
+    price = float(price)
+    in_cycle = bool(state.get("in_cycle", False))
+    entries: list[dict] = list(state.get("entries", []))
+    window: list[float] = list(state.get("last_prices", []))
+    if not window and state.get("last_120d_min") is not None:
+        window = [float(state["last_120d_min"])]
+
+    out: dict = {
+        "signal": None,
+        "kind": "open",
+        "pct": 0.0,
+        "price": 0.0,
+        "dist_open_pct": None,
+        "dist_add_pct": None,
+        "dist_tp_pct": None,
+        "open_price": None,
+        "add_price": None,
+        "tp_price": None,
+    }
+
+    # --- open 的触发位: 窗口最低 (待机时才用得到) ---
+    wmin = min(window) if window else None
+    if wmin and wmin > 0:
+        out["open_price"] = float(wmin)
+        out["dist_open_pct"] = (price - wmin) / wmin * 100
+
+    if not in_cycle:
+        # 待机: 只可能建议开仓
+        if wmin and price < wmin:
+            out["signal"] = "open"
+            out["kind"] = "open"
+            out["pct"] = out["dist_open_pct"]
+            out["price"] = float(wmin)
+        else:
+            out["kind"] = "open"
+            out["pct"] = out["dist_open_pct"] if out["dist_open_pct"] is not None else 0.0
+            out["price"] = float(wmin) if wmin else 0.0
+        return out
+
+    # --- 周期中: 加仓位 + 出场位 ---
+    total_shares = sum(e["shares"] for e in entries)
+    total_invested = sum(e["shares"] * e["price"] for e in entries)
+    avg_cost = total_invested / total_shares if total_shares else 0.0
+
+    if entries:
+        add_target = float(entries[-1]["price"]) * (1 - step_pct / 100)
+        out["add_price"] = add_target
+        if price > 0:
+            out["dist_add_pct"] = (add_target - price) / price * 100
+
+    if total_shares > 0 and avg_cost > 0:
+        if tp_basis == "first_buy" and entries:
+            tp_target = float(entries[0]["price"]) * (1 + tp_pct / 100)
+        else:
+            tp_target = avg_cost * (1 + tp_pct / 100)
+        out["tp_price"] = tp_target
+        if price > 0:
+            out["dist_tp_pct"] = (tp_target - price) / price * 100
+
+    # --- 判定 ---
+    # 顺序: **先 tp 后 add**。正常金字塔里后一笔买价更低 (entries[-1] ≤
+    # entries[0]), 所以 "再跌 3%" 与 "涨回 3%" 不可能同时成立; 只有用户手动
+    # 在比首笔高 6.2% 以上加仓时才会撞上, 此时报 tp —— 一个周期以 1 笔出场
+    # 收尾, 更贴合 "N 买 1 卖" 的口径。
+    tp_hit = out["tp_price"] is not None and price >= out["tp_price"]
+    add_hit = out["add_price"] is not None and price <= out["add_price"]
+
+    if tp_hit:
+        out["signal"] = "tp"
+        out["kind"] = "tp"
+        out["pct"] = out["dist_tp_pct"] if out["dist_tp_pct"] is not None else 0.0
+        out["price"] = out["tp_price"]
+    elif add_hit:
+        out["signal"] = "add"
+        out["kind"] = "add"
+        out["pct"] = out["dist_add_pct"] if out["dist_add_pct"] is not None else 0.0
+        out["price"] = out["add_price"]
+    else:
+        # 都没触发 → 取**更近**的那个
+        cands = [(k, p) for k, p in (("add", out["dist_add_pct"]),
+                                     ("tp", out["dist_tp_pct"]))
+                 if p is not None]
+        if cands:
+            kind, pct = min(cands, key=lambda kv: abs(kv[1]))
+            out["kind"] = kind
+            out["pct"] = pct
+            out["price"] = out["add_price"] if kind == "add" else out["tp_price"]
+        else:
+            out["kind"] = "tp"
+            out["pct"] = 0.0
+            out["price"] = out["tp_price"] or 0.0
+    return out
+
+
+def advisory(state: dict, price: float, layer_yuan_value: float,
+             step_pct: float = GRID_STEP_PCT,
+             tp_pct: float = GRID_TP_PCT,
+             tp_basis: str = GRID_TP_BASIS) -> dict:
+    """给页面/邮件用的完整建议。纯函数 (不改 state)。
+
+    返回: signal / trigger_kind / trigger_pct / trigger_price /
+          dist_open_pct / dist_add_pct / dist_tp_pct /
+          suggest_price (= 今日 K 线最低价) / suggest_shares / suggest_amount
+
+    ⚠️ `signal` 是**建议提交哪种 op**, 不是"已成交" —— 引擎不再下单。
+    """
+    trig = _triggers(state, float(price), step_pct, tp_pct, tp_basis)
+    sig = trig["signal"]
+    amount = float(layer_yuan_value) if sig in ("open", "add") else 0.0
+    shares = (amount / float(price)) if (amount and price > 0) else 0.0
+
+    def _r(v):
+        return round(v, 2) if v is not None else None
+
+    return {
+        "signal": sig,
+        "trigger_kind": trig["kind"],
+        "trigger_pct": round(trig["pct"], 2),
+        "trigger_price": round(trig["price"], 4),
+        "dist_open_pct": _r(trig["dist_open_pct"]),
+        "dist_add_pct": _r(trig["dist_add_pct"]),
+        "dist_tp_pct": _r(trig["dist_tp_pct"]),
+        "suggest_price": round(float(price), 4),
+        "suggest_shares": round(shares, 2),
+        "suggest_amount": round(amount, 2),
     }
 
 
@@ -379,20 +546,31 @@ def advance_one_day(
     tp_pct: float = GRID_TP_PCT,
     tp_basis: str = GRID_TP_BASIS,
 ) -> tuple[dict, Optional[str]]:
-    """Advance one asset's grid state by one trading day.
+    """Advance one asset's grid state by one trading day — **只给建议, 不下单**。
+
+    ⚠️ 引擎**不再自动交易**。它只做两件事:
+      1) 滚动 120 日窗口 (`last_prices`) —— 距开仓建议要靠它;
+      2) 算出今天"该做什么" (open / add / tp / None)。
+
+    它**绝不**修改 `entries` / `in_cycle` / `cum_realized` / `merged_shares`,
+    也**绝不**追加 `ops`。真正的开仓/加仓/回本只能来自用户在
+    「交易记录 → 复合网格」提交的 ops (scripts/apply_grid.py → manual_op)。
 
     Args:
-        state:        asset state dict (mutated and returned).
-        date_str:     ISO date string for today.
-        price:        today's price. The daily caller (record.py) passes
-                      the K-line LOW so an intraday dip can fire the
-                      trigger even if the close is above yesterday's
-                      close; this function is price-agnostic.
-        layer_yuan_value: pre-computed buy amount for today (¥).
-        lookback/step_pct/tp_pct: strategy parameters.
+        state:        asset state dict (read-only here; a NEW dict is returned).
+        date_str:     ISO date string for today (unused by the engine, kept
+                      for signature compatibility).
+        price:        today's price. The daily caller (record.py) passes the
+                      K-line LOW so a suggestion can fire on an intraday dip
+                      even if the close is above yesterday's close.
+        layer_yuan_value: pre-computed buy amount for today (¥). Kept for
+                      signature compatibility — the engine doesn't use it;
+                      `advisory()` reports the suggested amount.
+        lookback/step_pct/tp_pct/tp_basis: strategy parameters.
 
     Returns:
-        (new_state, signal) where signal ∈ {"buy", "sell", None}.
+        (new_state, suggestion), suggestion ∈ {"open", "add", "tp", None}.
+        `suggestion` says which op to **submit**, not what already traded.
     """
     in_cycle = bool(state.get("in_cycle", False))
     entries: list[dict] = list(state.get("entries", []))
@@ -405,75 +583,19 @@ def advance_one_day(
     cum_realized = float(state.get("cum_realized", 0.0))
     # 归并份额: 已交给再平衡持仓的份额 (不再是网格的资产)
     merged_shares = float(state.get("merged_shares", 0.0))
-    ops: list[dict] = list(state.get("ops", []))   # append-only op log
+    ops: list[dict] = list(state.get("ops", []))   # 只读回写, 永不追加
 
-    signal: Optional[str] = None
+    # 建议基于**追加今天之前**的窗口算
+    view = {"in_cycle": in_cycle, "entries": entries,
+            "last_prices": last_prices, "last_120d_min": legacy_min}
+    suggestion = _triggers(view, float(price), step_pct, tp_pct, tp_basis)["signal"]
 
-    if not in_cycle:
-        # Trigger: today < min of past `lookback` days (rolling window).
-        if last_prices and price < min(last_prices):
-            sh = layer_yuan_value / price if price > 0 else 0.0
-            entries.append({"date": date_str, "price": float(price), "shares": sh})
-            ops.append({
-                "date": date_str, "op": "open", "source": "auto",
-                "price": float(price), "shares": sh,
-                "note": "窗口突破开仓",
-            })
-            in_cycle = True
-            signal = "buy"
-    else:
-        last_price = entries[-1]["price"]
-        # Pyramid: drop >= step_pct from last buy
-        if price <= last_price * (1 - step_pct / 100):
-            sh = layer_yuan_value / price if price > 0 else 0.0
-            entries.append({"date": date_str, "price": float(price), "shares": sh})
-            ops.append({
-                "date": date_str, "op": "add", "source": "auto",
-                "price": float(price), "shares": sh,
-                # len(entries) post-append = the new layer count (1=open,
-                # 2=first pyramid, ...).  Matches manual_op convention.
-                "note": f"金字塔第{len(entries)}层",
-            })
-            signal = "buy"
-        # Take-profit: close >= (avg_cost or first_buy_price) * (1 + tp_pct/100)
-        total_shares = sum(e["shares"] for e in entries)
-        total_invested = sum(e["shares"] * e["price"] for e in entries)
-        if total_shares > 0:
-            avg_cost = total_invested / total_shares
-            if tp_basis == "first_buy":
-                tp_target = entries[0]["price"] * (1 + tp_pct / 100)
-            else:
-                tp_target = avg_cost * (1 + tp_pct / 100)
-            if price >= tp_target:
-                split = split_take_profit(total_shares, total_invested,
-                                          float(price))
-                merged_shares += split["merged_shares"]
-                # Capture per-event exit stats BEFORE clearing `entries`.
-                # `shares` is what was actually SOLD (回本所需), not the whole
-                # position — the rest was merged into the rebalance portfolio.
-                # Both are logged so the ops table reconciles against the
-                # trade ledger.
-                ops.append({
-                    "date": date_str, "op": "tp", "source": "auto",
-                    "price": float(price), "shares": split["shares_sold"],
-                    "note": "自动止盈·归并再平衡",
-                    "pnl": float(split["pnl"]),
-                    "num_buys_exited": len(entries),
-                    # "出场"的全部份额 = 卖出的 + 归并出去的 (== 原持仓)
-                    "total_shares_exited": float(split["shares_sold"]
-                                                 + split["merged_shares"]),
-                    "shares_to_merge": float(split["merged_shares"]),
-                })
-                cum_realized += split["pnl"]
-                in_cycle = False
-                entries = []
-                signal = "sell"
-
-    # Update rolling window: append today, then trim to `lookback` entries.
+    # 唯一的副作用: 滚动窗口
     last_prices.append(float(price))
     if len(last_prices) > lookback:
         last_prices = last_prices[-lookback:]
 
+    # ⚠️ 固定 6 key 字面量 —— 少写一个 key 会被静默丢弃
     new_state = {
         "in_cycle": in_cycle,
         "entries": entries,
@@ -482,7 +604,7 @@ def advance_one_day(
         "ops": ops,
         "merged_shares": merged_shares,
     }
-    return new_state, signal
+    return new_state, suggestion
 
 
 # -----------------------------------------------------------------------------
@@ -544,8 +666,11 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
 # -----------------------------------------------------------------------------
 
 def manual_op(state: dict, op: str, today: str,
-              price: float, shares: float) -> dict:
+              price: float, shares: float, note: str = "") -> dict:
     """Apply a manual grid operation. Returns a NEW state dict (does not mutate).
+
+    ⚠️ 这是**唯一的实盘网格入口** —— 引擎不再自动交易, 所有 open/add/tp
+    都由用户在「交易记录 → 复合网格」提交后走这里。
 
     op ∈ {"open", "add", "tp"}:
       - open: in_cycle must be False. Append an entry, set in_cycle=True,
@@ -553,7 +678,7 @@ def manual_op(state: dict, op: str, today: str,
         buy is also seen as a known-low for the next daily run).
       - add:  in_cycle must be True. Append an entry. `last_prices` is NOT
         touched. `entries[-1].price` becomes the new "加仓参考价" for the
-        next auto pyramid, matching advance_one_day's behavior.
+        next 建议加仓.
       - tp:   in_cycle must be True. Applies the "sell cost only" rule
         (split_take_profit): sell back exactly the principal, merge the
         remainder into the rebalance portfolio, set in_cycle=False,
@@ -592,14 +717,10 @@ def manual_op(state: dict, op: str, today: str,
             new_state["last_prices"].append(float(price))
             if len(new_state["last_prices"]) > GRID_LOOKBACK:
                 new_state["last_prices"] = new_state["last_prices"][-GRID_LOOKBACK:]
-        # Note for manual ops: empty string. The user-supplied `note` lives
-        # in the caller (apply_grid.inline_manual_op), which appends it to
-        # the op dict via the `note` kwarg.  manual_op's signature is
-        # unchanged so existing callers don't break.
         new_state["ops"].append({
             "date": today, "op": op, "source": "manual",
             "price": float(price), "shares": float(shares),
-            "note": "",
+            "note": note,
         })
     else:  # tp
         entries = new_state["entries"]
@@ -611,7 +732,7 @@ def manual_op(state: dict, op: str, today: str,
         new_state["ops"].append({
             "date": today, "op": "tp", "source": "manual",
             "price": float(price), "shares": float(split["shares_sold"]),
-            "note": "",
+            "note": note,
             "pnl": float(split["pnl"]),
             "num_buys_exited": len(entries),
             # "出场"的全部份额 = 卖出的 + 归并出去的 (== 原持仓)

@@ -376,18 +376,23 @@ def test_layer_yuan_scales_with_floating():
     assert grid_mod.layer_yuan(pool_value=250_000.0, recent_min=200_000.0) == pytest_approx(expected)
 
 
-def test_advance_grid_buy_on_120day_low():
+def test_advance_grid_suggests_open_without_opening():
+    """引擎只**建议**开仓 —— 自己不动仓位, 不写 ops.
+
+    窗口最低 100, 今日 99 → 建议开仓 (signal="open"), 但
+    in_cycle 仍为 False, entries 仍为空, ops 仍为空。
+    """
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
     new_state, signal = grid_mod.advance_one_day(
         state, date_str="2026-01-01", price=99.0, layer_yuan_value=10_000.0,
     )
-    assert signal == "buy"
-    assert new_state["in_cycle"] is True
-    assert len(new_state["entries"]) == 1
-    assert new_state["entries"][0]["price"] == 99.0
-    # shares = 10000 / 99
-    assert new_state["entries"][0]["shares"] == pytest_approx(10000 / 99, rel=1e-6)
+    assert signal == "open"
+    assert new_state["in_cycle"] is False, "引擎不自动开仓"
+    assert new_state["entries"] == []
+    assert new_state["ops"] == []
+    # 唯一的副作用: 滚动窗口
+    assert new_state["last_prices"] == [100.0, 99.0]
 
 
 def test_advance_grid_hold_no_signal():
@@ -403,51 +408,46 @@ def test_advance_grid_hold_no_signal():
     assert new_state["last_prices"] == [100.0, 101.0]
 
 
-def test_advance_grid_pyramid_then_sell():
-    """两层金字塔 → +3% 止盈触发 sell."""
+def test_advance_grid_suggests_add_and_tp_without_mutating():
+    """两层金字塔 → 建议 add → 建议 tp; 引擎全程不改仓位.
+
+    周期是**手动**建出来的 (manual_op) —— 引擎只负责"今天该做什么"。
+    """
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
-    # 第一层 @ 100
-    state, sig1 = grid_mod.advance_one_day(
-        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
-    )
-    assert sig1 == "buy" and state["in_cycle"] is True
+    # 第一层 @ 99 (手动开仓)
+    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+                               shares=10_000.0 / 99.0)
+    assert state["in_cycle"] is True
+    pre_entries = list(state["entries"])
+    pre_ops = list(state["ops"])
 
-    # 第二层 @ 99*0.97 = 96.03
-    state, sig2 = grid_mod.advance_one_day(
+    # 第二层 @ 99*0.97 = 96.03 → 建议 add
+    state2, sig2 = grid_mod.advance_one_day(
         state, "2026-01-02", price=96.0, layer_yuan_value=10_000.0,
     )
-    assert sig2 == "buy"
-    assert len(state["entries"]) == 2
-    # 均价 = (99*101.01 + 96*104.17) / 205.18 — 简单校验均价在 96-99 之间
-    snap = grid_mod.asset_snapshot(state, current_price=96.0)
-    assert 96.0 < snap["avg_cost"] < 99.0
-    assert snap["num_buys"] == 2
+    assert sig2 == "add"
+    assert state2["entries"] == pre_entries, "引擎不加仓"
+    assert state2["ops"] == pre_ops, "引擎不写 ops"
+    assert state2["in_cycle"] is True
 
-    # 涨 3% 以上: 均价 × 1.03 触发止盈 (v2 行为, 显式传 tp_basis)
-    target = snap["avg_cost"] * 1.03
-    exit_price = target + 0.01
-    pre_shares = sum(e["shares"] for e in state["entries"])
-    pre_invested = sum(e["shares"] * e["price"] for e in state["entries"])
-    state, sig3 = grid_mod.advance_one_day(
-        state, "2026-01-03", price=exit_price, layer_yuan_value=10_000.0,
+    # 均价 × 1.03 触发回本 (v2 行为, 显式传 tp_basis)
+    # 只有一层 (引擎不加仓) → 均价就是那一笔的 99
+    snap = grid_mod.asset_snapshot(state, current_price=96.0)
+    assert snap["avg_cost"] == pytest_approx(99.0)
+    assert snap["num_buys"] == 1
+    exit_price = snap["avg_cost"] * 1.03 + 0.01
+    state3, sig3 = grid_mod.advance_one_day(
+        state2, "2026-01-03", price=exit_price, layer_yuan_value=10_000.0,
         tp_basis="avg_cost",
     )
-    assert sig3 == "sell"
-    assert state["in_cycle"] is False
-    assert state["entries"] == []
-    # 只卖成本金额 → 本周期已实现盈亏恒为 0, 浮盈全部归并到再平衡持仓
-    assert state["cum_realized"] == 0.0
-    assert state["merged_shares"] > 0.0
-
-    tp_op = [o for o in state["ops"] if o["op"] == "tp"][-1]
-    # 卖出 + 归并 == 原持仓 (一份份额都不能凭空消失或多出来)
-    assert tp_op["shares"] + tp_op["shares_to_merge"] == pytest_approx(pre_shares)
-    # 卖出的恰好是回本所需: 卖出的份额 × 价格 == 本金
-    assert tp_op["shares"] * exit_price == pytest_approx(pre_invested)
-    # 剩下的就归并给再平衡组合了
-    assert tp_op["shares_to_merge"] == pytest_approx(state["merged_shares"])
-    assert tp_op["pnl"] == 0.0
+    assert sig3 == "tp"
+    # 引擎**不**出场: 仓位、层数、盈亏、归并份额全部原样
+    assert state3["in_cycle"] is True
+    assert state3["entries"] == pre_entries
+    assert state3["ops"] == pre_ops
+    assert state3["cum_realized"] == 0.0
+    assert state3["merged_shares"] == 0.0
 
 
 def test_asset_snapshot_no_cycle():
@@ -479,45 +479,50 @@ def test_asset_snapshot_out_of_cycle_reports_merged_but_no_capital():
 
 
 def test_advance_grid_tp_basis_first_buy_higher_target():
-    """first_buy basis: 止盈位 = 第一笔 × 1.03 (固定), 高于均价 × 1.03 (v2)。
+    """first_buy basis: 出场位 = 第一笔 × 1.03 (固定), 高于均价 × 1.03 (v2)。
 
+    引擎**只给建议** —— 三段都只断言 signal, 周期/层数/ops 一字未改。
     用固定价 101 / 103 验证两套规则的差异:
-    - 均价 ≈ 97.48, 均价×1.03 ≈ 100.40 (100 < 101 < 100.40+epsilon 不触发)
+    - 均价 ≈ 97.48, 均价×1.03 ≈ 100.40 (101 ≥ 100.40 → 均价基准建议出场)
     - 第一笔 99, 第一笔×1.03 = 101.97 (101 < 101.97 不触发, 103 ≥ 101.97 触发)
     """
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
-    state, _ = grid_mod.advance_one_day(state, "2026-01-01", price=99.0,
-                                        layer_yuan_value=10_000.0)
-    state, _ = grid_mod.advance_one_day(state, "2026-01-02", price=96.0,
-                                        layer_yuan_value=10_000.0)
+    # 周期只能由**手动**路径造出来 —— 引擎不再自动开仓。
+    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+                               shares=10_000.0 / 99.0)
+    state = grid_mod.manual_op(state, "add", "2026-01-02", price=96.0,
+                               shares=10_000.0 / 96.0)
     # 均价 = (10000 + 10000) / (10000/99 + 10000/96) ≈ 97.477
     # 均价 × 1.03 ≈ 100.40, 第一笔 × 1.03 = 101.97
+    pre = json.loads(json.dumps(state))
 
-    # 在 101: 均价 basis 触发, first_buy basis 不触发
-    s1 = json.loads(json.dumps(state)); s1["last_prices"] = [100.0]
+    # 在 101: 均价 basis 建议出场, first_buy basis 不建议
     s1, sig_avg = grid_mod.advance_one_day(
-        s1, "2026-01-03", price=101.0, layer_yuan_value=10_000.0,
+        state, "2026-01-03", price=101.0, layer_yuan_value=10_000.0,
         tp_basis="avg_cost",
     )
-    assert sig_avg == "sell", f"avg_cost basis should trigger at 101, got {sig_avg}"
+    assert sig_avg == "tp", f"avg_cost basis should suggest tp at 101, got {sig_avg}"
 
-    s2 = json.loads(json.dumps(state)); s2["last_prices"] = [100.0]
     s2, sig_fb = grid_mod.advance_one_day(
-        s2, "2026-01-03", price=101.0, layer_yuan_value=10_000.0,
+        state, "2026-01-03", price=101.0, layer_yuan_value=10_000.0,
         tp_basis="first_buy",
     )
-    assert sig_fb is None, f"first_buy basis should NOT trigger at 101, got {sig_fb}"
+    assert sig_fb is None, f"first_buy basis should NOT suggest tp at 101, got {sig_fb}"
     assert s2["in_cycle"] is True
 
-    # 涨到 103: first_buy basis 触发 (103 >= 99*1.03 = 101.97)
-    s3 = json.loads(json.dumps(state)); s3["last_prices"] = [100.0]
+    # 涨到 103: first_buy basis 建议出场 (103 >= 99*1.03 = 101.97)
     s3, sig_fb2 = grid_mod.advance_one_day(
-        s3, "2026-01-03", price=103.0, layer_yuan_value=10_000.0,
+        state, "2026-01-03", price=103.0, layer_yuan_value=10_000.0,
         tp_basis="first_buy",
     )
-    assert sig_fb2 == "sell", f"first_buy basis should trigger at 103, got {sig_fb2}"
-    assert s3["in_cycle"] is False
+    assert sig_fb2 == "tp", f"first_buy basis should suggest tp at 103, got {sig_fb2}"
+    # 引擎建议了但不执行: 状态与之前完全一致
+    assert s3["in_cycle"] is True
+    assert s3["entries"] == pre["entries"]
+    assert s3["ops"] == pre["ops"]
+    assert s3["merged_shares"] == 0.0
+    assert s3["cum_realized"] == 0.0
 
 
 # -----------------------------------------------------------------------------
@@ -657,99 +662,59 @@ def test_fresh_asset_state_has_ops_key():
     assert state["ops"] == []
 
 
-def test_advance_one_day_trigger_appends_open_op_with_auto_note():
-    """Trigger buy (today < window min) → ops log gets an `open` auto op."""
+def test_advance_one_day_never_appends_ops():
+    """引擎**绝不**写 ops —— 建议开仓了也只是一条建议.
+
+    ops 是"已成交"的账本, 只有用户提交的操作才算成交。
+    """
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
     new_state, signal = grid_mod.advance_one_day(
         state, date_str="2026-01-01", price=99.0, layer_yuan_value=10_000.0,
     )
-    assert signal == "buy"
-    assert len(new_state["ops"]) == 1
-    op = new_state["ops"][0]
-    assert op["op"] == "open"
-    assert op["source"] == "auto"
-    assert op["date"] == "2026-01-01"
-    assert op["price"] == 99.0
-    assert op["shares"] == pytest_approx(10000 / 99, rel=1e-6)
-    assert op["note"] == "窗口突破开仓"
-    # No tp-only keys on open/add
-    assert "pnl" not in op
-    assert "num_buys_exited" not in op
+    assert signal == "open", "引擎建议开仓"
+    assert new_state["ops"] == [], "引擎不写 ops"
+    assert new_state["in_cycle"] is False
+    assert new_state["entries"] == []
 
 
-def test_advance_one_day_pyramid_appends_add_op_with_layer_number():
-    """Pyramid buy → ops log gets an `add` op with layer-numbered note."""
+def test_advance_one_day_suggests_add_without_appending_op():
+    """建议加仓 —— 引擎不加仓, 也不写 ops."""
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
-    )
-    assert len(state["ops"]) == 1 and state["ops"][0]["note"] == "窗口突破开仓"
-    state, _ = grid_mod.advance_one_day(
+    # 周期是手动建的 (引擎不建)
+    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+                               shares=10_000.0 / 99.0)
+    ops_before = list(state["ops"])
+    state2, sig = grid_mod.advance_one_day(
         state, "2026-01-02", price=96.0, layer_yuan_value=10_000.0,
     )
-    assert len(state["ops"]) == 2
-    op = state["ops"][1]
-    assert op["op"] == "add"
-    assert op["source"] == "auto"
-    # post-append len(entries) = 2 → note = "金字塔第2层"
-    assert op["note"] == "金字塔第2层"
-    assert op["price"] == 96.0
-    # Third pyramid → "金字塔第3层"
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-01-03", price=93.0, layer_yuan_value=10_000.0,
-    )
-    assert state["ops"][2]["note"] == "金字塔第3层"
+    assert sig == "add"
+    assert len(state2["entries"]) == 1, "引擎不加仓"
+    assert state2["ops"] == ops_before, "引擎不写 ops"
 
 
-def test_advance_one_day_auto_tp_appends_tp_op_with_pnl_and_exit_stats():
-    """Auto tp → ops log gets a `tp` op recording the cost-only split
-    (total_shares_exited + shares_to_merge), and cycle closes. Realized
-    P&L is 0 — the profit moves to merged_shares instead."""
+def test_advance_one_day_suggests_tp_without_exiting():
+    """建议回本出场 —— 引擎**不**出场, 也不写 ops, 归并份额不变."""
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
-    )
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-01-02", price=96.0, layer_yuan_value=10_000.0,
-    )
+    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+                               shares=10_000.0 / 99.0)
+    state = grid_mod.manual_op(state, "add", "2026-01-02", price=96.0,
+                               shares=10_000.0 / 96.0)
+    ops_before = list(state["ops"])
     target = 99.0 * 1.03  # first_buy basis = first entry * (1 + tp_pct/100)
-    state, sig = grid_mod.advance_one_day(
+    state2, sig = grid_mod.advance_one_day(
         state, "2026-01-03", price=target + 0.01, layer_yuan_value=10_000.0,
         tp_basis="first_buy",
     )
-    assert sig == "sell"
-    assert state["in_cycle"] is False
-    assert state["entries"] == []
-    # ops log: 3 entries — open, add, tp (in order)
-    assert len(state["ops"]) == 3
-    tp_op = state["ops"][2]
-    assert tp_op["op"] == "tp"
-    assert tp_op["source"] == "auto"
-    assert tp_op["note"] == "自动止盈·归并再平衡"
-    # num_buys_exited = 2 (both entries closed together)
-    assert tp_op["num_buys_exited"] == 2
-    # 只卖出回本所需的份额, 其余归并到再平衡持仓:
-    #   原持仓 = 10000/99 + 10000/96 ; 本金 = 20000
-    #   卖出 = 20000 / exit_price ; 归并 = 原持仓 - 卖出
-    exit_price = target + 0.01
-    total_shares = 10000 / 99 + 10000 / 96
-    expected_sold = 20000 / exit_price
-    assert tp_op["total_shares_exited"] == pytest_approx(total_shares, rel=1e-6), (
-        "total_shares_exited = 出场的全部份额 (卖出 + 归并)")
-    assert tp_op["shares"] == pytest_approx(expected_sold, rel=1e-6)
-    assert tp_op["shares_to_merge"] == pytest_approx(total_shares - expected_sold,
-                                                    rel=1e-6)
-    # 卖出 + 转出 == 原持仓, 一份不多一份不少
-    assert (tp_op["shares"] + tp_op["shares_to_merge"]
-            == pytest_approx(total_shares, rel=1e-6))
-    # 只卖成本 → 已实现盈亏恒为 0
-    assert tp_op["pnl"] == 0.0
-    assert state["cum_realized"] == 0.0
-    assert state["merged_shares"] == pytest_approx(total_shares - expected_sold,
-                                                rel=1e-6)
+    assert sig == "tp", "引擎建议回本出场"
+    # 引擎不执行: 周期照旧开着, ops / 盈亏 / 归并份额全部不变
+    assert state2["in_cycle"] is True
+    assert len(state2["entries"]) == 2
+    assert state2["ops"] == ops_before
+    assert state2["cum_realized"] == 0.0
+    assert state2["merged_shares"] == 0.0
 
 
 def test_advance_one_day_hold_does_not_append_op():
@@ -766,18 +731,188 @@ def test_advance_one_day_hold_does_not_append_op():
 
 
 def test_advance_one_day_legacy_state_without_ops_key():
-    """Old state without `ops` key → advance_one_day reads as [] and appends."""
+    """老 state (没有 `ops` 键) → 结果里 `ops` 键存在且为空."""
     state = {"in_cycle": False, "entries": [], "last_prices": [100.0],
              "cum_realized": 0.0}   # NO "ops" key
     new_state, signal = grid_mod.advance_one_day(
         state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
     )
-    assert signal == "buy"
-    assert new_state["ops"] == [{
-        "date": "2026-01-01", "op": "open", "source": "auto",
-        "price": 99.0, "shares": pytest_approx(10000 / 99, rel=1e-6),
-        "note": "窗口突破开仓",
-    }]
+    assert signal == "open"
+    assert "ops" in new_state, "固定 6 key 必须补齐"
+    assert new_state["ops"] == []
+
+
+# -----------------------------------------------------------------------------
+# 引擎 = 只读建议器 (advisory-only) —— 位置字段一字不改
+# -----------------------------------------------------------------------------
+
+def test_advance_one_day_never_mutates_position_fields():
+    """跑一天只滚动窗口 —— 仓位字段一字不改, 连传入的对象都不能被就地改。
+
+    调用方 (record.py) 拿到的 state 还要继续用, 引擎就地改会污染账本。
+    """
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [100.0]
+    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+                               shares=10_000.0 / 99.0)
+    state = grid_mod.manual_op(state, "add", "2026-01-02", price=96.0,
+                               shares=10_000.0 / 96.0)
+    before = json.dumps(state, sort_keys=True, ensure_ascii=False)
+
+    new_state, _ = grid_mod.advance_one_day(
+        state, "2026-01-03", price=97.0, layer_yuan_value=10_000.0,
+    )
+    assert json.dumps(state, sort_keys=True, ensure_ascii=False) == before, (
+        "advance_one_day must not mutate the state it was given")
+    for k in ("in_cycle", "entries", "cum_realized", "merged_shares", "ops"):
+        assert new_state[k] == state[k], f"{k} must be untouched by the engine"
+    # 唯一变的是窗口 (manual open 把 99.0 塞进了窗口, add 不塞)
+    assert new_state["last_prices"] == [100.0, 99.0, 97.0]
+
+
+def test_advance_one_day_rolls_last_prices_and_trims_to_120():
+    """窗口每天 +1, 封顶 120 —— 最老的一根被挤掉。"""
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [float(i) for i in range(120)]   # 0..119
+    new_state, _ = grid_mod.advance_one_day(
+        state, "2026-01-01", price=1000.0, layer_yuan_value=10_000.0,
+    )
+    assert len(new_state["last_prices"]) == 120
+    assert new_state["last_prices"][0] == 1.0, "最老的一根 (0.0) 应被挤掉"
+    assert new_state["last_prices"][-1] == 1000.0, "最新一根是今天"
+    # 传入的对象没被就地改
+    assert len(state["last_prices"]) == 120
+    assert state["last_prices"][-1] == 119.0
+
+
+def test_advisory_reports_three_distances():
+    """advisory() 给出三个触发位各自的距离 + 建议金额/份额。
+
+    距离口径: **正数 = 还没触发, ≤0 = 已越过触发线**。
+    """
+    # --- 待机: 只算得出「距开仓」 ---
+    st = grid_mod.fresh_asset_state()
+    st["last_prices"] = [100.0, 99.0]
+    adv = grid_mod.advisory(st, 99.5, 10_000.0)
+    assert adv["signal"] is None
+    assert adv["trigger_kind"] == "open"
+    # advisory 的数字都四舍五入到 2 位 —— 比的时候要对齐口径
+    assert adv["dist_open_pct"] == pytest_approx(
+        round((99.5 - 99.0) / 99.0 * 100, 2))
+    assert adv["dist_add_pct"] is None
+    assert adv["dist_tp_pct"] is None
+    assert adv["suggest_amount"] == 0.0, "没建议时没有建议金额"
+
+    # 跌破窗口最低 → 建议开仓, 金额 = 单层
+    adv2 = grid_mod.advisory(st, 98.0, 10_000.0)
+    assert adv2["signal"] == "open"
+    assert adv2["dist_open_pct"] < 0, "已越过触发线 = 负数"
+    assert adv2["suggest_amount"] == pytest_approx(10_000.0)
+    assert adv2["suggest_shares"] == pytest_approx(round(10_000.0 / 98.0, 2))
+    assert adv2["suggest_price"] == 98.0
+
+    # --- 周期中: 距加仓 + 距回本 ---
+    st2 = grid_mod.manual_op(st, "open", "2026-01-01", price=100.0,
+                              shares=1000.0)
+    st2 = grid_mod.manual_op(st2, "add", "2026-01-02", price=97.0,
+                              shares=1000.0)
+    adv3 = grid_mod.advisory(st2, 97.0, 10_000.0, tp_basis="first_buy")
+    assert adv3["signal"] is None
+    # 加仓位 = 97 × 0.97 = 94.09 → (94.09 - 97) / 97 = -3%
+    assert adv3["dist_add_pct"] == pytest_approx(
+        round((97.0 * 0.97 - 97.0) / 97.0 * 100, 2))
+    # 出场位 = 100 × 1.03 = 103 → (103 - 97) / 97
+    assert adv3["dist_tp_pct"] == pytest_approx(
+        round((103.0 - 97.0) / 97.0 * 100, 2))
+    assert adv3["trigger_kind"] == "add", "两个都没触发 → 取更近的那个"
+
+    # 跌到加仓位以下 → 建议加仓, 金额 = 单层
+    adv4 = grid_mod.advisory(st2, 94.0, 10_000.0, tp_basis="first_buy")
+    assert adv4["signal"] == "add"
+    assert adv4["suggest_amount"] == pytest_approx(10_000.0)
+    assert adv4["suggest_shares"] == pytest_approx(round(10_000.0 / 94.0, 2))
+
+    # 涨到出场位以上 → 建议回本, 没有建议金额 (tp 不买)
+    adv5 = grid_mod.advisory(st2, 103.5, 10_000.0, tp_basis="first_buy")
+    assert adv5["signal"] == "tp"
+    assert adv5["suggest_amount"] == 0.0
+    assert adv5["suggest_shares"] == 0.0
+
+
+def test_manual_cycle_open_add_tp_merges_bought_minus_sold():
+    """N 买 1 卖 —— 走**生产用的** inline_manual_op (脚本与引擎同一份实现)。
+
+    open 1000 份 @100 + add 1030 份 @97 → 2030 份 / 投入 ¥199,910;
+    tp @103 → 卖出 199,910/103 份 (恰好回本), 余量归并进再平衡。
+    """
+    import importlib.util
+    src = ROOT / "scripts" / "apply_grid.py"
+    spec = importlib.util.spec_from_file_location("apply_grid_cycle", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    state = grid_mod.fresh_asset_state()
+    state["last_prices"] = [100.0]
+    state, _ = mod.inline_manual_op(state, op="open", today="2026-01-01",
+                                    price=100.0, shares=1000.0)
+    state, _ = mod.inline_manual_op(state, op="add", today="2026-01-02",
+                                    price=97.0, shares=1030.0)
+    assert len(state["entries"]) == 2
+    bought = sum(e["shares"] for e in state["entries"])
+    invested = sum(e["shares"] * e["price"] for e in state["entries"])
+    assert bought == 2030.0
+    assert invested == pytest_approx(199_910.0)
+
+    state, pnl = mod.inline_manual_op(state, op="tp", today="2026-01-03",
+                                      price=103.0, shares=0.0)
+    assert pnl == 0.0, "恰好回本 → 已实现盈亏为 0"
+    sold = invested / 103.0
+    merged = bought - sold
+    assert state["merged_shares"] == pytest_approx(merged, rel=1e-9)
+    tp_op = state["ops"][-1]
+    assert tp_op["op"] == "tp"
+    assert tp_op["source"] == "manual"
+    assert tp_op["shares"] == pytest_approx(sold, rel=1e-9)
+    assert tp_op["shares_to_merge"] == pytest_approx(merged, rel=1e-9)
+    assert tp_op["total_shares_exited"] == pytest_approx(bought, rel=1e-9)
+    assert tp_op["num_buys_exited"] == 2
+    # 一个周期结束: 层清空, 周期关闭
+    assert state["entries"] == []
+    assert state["in_cycle"] is False
+
+
+def test_advance_all_grids_returns_suggestions_not_trades():
+    """record 层: 引擎只产出建议, 不动仓位。
+
+    4 个资产的 signal 只能是 open/add/tp/None; grid_state 的
+    in_cycle / entries / ops 前后完全一致。
+    """
+    names = list(record.ASSET_NAMES)
+    state = {}
+    for name in names:
+        s = grid_mod.fresh_asset_state()
+        s["last_prices"] = [100.0]
+        state[name] = s
+    before = json.dumps(state, sort_keys=True, ensure_ascii=False)
+
+    prices = {name: 99.0 for name in names}
+    new_state, signals = record.advance_all_grids(
+        state, "2026-01-01", prices, pool_value=100_000.0, recent_min=100_000.0)
+    assert len(signals) == 4
+    for s in signals:
+        assert s["signal"] in ("open", "add", "tp", None)
+        assert s["signal"] == "open", "跌破窗口最低 → 建议开仓"
+        assert s["in_cycle"] is False
+        assert s["num_buys"] == 0
+        assert s["current_value"] == 0.0
+        assert s["suggest_amount"] > 0.0
+        assert s["trigger_kind"] == "open"
+    for name in names:
+        assert new_state[name]["in_cycle"] is False
+        assert new_state[name]["entries"] == []
+        assert new_state[name]["ops"] == []
+    # 传入的 state 没被就地改
+    assert json.dumps(state, sort_keys=True, ensure_ascii=False) == before
 
 
 def test_manual_op_open_appends_to_ops_with_source_manual():
@@ -794,7 +929,7 @@ def test_manual_op_open_appends_to_ops_with_source_manual():
     assert op["date"] == "2026-10-17"
     assert op["price"] == 1.35
     assert op["shares"] == 1000.0
-    assert op["note"] == ""   # manual_op's signature has no note kwarg
+    assert op["note"] == ""   # note 默认为空 (用户没填)
     assert "pnl" not in op
     # original state NOT mutated
     assert "ops" not in state or state.get("ops", []) == []
@@ -845,28 +980,30 @@ def test_manual_op_tp_appends_tp_op_recording_the_cost_split():
 
 
 def test_ops_log_persists_through_tp_cycle_then_reopens():
-    """ops log is append-only and survives a tp → next cycle's open."""
+    """ops log is append-only and survives a tp → next cycle's open.
+
+    走**手动路径** (manual_op) —— 引擎不再写 ops, 所以只有用户提交
+    的操作才进这个账本。
+    """
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
     # Cycle 1: open @ 99, tp @ 103 (first_buy basis)
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
-    )
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-01-02", price=99.0 * 1.03 + 0.01,
-        layer_yuan_value=10_000.0, tp_basis="first_buy",
-    )
+    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+                               shares=10_000.0 / 99.0)
+    state = grid_mod.manual_op(state, "tp", "2026-01-02",
+                               price=99.0 * 1.03 + 0.01, shares=0.0)
     assert len(state["ops"]) == 2   # open + tp, both retained
-    # Cycle 2: trigger another open
-    state["last_prices"] = [200.0]
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-02-01", price=199.0, layer_yuan_value=10_000.0,
-    )
+    assert state["in_cycle"] is False
+    # Cycle 2: 下一次开仓
+    state = grid_mod.manual_op(state, "open", "2026-02-01", price=199.0,
+                               shares=10_000.0 / 199.0)
     assert len(state["ops"]) == 3   # cycle-1 ops preserved + new open
     assert [op["date"] for op in state["ops"]] == [
         "2026-01-01", "2026-01-02", "2026-02-01",
     ]
     assert state["ops"][2]["op"] == "open"
+    assert state["ops"][0]["op"] == "open"
+    assert state["ops"][1]["op"] == "tp"
 
 
 def test_inline_manual_op_legacy_state_without_ops_key():
@@ -1112,19 +1249,19 @@ def test_notify_qdii_unheld_low_premium_advises_buildable():
 def _make_record_with_grid() -> dict:
     """Minimal record with two grid signals.
 
-    One asset just exited (out of cycle, its capital came back — the shares
-    it merged into the rebalance portfolio are reported separately); the
-    other is still in a cycle.
+    One asset is 待机 (out of cycle, capital free — the shares it merged into
+    the rebalance portfolio are reported separately) and the engine suggests
+    开仓; the other is still in a cycle and the engine suggests 回本出场.
     """
     r = _make_record_with_qdii(premium_pct=2.0)
     r["grid_signals"] = [
         {"name": "黄金ETF博时", "price": 8.18, "layer_yuan": 10000.0,
-         "signal": "sell", "in_cycle": False, "num_buys": 0,
+         "signal": "open", "in_cycle": False, "num_buys": 0,
          "avg_cost": 0.0, "current_value": 0.0, "unrealized_pnl": 0.0,
          "return_pct": 0.0, "merged_shares": 1125.0, "merged_value": 9206.0,
          "trigger_pct": 3.2, "trigger_kind": "open"},
         {"name": "纳斯达克ETF华夏", "price": 2.69, "layer_yuan": 10000.0,
-         "signal": None, "in_cycle": True, "num_buys": 2,
+         "signal": "tp", "in_cycle": True, "num_buys": 2,
          "avg_cost": 2.55, "current_value": 15000.0, "unrealized_pnl": 900.0,
          "return_pct": 6.0, "merged_shares": 5265.0, "merged_value": 14162.0,
          "trigger_pct": 1.1, "trigger_kind": "tp"},
@@ -1132,8 +1269,8 @@ def _make_record_with_grid() -> dict:
     return r
 
 
-def test_notify_grid_sell_signal_is_recovery_not_take_profit():
-    """「sell」不再叫止盈: 只卖成本金额回本, 已实现盈亏恒为 0。
+def test_notify_grid_tp_signal_is_recovery_not_take_profit():
+    """「tp / 回本」不叫止盈: 只卖成本金额回本, 已实现盈亏恒为 0。
 
     叫它止盈会让人以为收益已经兑现了 —— 而新规则下收益全在归并份额里。
     """
@@ -1141,12 +1278,15 @@ def test_notify_grid_sell_signal_is_recovery_not_take_profit():
     r = _make_record_with_grid()
     text = notify.build_text(r)
     html = notify.build_html(r, pages_url="https://x/")
-    assert "✓ 回本" in text, "text body should label the sell signal as 回本"
-    assert "✓ 回本" in html, "html body should label the sell signal as 回本"
-    assert "✓ 止盈" not in text, "old 止盈 badge still in text body"
-    assert "✓ 止盈" not in html, "old 止盈 badge still in html body"
-    # The subject tag follows the same wording.
-    assert "网格回本" in notify.build_subject(r)
+    assert "建议回本" in text, "text body should label the tp signal as 建议回本"
+    assert "建议回本" in html, "html body should label the tp signal as 建议回本"
+    assert "止盈" not in text, "old 止盈 wording still in text body"
+    assert "止盈" not in html, "old 止盈 wording still in html body"
+    # The subject tag follows the same wording. (open 优先于 tp, 所以这里
+    # 只留一条 tp 建议再问 subject。)
+    r2 = json.loads(json.dumps(r))
+    r2["grid_signals"][0]["signal"] = None
+    assert "网格建议回本" in notify.build_subject(r2)
 
 
 def test_notify_grid_shows_capital_column_and_merged_note():
@@ -1185,6 +1325,66 @@ def test_notify_grid_return_pct_is_dash_when_out_of_cycle():
     assert row, "gold row missing from the grid section"
     assert "—" in row[0] and "+0.00%" not in row[0], (
         f"out-of-cycle row should show — not +0.00%: {row[0]!r}")
+
+
+def test_notify_renders_new_signal_vocabulary():
+    """新词表 open / add / tp 的徽章 + 「只给建议」字样。
+
+    引擎不再自动交易 —— 邮件必须把「建议」和「已成交」区分开, 否则用户会
+    以为 ���已经按建议下单了。
+    """
+    from src import notify
+    r = _make_record_with_qdii(premium_pct=2.0)
+    base = {"layer_yuan": 10000.0, "in_cycle": True, "num_buys": 1,
+            "avg_cost": 2.0, "current_value": 10000.0, "unrealized_pnl": 0.0,
+            "return_pct": 0.0, "merged_shares": 0.0, "merged_value": 0.0,
+            "trigger_pct": 0.0, "trigger_kind": "open"}
+    r["grid_signals"] = [
+        dict(base, name="黄金ETF博时", price=8.18, signal="open"),
+        dict(base, name="红利ETF易方达", price=1.32, signal="add"),
+        dict(base, name="可转债ETF博时", price=12.32, signal="tp"),
+    ]
+    text = notify.build_text(r)
+    html = notify.build_html(r, pages_url="https://x/")
+    for body in (text, html):
+        assert "只给建议" in body, "body must say the engine only advises"
+        assert "建议开仓" in body
+        assert "建议加仓" in body
+        assert "建议回本" in body
+    # HTML 徽章 (带图标前缀)
+    assert "⚠ 建议开仓" in html
+    assert "⚠ 建议加仓" in html
+    assert "✓ 建议回本" in html
+    # 表头改成「建议」/「距建议触发」
+    assert "距建议触发" in text
+    assert "距建议触发" in html
+    # subject 优先级: open > add > tp
+    assert "网格建议开仓" in notify.build_subject(r)
+
+
+def test_notify_legacy_signal_vocabulary_still_renders():
+    """老 history.json 里的 "buy" / "sell" 不能把邮件渲染崩了。
+
+    旧记录只用于画曲线, 但 notify 仍可能被历史数据喂到 —— 兜底映射
+    ("买入(旧)" / "回本(旧)") 必须存在。
+    """
+    from src import notify
+    r = _make_record_with_qdii(premium_pct=2.0)
+    base = {"layer_yuan": 10000.0, "in_cycle": True, "num_buys": 1,
+            "avg_cost": 2.0, "current_value": 10000.0, "unrealized_pnl": 0.0,
+            "return_pct": 0.0, "merged_shares": 0.0, "merged_value": 0.0,
+            "trigger_pct": 0.0, "trigger_kind": "open"}
+    r["grid_signals"] = [
+        dict(base, name="黄金ETF博时", price=8.18, signal="buy"),
+        dict(base, name="红利ETF易方达", price=1.32, signal="sell"),
+    ]
+    text = notify.build_text(r)          # 不抛异常 = 通过
+    html = notify.build_html(r, pages_url="https://x/")
+    assert "买入(旧)" in text
+    assert "回本(旧)" in text
+    assert "买入(旧)" in html
+    assert "回本(旧)" in html
+    assert "网格建议" in notify.build_subject(r)
 
 
 def test_apply_holdings_happy_path():
@@ -2032,8 +2232,8 @@ def test_advance_one_day_preserves_backtest_ops():
     advance_one_day rebuilds the asset state as a fixed 6-key literal, so
     anything riding in a 7th key would be silently dropped the first time
     record.py runs. `ops` is the one array it copies forward verbatim —
-    this test is the guard on that, exercised in the worst case: the live
-    engine ACTS and opens a real cycle on top of the backfill.
+    this test is the guard on that. The engine no longer writes ops, so
+    the backfill must survive **byte-identical and un-augmented**.
     """
     backtest = [
         {"date": "2026-09-04", "op": "open", "source": "backtest",
@@ -2045,21 +2245,21 @@ def test_advance_one_day_preserves_backtest_ops():
              "cum_realized": 0.0, "ops": [dict(o) for o in backtest],
              "merged_shares": 321.5}   # 已归并份额, 必须跨天保留
 
-    # A price far below the window min forces a real trigger-buy.
+    # A price far below the window min → 引擎**建议**开仓 (但不执行).
     after, signal = grid_mod.advance_one_day(
         state, date_str="2026-10-21", price=12.0,
         layer_yuan_value=grid_mod.GRID_BASE_YUAN)
 
-    assert signal == "buy", "fixture should trigger a live buy"
-    assert after["in_cycle"] is True
+    assert signal == "open", "fixture should trigger an open suggestion"
+    assert after["in_cycle"] is False, "引擎不自动开仓"
+    assert after["entries"] == []
     # backfill survived byte-identical...
     kept = [o for o in after["ops"] if o["source"] == "backtest"]
     assert kept == backtest, "backtest ops were altered or dropped"
-    # ...and the new live op is tagged as live, not backtest
-    live = [o for o in after["ops"] if o["source"] == "auto"]
-    assert len(live) == 1
-    assert live[0]["op"] == "open" and live[0]["note"] == "窗口突破开仓"
-    assert len(after["ops"]) == 3
+    # ...and the engine added **no** live row at all
+    live = [o for o in after["ops"] if o["source"] != "backtest"]
+    assert live == [], "引擎不写 ops"
+    assert len(after["ops"]) == 2
     # 归并份额同样是必须被字面量复制过去的字段 —— 漏一个就是每天清零
     assert after["merged_shares"] == 321.5, "merged_shares was dropped by the rebuild"
     assert sorted(after.keys()) == ["cum_realized", "entries", "in_cycle",
@@ -2071,19 +2271,21 @@ def test_merged_shares_survive_subsequent_daily_runs():
 
     这是"交给组合就不再撒手"的落地守护: 出场 → 次日 → 再开新周期 → 再出场,
     份额只能增加, 绝不能因为 state 重建而减少。
+
+    引擎**不再改变**归并份额 —— 它只会建议。归并份额只能由**手动** tp 产生,
+    之后跨天原样存活。
     """
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
-    # 周期 1: 开仓 @99, 止盈 @101.97 (first_buy * 1.03)
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0)
-    state, sig = grid_mod.advance_one_day(
-        state, "2026-01-02", price=101.98, layer_yuan_value=10_000.0)
-    assert sig == "sell"
+    # 周期 1: 手动开仓 @99, 手动止盈 @101.97 (first_buy * 1.03)
+    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+                               shares=10_000.0 / 99.0)
+    state = grid_mod.manual_op(state, "tp", "2026-01-02", price=101.98,
+                               shares=0.0)
     merged_after_tp = state["merged_shares"]
     assert merged_after_tp > 0
 
-    # 之后连续多天 (含再次开仓/加仓/止盈), merged_shares 只能不减
+    # 之后连续多天跑引擎 —— merged_shares 只能不变 (引擎不产生也不消耗它)
     seen = [merged_after_tp]
     for i, p in enumerate([101.0, 100.0, 98.0, 97.5, 100.98, 99.5]):
         state, _ = grid_mod.advance_one_day(
@@ -2091,8 +2293,13 @@ def test_merged_shares_survive_subsequent_daily_runs():
             layer_yuan_value=10_000.0)
         seen.append(state["merged_shares"])
     for prev, cur in zip(seen, seen[1:]):
-        assert cur >= prev - 1e-9, f"merged_shares decreased: {seen}"
-    # 至少经历了一次新的止盈, 份额应当增加过
+        assert cur == prev, f"引擎改变了 merged_shares: {seen}"
+
+    # 再手动开一个新周期 + 再手动止盈 → 份额应当增加
+    state = grid_mod.manual_op(state, "open", "2026-02-01", price=97.0,
+                               shares=10_000.0 / 97.0)
+    state = grid_mod.manual_op(state, "tp", "2026-02-02", price=100.0,
+                               shares=0.0)
     assert state["merged_shares"] > merged_after_tp
 
 
@@ -2185,15 +2392,16 @@ def test_merged_only_code_becomes_its_own_position_row():
 
 
 def test_grid_capital_drops_to_zero_after_exit_while_merged_survives():
-    """出场后: 网格的资金占用归零 (本金收回), 归并份额留在组合那边。"""
+    """出场后: 网格的资金占用归零 (本金收回), 归并份额留在组合那边。
+
+    走**手动路径** —— 引擎不再出场。
+    """
     state = grid_mod.fresh_asset_state()
     state["last_prices"] = [100.0]
-    state, _ = grid_mod.advance_one_day(
-        state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0)
-    state, sig = grid_mod.advance_one_day(
-        state, "2026-01-02", price=99.0 * 1.04, layer_yuan_value=10_000.0,
-        tp_basis="first_buy")
-    assert sig == "sell"
+    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+                               shares=10_000.0 / 99.0)
+    state = grid_mod.manual_op(state, "tp", "2026-01-02",
+                               price=99.0 * 1.04, shares=0.0)
     snap = grid_mod.asset_snapshot(state, current_price=103.0)
     assert snap["in_cycle"] is False
     assert snap["current_value"] == 0.0, "出场后网格不再占用资金"

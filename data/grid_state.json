@@ -322,14 +322,8 @@
     "merged_shares": 0.0
   },
   "黄金ETF博时": {
-    "in_cycle": true,
-    "entries": [
-      {
-        "date": "2026-10-23",
-        "price": 8.12,
-        "shares": 1231.5270935960593
-      }
-    ],
+    "in_cycle": false,
+    "entries": [],
     "last_prices": [
       9.511,
       9.4,
@@ -455,14 +449,6 @@
     "cum_realized": 0.0,
     "ops": [
       {
-        "date": "2026-10-23",
-        "op": "open",
-        "source": "auto",
-        "price": 8.12,
-        "shares": 1231.5270935960593,
-        "note": "窗口突破开仓"
-      },
-      {
         "date": "2020-11-10",
         "op": "open",
         "source": "backtest",
@@ -546,14 +532,8 @@
     "merged_shares": 0.0
   },
   "可转债ETF博时": {
-    "in_cycle": true,
-    "entries": [
-      {
-        "date": "2026-10-23",
-        "price": 12.32,
-        "shares": 811.6883116883116
-      }
-    ],
+    "in_cycle": false,
+    "entries": [],
     "last_prices": [
       14.103,
       14.065,
@@ -678,14 +658,6 @@
     ],
     "cum_realized": 0.0,
     "ops": [
-      {
-        "date": "2026-10-23",
-        "op": "open",
-        "source": "auto",
-        "price": 12.32,
-        "shares": 811.6883116883116,
-        "note": "窗口突破开仓"
-      },
       {
         "date": "2020-11-06",
         "op": "open",

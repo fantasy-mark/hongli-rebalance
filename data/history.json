@@ -3550,38 +3550,65 @@
         "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
+        "merged_shares": 0.0,
+        "merged_value": 0.0,
         "trigger_pct": 9.27,
         "trigger_kind": "open",
+        "trigger_price": 1.208,
+        "dist_open_pct": 9.27,
+        "dist_add_pct": null,
+        "dist_tp_pct": null,
+        "suggest_price": 1.32,
+        "suggest_shares": 0.0,
+        "suggest_amount": 0.0,
         "intraday_low": 1.32
       },
       {
         "name": "黄金ETF博时",
         "price": 8.12,
         "layer_yuan": 10068.39,
-        "signal": null,
-        "in_cycle": true,
-        "num_buys": 1,
-        "avg_cost": 8.12,
-        "current_value": 10000.0,
+        "signal": "open",
+        "in_cycle": false,
+        "num_buys": 0,
+        "avg_cost": 0.0,
+        "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
-        "trigger_pct": 3.0,
-        "trigger_kind": "tp",
+        "merged_shares": 0.0,
+        "merged_value": 0.0,
+        "trigger_pct": -1.04,
+        "trigger_kind": "open",
+        "trigger_price": 8.205,
+        "dist_open_pct": -1.04,
+        "dist_add_pct": null,
+        "dist_tp_pct": null,
+        "suggest_price": 8.12,
+        "suggest_shares": 1239.95,
+        "suggest_amount": 10068.39,
         "intraday_low": 8.12
       },
       {
         "name": "可转债ETF博时",
         "price": 12.32,
         "layer_yuan": 10068.39,
-        "signal": null,
-        "in_cycle": true,
-        "num_buys": 1,
-        "avg_cost": 12.32,
-        "current_value": 10000.0,
+        "signal": "open",
+        "in_cycle": false,
+        "num_buys": 0,
+        "avg_cost": 0.0,
+        "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
-        "trigger_pct": 3.0,
-        "trigger_kind": "tp",
+        "merged_shares": 0.0,
+        "merged_value": 0.0,
+        "trigger_pct": -0.27,
+        "trigger_kind": "open",
+        "trigger_price": 12.353,
+        "dist_open_pct": -0.27,
+        "dist_add_pct": null,
+        "dist_tp_pct": null,
+        "suggest_price": 12.32,
+        "suggest_shares": 817.24,
+        "suggest_amount": 10068.39,
         "intraday_low": 12.32
       },
       {
@@ -3595,8 +3622,17 @@
         "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
+        "merged_shares": 0.0,
+        "merged_value": 0.0,
         "trigger_pct": 7.43,
         "trigger_kind": "open",
+        "trigger_price": 2.476,
+        "dist_open_pct": 7.43,
+        "dist_add_pct": null,
+        "dist_tp_pct": null,
+        "suggest_price": 2.66,
+        "suggest_shares": 0.0,
+        "suggest_amount": 0.0,
         "intraday_low": 2.66
       }
     ],
@@ -3729,14 +3765,8 @@
         "cum_realized": 0.0
       },
       "黄金ETF博时": {
-        "in_cycle": true,
-        "entries": [
-          {
-            "date": "2026-10-23",
-            "price": 8.12,
-            "shares": 1231.5270935960593
-          }
-        ],
+        "in_cycle": false,
+        "entries": [],
         "last_prices": [
           9.511,
           9.4,
@@ -3862,14 +3892,8 @@
         "cum_realized": 0.0
       },
       "可转债ETF博时": {
-        "in_cycle": true,
-        "entries": [
-          {
-            "date": "2026-10-23",
-            "price": 12.32,
-            "shares": 811.6883116883116
-          }
-        ],
+        "in_cycle": false,
+        "entries": [],
         "last_prices": [
           14.103,
           14.065,
