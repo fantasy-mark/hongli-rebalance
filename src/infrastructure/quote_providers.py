@@ -27,6 +27,7 @@ close.  The spot endpoints give the freshest tick available at any time.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 import warnings
 from typing import Optional, Tuple
@@ -334,6 +335,23 @@ def latest(sina: str, eastmoney: str = "") -> Tuple[float, pd.Timestamp]:
         if t is not None:
             return t
     return latest_history(sina, eastmoney)
+
+
+def latest_for_code(code: str) -> Tuple[float, datetime.date]:
+    """Latest price for an ETF **code** (not a sina symbol).
+
+    The adapter between the asset universe (which the domain speaks) and
+    the quote endpoints (which speak sina/eastmoney symbols).  This is
+    the `PriceProvider` the domain's valuation service expects — see
+    `src/domain/portfolio/valuation.py`.
+
+    Returns (price, as_of_date).
+    """
+    from ..domain.portfolio.asset_universe import ETF_DEFS
+
+    sina, em, _name, _qdii = ETF_DEFS[code]
+    price, pdate = latest(sina, em)
+    return float(price), pdate.date()
 
 
 def fetch_kline_history(code: str, start: str = "", end: str = "") -> Optional[pd.DataFrame]:

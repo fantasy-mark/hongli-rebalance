@@ -346,7 +346,7 @@ function promptForPat() {
   setPat(trimmed);
 }
 
-// Known ETF catalog surfaced in the "code" dropdown (mirrors src/record.py ETF_DEFS).
+// Known ETF catalog surfaced in the "code" dropdown (mirrors src/application/daily_snapshot.py ETF_DEFS).
 // Users can still type a custom 6-digit code, but the workflow will reject unknown ones.
 const ETF_CATALOG = {
   "515180": "红利ETF易方达",
@@ -357,12 +357,12 @@ const ETF_CATALOG = {
 
 // Asset lists shown in 资金管理's "资产" column.
 //   再平衡: the basket the engine actually rebalances — derived from the
-//           latest record's positions (src/record.py: target_w =
+//           latest record's positions (src/application/daily_snapshot.py: target_w =
 //           1/len(positions), 4 assets @ 25% each). Hardcoding the codes
 //           here is how this row silently under-reported 纳斯达克ETF华夏's
 //           ¥38,736 after the 2026-10-14 four-asset migration — the 3pp
 //           table above it and the 总市值 badge both showed 4 assets.
-//   网格:    every asset the grid tracks (mirrors src/record.py ASSET_NAMES).
+//   网格:    every asset the grid tracks (mirrors src/application/daily_snapshot.py ASSET_NAMES).
 // Arrays (not Sets) so we can render in a fixed display order.
 const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
 

@@ -26,9 +26,8 @@ for _n in ("matplotlib", "akshare", "urllib3", "requests"):
 
 import pandas as pd
 
-from src import grid as grid_mod
-from src.fetch import fetch_one
-
+from src.simulation import grid_simulator as grid_mod
+from src.infrastructure.quote_providers import fetch_one
 ASSETS = [
     ("黄金ETF博时",   "sz159937", "159937"),
     ("红利ETF易方达", "sh515180", "515180"),

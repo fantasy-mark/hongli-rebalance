@@ -29,11 +29,10 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from src import grid as grid_mod
-from src import three_pp
-from src.fetch import fetch_one
-
-# 4 资产 (与 src/record.py 一致), 起点取 513300 上市日以保证窗口一致
+from src.simulation import grid_simulator as grid_mod
+from src.simulation import equal_weight_backtest as three_pp
+from src.infrastructure.quote_providers import fetch_one
+# 4 资产 (与 src/application/daily_snapshot.py 一致), 起点取 513300 上市日以保证窗口一致
 START = "2020-11-05"
 END = pd.Timestamp.today().strftime("%Y-%m-%d")
 ASSETS = [

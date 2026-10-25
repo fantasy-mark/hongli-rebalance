@@ -1,5 +1,14 @@
-"""Unit tests for src.record + src.grid + src.three_pp + src.notify_failure
+"""Unit tests for the domain + application + infrastructure layers
 (pure functions, no network).
+
+Covers:
+  src/domain/ledger/ledger.py           账本重放与现金池
+  src/domain/portfolio/*                3pp 评估 / 归并份额 / 估值
+  src/domain/grid/grid_position.py      网格引擎 (只给建议)
+  src/simulation/grid_simulator.py      回测重放
+  src/simulation/equal_weight_backtest.py  3pp 回测
+  src/application/daily_snapshot.py     每日快照
+  src/presentation/notify_failure.py    失败邮件
 
 Run:  python -m tests.test_record
 """
@@ -17,9 +26,15 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd
 
-from src import record, grid as grid_mod
-from src import three_pp
-from src import notify_failure as nf
+from src.application import daily_snapshot as snapshot
+from src.domain.grid import grid_position as grid_pos
+from src.domain.ledger import ledger
+from src.domain.portfolio import asset_universe as universe
+from src.domain.portfolio import portfolio, rebalance_policy as policy
+from src.infrastructure import json_repositories as repos
+from src.presentation import notify_failure as nf
+from src.simulation import equal_weight_backtest as three_pp
+from src.simulation import grid_simulator as grid_sim
 
 
 def test_read_holdings_with_现金_label():
@@ -30,8 +45,8 @@ def test_read_holdings_with_现金_label():
             ["红利ETF易方达", "515180", 100000],
             ["可转债ETF博时", "511380", 13000],
         ])
-        record.HOLDINGS = xlsx
-        h, cash_rebalance, cash_grid = record.read_holdings()
+        repos.HOLDINGS = xlsx
+        h, cash_rebalance, cash_grid = repos.read_holdings()
         assert cash_rebalance == 50000.0, f"cash_rebalance={cash_rebalance}"
         assert cash_grid == 0.0, f"cash_grid={cash_grid}"
         assert len(h) == 3
@@ -45,8 +60,8 @@ def test_read_holdings_accepts_legacy_资产_label():
         _write_holdings(xlsx, "资产", 123456.0, [
             ["黄金ETF博时", "159937", 5000],
         ])
-        record.HOLDINGS = xlsx
-        h, cash_rebalance, cash_grid = record.read_holdings()
+        repos.HOLDINGS = xlsx
+        h, cash_rebalance, cash_grid = repos.read_holdings()
         assert cash_rebalance == 123456.0
         assert cash_grid == 0.0
         assert len(h) == 1 and h[0]["code"] == "159937"
@@ -63,8 +78,8 @@ def test_read_holdings_skips_invalid_rows():
             ["bad2", "159937", "not-a-number"],      # bad shares → skip
             ["可转债ETF博时", "511380", 500],
         ])
-        record.HOLDINGS = xlsx
-        h, cash_rebalance, cash_grid = record.read_holdings()
+        repos.HOLDINGS = xlsx
+        h, cash_rebalance, cash_grid = repos.read_holdings()
         assert cash_rebalance == 0.0
         assert cash_grid == 0.0
         assert len(h) == 2
@@ -75,8 +90,8 @@ def test_read_holdings_no_label_defaults_to_zero():
     with tempfile.TemporaryDirectory() as td:
         xlsx = Path(td) / "h.xlsx"
         _write_holdings(xlsx, "", 0.0, [["A", "159937", 100]])
-        record.HOLDINGS = xlsx
-        h, cash_rebalance, cash_grid = record.read_holdings()
+        repos.HOLDINGS = xlsx
+        h, cash_rebalance, cash_grid = repos.read_holdings()
         assert cash_rebalance == 0.0
         assert cash_grid == 0.0
         assert len(h) == 1
@@ -88,7 +103,7 @@ def test_evaluate_3pp_equal_weight_no_trigger():
         {"name": "B", "code": "2", "shares": 1, "price": 100, "value": 100, "date": "2026-01-01"},
         {"name": "C", "code": "3", "shares": 1, "price": 100, "value": 100, "date": "2026-01-01"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
+    total, weights, triggered, _plan = policy.evaluate(positions, 0.0, 0.0)
     assert total == 300
     assert all(abs(w - 1/3) < 1e-9 for w in weights)
     assert not triggered
@@ -100,7 +115,7 @@ def test_evaluate_3pp_threshold_triggers_on_50pp_drift():
         {"name": "B", "code": "2", "shares": 1, "price": 100, "value": 100, "date": "x"},
         {"name": "C", "code": "3", "shares": 1, "price": 100, "value": 100, "date": "x"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
+    total, weights, triggered, _plan = policy.evaluate(positions, 0.0, 0.0)
     # A: 150/350 = 42.86%, target 33.33%, delta = +9.52pp > 3pp
     assert total == 350
     assert weights[0] > 0.4
@@ -113,12 +128,12 @@ def test_evaluate_2asset_dynamic_target_w():
         {"name": "A", "code": "1", "shares": 1, "price": 100, "value": 100, "date": "x"},
         {"name": "B", "code": "2", "shares": 1, "price": 100, "value": 100, "date": "x"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
+    total, weights, triggered, _plan = policy.evaluate(positions, 0.0, 0.0)
     assert total == 200
     assert all(abs(w - 0.5) < 1e-9 for w in weights), f"weights={weights}"
     assert not triggered
     # build_record also produces dynamic target_w
-    r = record.build_record(
+    r = snapshot.build_record(
         today="2026-10-14", positions=positions,
         cash_rebalance=0.0, cash_grid=0.0,
         total=200, weights=weights, triggered_3pp=False, plan=[],
@@ -135,13 +150,13 @@ def test_evaluate_5asset_dynamic_target_w():
          "price": 100, "value": 100, "date": "x"}
         for i in range(5)
     ]
-    total, weights, triggered, plan = record.evaluate(positions, 0.0, 0.0)
+    total, weights, triggered, plan = policy.evaluate(positions, 0.0, 0.0)
     assert total == 500
     assert all(abs(w - 0.2) < 1e-9 for w in weights), f"weights={weights}"
     assert not triggered
     # Plan has one entry per position
     assert len(plan) == 0  # equal weight → no plan unless triggered
-    r = record.build_record(
+    r = snapshot.build_record(
         today="2026-10-14", positions=positions,
         cash_rebalance=0.0, cash_grid=0.0,
         total=500, weights=weights, triggered_3pp=False, plan=[],
@@ -159,7 +174,7 @@ def test_evaluate_5asset_threshold_triggers_correctly():
         {"name": "D", "code": "4", "shares": 1, "price": 100, "value": 100, "date": "x"},
         {"name": "E", "code": "5", "shares": 1, "price": 100, "value": 100, "date": "x"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
+    total, weights, triggered, _plan = policy.evaluate(positions, 0.0, 0.0)
     # total = 250 + 100*4 = 650; A weight = 38.46%; target 20%; delta = +18.46pp > 3pp
     assert total == 650
     assert weights[0] > 0.38
@@ -191,8 +206,8 @@ def test_read_holdings_n_agnostic():
         with tempfile.TemporaryDirectory() as td:
             xlsx = Path(td) / "h.xlsx"
             _write_holdings(xlsx, "现金", 1000.0, rows)
-            record.HOLDINGS = xlsx
-            h, cash_rebalance, cash_grid = record.read_holdings()
+            repos.HOLDINGS = xlsx
+            h, cash_rebalance, cash_grid = repos.read_holdings()
             assert cash_rebalance == 1000.0
             assert cash_grid == 0.0
             assert len(h) == n, f"N={n} got {len(h)} positions: {h}"
@@ -218,8 +233,8 @@ def test_read_holdings_json_schema():
                 {"name": "x",   "code": "511380","shares": None},   # null shares → skip
             ],
         }, ensure_ascii=False), encoding="utf-8")
-        record.HOLDINGS = p
-        h, cash_rebalance, cash_grid = record.read_holdings()
+        repos.HOLDINGS = p
+        h, cash_rebalance, cash_grid = repos.read_holdings()
         # Legacy single-cash file migrates: 1234.5 → cash_rebalance, grid=0
         assert cash_rebalance == 1234.5
         assert cash_grid == 0.0
@@ -235,8 +250,8 @@ def test_read_holdings_json_missing_returns_empty():
     """Missing file with no xlsx fallback → ([], 0, 0)."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "nope.json"
-        record.HOLDINGS = p
-        h, cash_rebalance, cash_grid = record.read_holdings()
+        repos.HOLDINGS = p
+        h, cash_rebalance, cash_grid = repos.read_holdings()
         assert h == []
         assert cash_rebalance == 0.0
         assert cash_grid == 0.0
@@ -259,8 +274,8 @@ def test_read_holdings_xlsx_fallback_when_json_missing():
         ws.cell(row=5, column=2, value="515180")
         ws.cell(row=5, column=3, value=1000)
         wb.save(xlsx)
-        record.HOLDINGS = p
-        h, cash_rebalance, cash_grid = record.read_holdings()
+        repos.HOLDINGS = p
+        h, cash_rebalance, cash_grid = repos.read_holdings()
         assert cash_rebalance == 999.0
         assert cash_grid == 0.0
         assert len(h) == 1 and h[0]["code"] == "515180" and h[0]["shares"] == 1000
@@ -277,7 +292,7 @@ def test_evaluate_with_cash_affects_weights():
         {"name": "C", "code": "3", "shares": 1, "price": 100, "value": 100, "date": "x"},
         {"name": "D", "code": "4", "shares": 1, "price": 100, "value": 100, "date": "x"},
     ]
-    total, weights, triggered, _plan = record.evaluate(positions, 0.0, 0.0)
+    total, weights, triggered, _plan = policy.evaluate(positions, 0.0, 0.0)
     assert total == 400
     assert all(abs(w - 0.25) < 0.01 for w in weights)
     assert not triggered
@@ -285,7 +300,7 @@ def test_evaluate_with_cash_affects_weights():
     # 有现金但仍等权: 每个 200, 现金 200, 总值 1000, weight 0.20 vs target 0.25 → 5pp 偏离 → 触发
     for p in positions:
         p["value"] = 200.0
-    total2, weights2, triggered2, _plan2 = record.evaluate(positions, 200.0, 0.0)
+    total2, weights2, triggered2, _plan2 = policy.evaluate(positions, 200.0, 0.0)
     assert total2 == 1000
     assert all(abs(w - 0.20) < 0.01 for w in weights2)
     assert triggered2   # 5pp > 3pp 阈值
@@ -300,7 +315,7 @@ def test_build_record_shape():
         {"name": "可转债ETF博时", "code": "511380", "shares": 13700,
           "price": 12.930, "value": 177141.0, "date": "2026-10-09"},
     ]
-    r = record.build_record(
+    r = snapshot.build_record(
         today="2026-10-11", positions=positions,
         cash_rebalance=5.0, cash_grid=0.0,
         total=526221.4, weights=[0.3267, 0.3368, 0.3365],
@@ -365,15 +380,15 @@ def test_three_pp_drastic_drift_triggers():
 
 def test_layer_yuan_floor_only():
     # 池子 = 初始本金 → 浮盈 = 0 → 加仓 = 底仓
-    assert grid_mod.layer_yuan(pool_value=200_000.0, recent_min=200_000.0) == grid_mod.GRID_BASE_YUAN
+    assert grid_pos.layer_yuan(pool_value=200_000.0, recent_min=200_000.0) == grid_pos.GRID_BASE_YUAN
     # 池子跌到 18 万 → 浮亏 → 仍买底仓
-    assert grid_mod.layer_yuan(pool_value=180_000.0, recent_min=180_000.0) == grid_mod.GRID_BASE_YUAN
+    assert grid_pos.layer_yuan(pool_value=180_000.0, recent_min=180_000.0) == grid_pos.GRID_BASE_YUAN
 
 
 def test_layer_yuan_scales_with_floating():
     # 池子 25 万, 3 年低点 20 万 → 浮盈 5 万 × 5% = 2500, 加上底仓
-    expected = grid_mod.GRID_BASE_YUAN + 50_000 * grid_mod.GRID_FLOATING_FRACTION
-    assert grid_mod.layer_yuan(pool_value=250_000.0, recent_min=200_000.0) == pytest_approx(expected)
+    expected = grid_pos.GRID_BASE_YUAN + 50_000 * grid_pos.GRID_FLOATING_FRACTION
+    assert grid_pos.layer_yuan(pool_value=250_000.0, recent_min=200_000.0) == pytest_approx(expected)
 
 
 def test_advance_grid_suggests_open_without_opening():
@@ -382,9 +397,9 @@ def test_advance_grid_suggests_open_without_opening():
     窗口最低 100, 今日 99 → 建议开仓 (signal="open"), 但
     in_cycle 仍为 False, entries 仍为空, ops 仍为空。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
-    new_state, signal = grid_mod.advance_one_day(
+    new_state, signal = grid_pos.advance_one_day(
         state, date_str="2026-01-01", price=99.0, layer_yuan_value=10_000.0,
     )
     assert signal == "open"
@@ -396,9 +411,9 @@ def test_advance_grid_suggests_open_without_opening():
 
 
 def test_advance_grid_hold_no_signal():
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
-    new_state, signal = grid_mod.advance_one_day(
+    new_state, signal = grid_pos.advance_one_day(
         state, date_str="2026-01-01", price=101.0, layer_yuan_value=10_000.0,
     )
     assert signal is None
@@ -413,17 +428,17 @@ def test_advance_grid_suggests_add_and_tp_without_mutating():
 
     周期是**手动**建出来的 (manual_op) —— 引擎只负责"今天该做什么"。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
     # 第一层 @ 99 (手动开仓)
-    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+    state = grid_pos.manual_op(state, "open", "2026-01-01", price=99.0,
                                shares=10_000.0 / 99.0)
     assert state["in_cycle"] is True
     pre_entries = list(state["entries"])
     pre_ops = list(state["ops"])
 
     # 第二层 @ 99*0.97 = 96.03 → 建议 add
-    state2, sig2 = grid_mod.advance_one_day(
+    state2, sig2 = grid_pos.advance_one_day(
         state, "2026-01-02", price=96.0, layer_yuan_value=10_000.0,
     )
     assert sig2 == "add"
@@ -433,11 +448,11 @@ def test_advance_grid_suggests_add_and_tp_without_mutating():
 
     # 均价 × 1.03 触发回本 (v2 行为, 显式传 tp_basis)
     # 只有一层 (引擎不加仓) → 均价就是那一笔的 99
-    snap = grid_mod.asset_snapshot(state, current_price=96.0)
+    snap = grid_pos.asset_snapshot(state, current_price=96.0)
     assert snap["avg_cost"] == pytest_approx(99.0)
     assert snap["num_buys"] == 1
     exit_price = snap["avg_cost"] * 1.03 + 0.01
-    state3, sig3 = grid_mod.advance_one_day(
+    state3, sig3 = grid_pos.advance_one_day(
         state2, "2026-01-03", price=exit_price, layer_yuan_value=10_000.0,
         tp_basis="avg_cost",
     )
@@ -451,8 +466,8 @@ def test_advance_grid_suggests_add_and_tp_without_mutating():
 
 
 def test_asset_snapshot_no_cycle():
-    state = grid_mod.fresh_asset_state()
-    snap = grid_mod.asset_snapshot(state, current_price=100.0)
+    state = grid_pos.fresh_asset_state()
+    snap = grid_pos.asset_snapshot(state, current_price=100.0)
     assert snap["in_cycle"] is False
     assert snap["num_buys"] == 0
     assert snap["current_value"] == 0.0
@@ -462,12 +477,12 @@ def test_asset_snapshot_out_of_cycle_reports_merged_but_no_capital():
     """不在周期里 = 网格不再持有该资产 (出场时本金全额收回)。
 
     归并到再平衡的份额仍然要报出来 —— 它们现在是**组合**的持仓, 组合那
-    一侧要用它们算权重和市值 (见 record.py:merge_grid_shares_into_positions),
+    一侧要用它们算权重和市值 (见 portfolio.merge_grid_shares_into_positions),
     但它们**不是**网格的资金占用。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["merged_shares"] = 1125.0
-    snap = grid_mod.asset_snapshot(state, current_price=8.18)
+    snap = grid_pos.asset_snapshot(state, current_price=8.18)
     assert snap["in_cycle"] is False
     assert snap["current_value"] == 0.0, "no in-cycle position"
     assert snap["merged_shares"] == pytest_approx(1125.0)
@@ -486,25 +501,25 @@ def test_advance_grid_tp_basis_first_buy_higher_target():
     - 均价 ≈ 97.48, 均价×1.03 ≈ 100.40 (101 ≥ 100.40 → 均价基准建议出场)
     - 第一笔 99, 第一笔×1.03 = 101.97 (101 < 101.97 不触发, 103 ≥ 101.97 触发)
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
     # 周期只能由**手动**路径造出来 —— 引擎不再自动开仓。
-    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+    state = grid_pos.manual_op(state, "open", "2026-01-01", price=99.0,
                                shares=10_000.0 / 99.0)
-    state = grid_mod.manual_op(state, "add", "2026-01-02", price=96.0,
+    state = grid_pos.manual_op(state, "add", "2026-01-02", price=96.0,
                                shares=10_000.0 / 96.0)
     # 均价 = (10000 + 10000) / (10000/99 + 10000/96) ≈ 97.477
     # 均价 × 1.03 ≈ 100.40, 第一笔 × 1.03 = 101.97
     pre = json.loads(json.dumps(state))
 
     # 在 101: 均价 basis 建议出场, first_buy basis 不建议
-    s1, sig_avg = grid_mod.advance_one_day(
+    s1, sig_avg = grid_pos.advance_one_day(
         state, "2026-01-03", price=101.0, layer_yuan_value=10_000.0,
         tp_basis="avg_cost",
     )
     assert sig_avg == "tp", f"avg_cost basis should suggest tp at 101, got {sig_avg}"
 
-    s2, sig_fb = grid_mod.advance_one_day(
+    s2, sig_fb = grid_pos.advance_one_day(
         state, "2026-01-03", price=101.0, layer_yuan_value=10_000.0,
         tp_basis="first_buy",
     )
@@ -512,7 +527,7 @@ def test_advance_grid_tp_basis_first_buy_higher_target():
     assert s2["in_cycle"] is True
 
     # 涨到 103: first_buy basis 建议出场 (103 >= 99*1.03 = 101.97)
-    s3, sig_fb2 = grid_mod.advance_one_day(
+    s3, sig_fb2 = grid_pos.advance_one_day(
         state, "2026-01-03", price=103.0, layer_yuan_value=10_000.0,
         tp_basis="first_buy",
     )
@@ -532,9 +547,9 @@ def test_advance_grid_tp_basis_first_buy_higher_target():
 def test_manual_op_open_creates_cycle():
     """open: in_cycle False → True, entry appended, last_prices extended."""
     import json as _json
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [1.40, 1.38, 1.37]
-    new_state = grid_mod.manual_op(
+    new_state = grid_pos.manual_op(
         state, op="open", today="2026-10-17", price=1.35, shares=1000.0,
     )
     assert new_state["in_cycle"] is True
@@ -552,11 +567,11 @@ def test_manual_op_open_creates_cycle():
 
 def test_manual_op_open_rejects_existing_cycle():
     """open while in_cycle=True → ValueError."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["in_cycle"] = True
     state["entries"] = [{"date": "2026-10-15", "price": 1.40, "shares": 1000.0}]
     try:
-        grid_mod.manual_op(state, op="open", today="2026-10-17",
+        grid_pos.manual_op(state, op="open", today="2026-10-17",
                            price=1.30, shares=500.0)
     except ValueError as e:
         assert "no open cycle" in str(e)
@@ -566,11 +581,11 @@ def test_manual_op_open_rejects_existing_cycle():
 
 def test_manual_op_add_appends_to_cycle():
     """add: in_cycle True → entry appended, last_prices UNCHANGED."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["in_cycle"] = True
     state["entries"] = [{"date": "2026-10-15", "price": 1.40, "shares": 1000.0}]
     state["last_prices"] = [1.40, 1.38, 1.37]
-    new_state = grid_mod.manual_op(
+    new_state = grid_pos.manual_op(
         state, op="add", today="2026-10-17", price=1.30, shares=1000.0,
     )
     assert new_state["in_cycle"] is True
@@ -584,9 +599,9 @@ def test_manual_op_add_appends_to_cycle():
 
 def test_manual_op_add_rejects_no_cycle():
     """add while in_cycle=False → ValueError."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     try:
-        grid_mod.manual_op(state, op="add", today="2026-10-17",
+        grid_pos.manual_op(state, op="add", today="2026-10-17",
                            price=1.30, shares=1000.0)
     except ValueError as e:
         assert "requires an open cycle" in str(e)
@@ -596,14 +611,14 @@ def test_manual_op_add_rejects_no_cycle():
 
 def test_manual_op_tp_sells_cost_only():
     """tp: 只卖出成本金额 → 本金取回, 浮盈归并到再平衡持仓, 已实现盈亏不变。"""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["in_cycle"] = True
     state["entries"] = [
         {"date": "2026-10-15", "price": 1.40, "shares": 1000.0},
         {"date": "2026-10-16", "price": 1.30, "shares": 1000.0},
     ]
     state["cum_realized"] = 50.0
-    new_state = grid_mod.manual_op(
+    new_state = grid_pos.manual_op(
         state, op="tp", today="2026-10-17", price=1.50, shares=0.0,
     )
     # total_invested = 1000*1.40 + 1000*1.30 = 2700 ; total_shares = 2000
@@ -621,13 +636,13 @@ def test_manual_op_tp_below_cost_sells_out_and_books_loss():
     自动止盈的触发价永远高于均价, 所以这条路径只有手动可达。绝不能转出
     负的归并份额。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["in_cycle"] = True
     state["entries"] = [
         {"date": "2026-10-15", "price": 1.40, "shares": 1000.0},
         {"date": "2026-10-16", "price": 1.30, "shares": 1000.0},
     ]
-    new_state = grid_mod.manual_op(
+    new_state = grid_pos.manual_op(
         state, op="tp", today="2026-10-17", price=1.00, shares=0.0,
     )
     # 回本需要 2700/1.00 = 2700 份 > 持仓 2000 份 → 卖光
@@ -639,9 +654,9 @@ def test_manual_op_tp_below_cost_sells_out_and_books_loss():
 
 def test_manual_op_tp_rejects_no_cycle():
     """tp while in_cycle=False → ValueError."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     try:
-        grid_mod.manual_op(state, op="tp", today="2026-10-17",
+        grid_pos.manual_op(state, op="tp", today="2026-10-17",
                            price=1.50, shares=0.0)
     except ValueError as e:
         assert "requires an open cycle" in str(e)
@@ -657,7 +672,7 @@ def test_manual_op_tp_rejects_no_cycle():
 
 def test_fresh_asset_state_has_ops_key():
     """fresh_asset_state() must include an empty `ops` list (not absent)."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     assert "ops" in state, "fresh_asset_state must seed ops=[]"
     assert state["ops"] == []
 
@@ -667,9 +682,9 @@ def test_advance_one_day_never_appends_ops():
 
     ops 是"已成交"的账本, 只有用户提交的操作才算成交。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
-    new_state, signal = grid_mod.advance_one_day(
+    new_state, signal = grid_pos.advance_one_day(
         state, date_str="2026-01-01", price=99.0, layer_yuan_value=10_000.0,
     )
     assert signal == "open", "引擎建议开仓"
@@ -680,13 +695,13 @@ def test_advance_one_day_never_appends_ops():
 
 def test_advance_one_day_suggests_add_without_appending_op():
     """建议加仓 —— 引擎不加仓, 也不写 ops."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
     # 周期是手动建的 (引擎不建)
-    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+    state = grid_pos.manual_op(state, "open", "2026-01-01", price=99.0,
                                shares=10_000.0 / 99.0)
     ops_before = list(state["ops"])
-    state2, sig = grid_mod.advance_one_day(
+    state2, sig = grid_pos.advance_one_day(
         state, "2026-01-02", price=96.0, layer_yuan_value=10_000.0,
     )
     assert sig == "add"
@@ -696,15 +711,15 @@ def test_advance_one_day_suggests_add_without_appending_op():
 
 def test_advance_one_day_suggests_tp_without_exiting():
     """建议回本出场 —— 引擎**不**出场, 也不写 ops, 归并份额不变."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
-    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+    state = grid_pos.manual_op(state, "open", "2026-01-01", price=99.0,
                                shares=10_000.0 / 99.0)
-    state = grid_mod.manual_op(state, "add", "2026-01-02", price=96.0,
+    state = grid_pos.manual_op(state, "add", "2026-01-02", price=96.0,
                                shares=10_000.0 / 96.0)
     ops_before = list(state["ops"])
     target = 99.0 * 1.03  # first_buy basis = first entry * (1 + tp_pct/100)
-    state2, sig = grid_mod.advance_one_day(
+    state2, sig = grid_pos.advance_one_day(
         state, "2026-01-03", price=target + 0.01, layer_yuan_value=10_000.0,
         tp_basis="first_buy",
     )
@@ -719,9 +734,9 @@ def test_advance_one_day_suggests_tp_without_exiting():
 
 def test_advance_one_day_hold_does_not_append_op():
     """No signal (hold) → ops log unchanged."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
-    new_state, signal = grid_mod.advance_one_day(
+    new_state, signal = grid_pos.advance_one_day(
         state, "2026-01-01", price=101.0, layer_yuan_value=10_000.0,
     )
     assert signal is None
@@ -734,7 +749,7 @@ def test_advance_one_day_legacy_state_without_ops_key():
     """老 state (没有 `ops` 键) → 结果里 `ops` 键存在且为空."""
     state = {"in_cycle": False, "entries": [], "last_prices": [100.0],
              "cum_realized": 0.0}   # NO "ops" key
-    new_state, signal = grid_mod.advance_one_day(
+    new_state, signal = grid_pos.advance_one_day(
         state, "2026-01-01", price=99.0, layer_yuan_value=10_000.0,
     )
     assert signal == "open"
@@ -749,17 +764,17 @@ def test_advance_one_day_legacy_state_without_ops_key():
 def test_advance_one_day_never_mutates_position_fields():
     """跑一天只滚动窗口 —— 仓位字段一字不改, 连传入的对象都不能被就地改。
 
-    调用方 (record.py) 拿到的 state 还要继续用, 引擎就地改会污染账本。
+    调用方 (daily_snapshot) 拿到的 state 还要继续用, 引擎就地改会污染账本。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
-    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+    state = grid_pos.manual_op(state, "open", "2026-01-01", price=99.0,
                                shares=10_000.0 / 99.0)
-    state = grid_mod.manual_op(state, "add", "2026-01-02", price=96.0,
+    state = grid_pos.manual_op(state, "add", "2026-01-02", price=96.0,
                                shares=10_000.0 / 96.0)
     before = json.dumps(state, sort_keys=True, ensure_ascii=False)
 
-    new_state, _ = grid_mod.advance_one_day(
+    new_state, _ = grid_pos.advance_one_day(
         state, "2026-01-03", price=97.0, layer_yuan_value=10_000.0,
     )
     assert json.dumps(state, sort_keys=True, ensure_ascii=False) == before, (
@@ -772,9 +787,9 @@ def test_advance_one_day_never_mutates_position_fields():
 
 def test_advance_one_day_rolls_last_prices_and_trims_to_120():
     """窗口每天 +1, 封顶 120 —— 最老的一根被挤掉。"""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [float(i) for i in range(120)]   # 0..119
-    new_state, _ = grid_mod.advance_one_day(
+    new_state, _ = grid_pos.advance_one_day(
         state, "2026-01-01", price=1000.0, layer_yuan_value=10_000.0,
     )
     assert len(new_state["last_prices"]) == 120
@@ -791,9 +806,9 @@ def test_advisory_reports_three_distances():
     距离口径: **正数 = 还没触发, ≤0 = 已越过触发线**。
     """
     # --- 待机: 只算得出「距开仓」 ---
-    st = grid_mod.fresh_asset_state()
+    st = grid_pos.fresh_asset_state()
     st["last_prices"] = [100.0, 99.0]
-    adv = grid_mod.advisory(st, 99.5, 10_000.0)
+    adv = grid_pos.advisory(st, 99.5, 10_000.0)
     assert adv["signal"] is None
     assert adv["trigger_kind"] == "open"
     # advisory 的数字都四舍五入到 2 位 —— 比的时候要对齐口径
@@ -804,7 +819,7 @@ def test_advisory_reports_three_distances():
     assert adv["suggest_amount"] == 0.0, "没建议时没有建议金额"
 
     # 跌破窗口最低 → 建议开仓, 金额 = 单层
-    adv2 = grid_mod.advisory(st, 98.0, 10_000.0)
+    adv2 = grid_pos.advisory(st, 98.0, 10_000.0)
     assert adv2["signal"] == "open"
     assert adv2["dist_open_pct"] < 0, "已越过触发线 = 负数"
     assert adv2["suggest_amount"] == pytest_approx(10_000.0)
@@ -812,11 +827,11 @@ def test_advisory_reports_three_distances():
     assert adv2["suggest_price"] == 98.0
 
     # --- 周期中: 距加仓 + 距回本 ---
-    st2 = grid_mod.manual_op(st, "open", "2026-01-01", price=100.0,
+    st2 = grid_pos.manual_op(st, "open", "2026-01-01", price=100.0,
                               shares=1000.0)
-    st2 = grid_mod.manual_op(st2, "add", "2026-01-02", price=97.0,
+    st2 = grid_pos.manual_op(st2, "add", "2026-01-02", price=97.0,
                               shares=1000.0)
-    adv3 = grid_mod.advisory(st2, 97.0, 10_000.0, tp_basis="first_buy")
+    adv3 = grid_pos.advisory(st2, 97.0, 10_000.0, tp_basis="first_buy")
     assert adv3["signal"] is None
     # 加仓位 = 97 × 0.97 = 94.09 → (94.09 - 97) / 97 = -3%
     assert adv3["dist_add_pct"] == pytest_approx(
@@ -827,13 +842,13 @@ def test_advisory_reports_three_distances():
     assert adv3["trigger_kind"] == "add", "两个都没触发 → 取更近的那个"
 
     # 跌到加仓位以下 → 建议加仓, 金额 = 单层
-    adv4 = grid_mod.advisory(st2, 94.0, 10_000.0, tp_basis="first_buy")
+    adv4 = grid_pos.advisory(st2, 94.0, 10_000.0, tp_basis="first_buy")
     assert adv4["signal"] == "add"
     assert adv4["suggest_amount"] == pytest_approx(10_000.0)
     assert adv4["suggest_shares"] == pytest_approx(round(10_000.0 / 94.0, 2))
 
     # 涨到出场位以上 → 建议回本, 没有建议金额 (tp 不买)
-    adv5 = grid_mod.advisory(st2, 103.5, 10_000.0, tp_basis="first_buy")
+    adv5 = grid_pos.advisory(st2, 103.5, 10_000.0, tp_basis="first_buy")
     assert adv5["signal"] == "tp"
     assert adv5["suggest_amount"] == 0.0
     assert adv5["suggest_shares"] == 0.0
@@ -851,7 +866,7 @@ def test_manual_cycle_open_add_tp_merges_bought_minus_sold():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
     state, _ = mod.inline_manual_op(state, op="open", today="2026-01-01",
                                     price=100.0, shares=1000.0)
@@ -887,16 +902,16 @@ def test_advance_all_grids_returns_suggestions_not_trades():
     4 个资产的 signal 只能是 open/add/tp/None; grid_state 的
     in_cycle / entries / ops 前后完全一致。
     """
-    names = list(record.ASSET_NAMES)
+    names = list(universe.ASSET_NAMES)
     state = {}
     for name in names:
-        s = grid_mod.fresh_asset_state()
+        s = grid_pos.fresh_asset_state()
         s["last_prices"] = [100.0]
         state[name] = s
     before = json.dumps(state, sort_keys=True, ensure_ascii=False)
 
     prices = {name: 99.0 for name in names}
-    new_state, signals = record.advance_all_grids(
+    new_state, signals = snapshot.advance_all_grids(
         state, "2026-01-01", prices, pool_value=100_000.0, recent_min=100_000.0)
     assert len(signals) == 4
     for s in signals:
@@ -917,9 +932,9 @@ def test_advance_all_grids_returns_suggestions_not_trades():
 
 def test_manual_op_open_appends_to_ops_with_source_manual():
     """manual open → ops log gets an entry with source=manual, note=empty."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [1.40, 1.38, 1.37]
-    new_state = grid_mod.manual_op(
+    new_state = grid_pos.manual_op(
         state, op="open", today="2026-10-17", price=1.35, shares=1000.0,
     )
     assert len(new_state["ops"]) == 1
@@ -937,10 +952,10 @@ def test_manual_op_open_appends_to_ops_with_source_manual():
 
 def test_manual_op_add_appends_to_ops_with_source_manual():
     """manual add → ops log gets an entry with op='add', source='manual'."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["in_cycle"] = True
     state["entries"] = [{"date": "2026-10-15", "price": 1.40, "shares": 1000.0}]
-    new_state = grid_mod.manual_op(
+    new_state = grid_pos.manual_op(
         state, op="add", today="2026-10-17", price=1.30, shares=1000.0,
     )
     assert len(new_state["ops"]) == 1
@@ -953,14 +968,14 @@ def test_manual_op_add_appends_to_ops_with_source_manual():
 
 def test_manual_op_tp_appends_tp_op_recording_the_cost_split():
     """manual tp → ops log records what was sold vs. what became free."""
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["in_cycle"] = True
     state["entries"] = [
         {"date": "2026-10-15", "price": 1.40, "shares": 1000.0},
         {"date": "2026-10-16", "price": 1.30, "shares": 1000.0},
     ]
     state["cum_realized"] = 50.0
-    new_state = grid_mod.manual_op(
+    new_state = grid_pos.manual_op(
         state, op="tp", today="2026-10-17", price=1.50, shares=0.0,
     )
     assert new_state["in_cycle"] is False
@@ -985,17 +1000,17 @@ def test_ops_log_persists_through_tp_cycle_then_reopens():
     走**手动路径** (manual_op) —— 引擎不再写 ops, 所以只有用户提交
     的操作才进这个账本。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
     # Cycle 1: open @ 99, tp @ 103 (first_buy basis)
-    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+    state = grid_pos.manual_op(state, "open", "2026-01-01", price=99.0,
                                shares=10_000.0 / 99.0)
-    state = grid_mod.manual_op(state, "tp", "2026-01-02",
+    state = grid_pos.manual_op(state, "tp", "2026-01-02",
                                price=99.0 * 1.03 + 0.01, shares=0.0)
     assert len(state["ops"]) == 2   # open + tp, both retained
     assert state["in_cycle"] is False
     # Cycle 2: 下一次开仓
-    state = grid_mod.manual_op(state, "open", "2026-02-01", price=199.0,
+    state = grid_pos.manual_op(state, "open", "2026-02-01", price=199.0,
                                shares=10_000.0 / 199.0)
     assert len(state["ops"]) == 3   # cycle-1 ops preserved + new open
     assert [op["date"] for op in state["ops"]] == [
@@ -1136,7 +1151,7 @@ def _make_record_with_qdii(premium_pct: float) -> dict:
 
 
 def test_notify_qdii_high_premium_warns():
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_qdii(premium_pct=13.25)
     text = notify.build_text(r)
     subject = notify.build_subject(r)
@@ -1154,7 +1169,7 @@ def test_notify_qdii_high_premium_warns():
 
 
 def test_notify_qdii_low_premium_advises_buildable():
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_qdii(premium_pct=2.5)
     subject = notify.build_subject(r)
     text = notify.build_text(r)
@@ -1170,7 +1185,7 @@ def test_notify_qdii_low_premium_advises_buildable():
 
 
 def test_notify_qdii_discount_opportunity():
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_qdii(premium_pct=-1.2)
     html = notify.build_html(r, pages_url="https://x/")
     text = notify.build_text(r)
@@ -1181,10 +1196,10 @@ def test_notify_qdii_discount_opportunity():
 
 def test_qdii_codes_contain_only_true_qdii():
     """ETF_DEFS qdii flag must be True only for genuinely QDII (overseas) ETFs."""
-    from src import record
-    assert record.QDII_CODES == {"513300"}, f"QDII_CODES={record.QDII_CODES}"
+    from src.domain.portfolio import asset_universe as universe
+    assert universe.QDII_CODES == {"513300"}, f"QDII_CODES={universe.QDII_CODES}"
     # 4-tuple shape
-    for code, v in record.ETF_DEFS.items():
+    for code, v in universe.ETF_DEFS.items():
         assert len(v) == 4, f"ETF_DEFS[{code}] not 4-tuple: {v}"
 
 
@@ -1192,7 +1207,7 @@ def test_notify_qdii_unheld_still_alerts():
     """A QDII tracked but NOT in the user's portfolio must still appear in the
     QDII block (with an "未持仓" tag) so the user knows the premium is too
     high to buy.  Subject still gets the QDII warning tag."""
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_qdii(premium_pct=13.25)
     # Remove 513300 from positions, move it to top-level qdii_premiums
     r["positions"] = [p for p in r["positions"] if p["code"] != "513300"]
@@ -1220,7 +1235,7 @@ def test_notify_qdii_unheld_still_alerts():
 
 def test_notify_qdii_unheld_low_premium_advises_buildable():
     """Tracked but unheld QDII with low premium should advise 建仓."""
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_qdii(premium_pct=2.0)
     r["positions"] = [p for p in r["positions"] if p["code"] != "513300"]
     r["weights"] = [r["weights"][1]]
@@ -1274,7 +1289,7 @@ def test_notify_grid_tp_signal_is_recovery_not_take_profit():
 
     叫它止盈会让人以为收益已经兑现了 —— 而新规则下收益全在归并份额里。
     """
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_grid()
     text = notify.build_text(r)
     html = notify.build_html(r, pages_url="https://x/")
@@ -1295,7 +1310,7 @@ def test_notify_grid_shows_capital_column_and_merged_note():
     资金占用 = 网格在周期内的层 (出场后本金回来, 占用回落);
     归并份额的市值记在组合那一栏 —— 不显示等于收益凭空消失。
     """
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_grid()
     text = notify.build_text(r)
     html = notify.build_html(r, pages_url="https://x/")
@@ -1314,7 +1329,7 @@ def test_notify_grid_return_pct_is_dash_when_out_of_cycle():
 
     "+0.00%" 会被读成"没赚没亏", 但资产可能刚把一批份额归并给了组合。
     """
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_grid()
     text = notify.build_text(r)
     # 纳斯达克 (在周期内) 仍有浮盈; 黄金 (不在周期内) 显示 —.
@@ -1333,7 +1348,7 @@ def test_notify_renders_new_signal_vocabulary():
     引擎不再自动交易 —— 邮件必须把「建议」和「已成交」区分开, 否则用户会
     以为 ���已经按建议下单了。
     """
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_qdii(premium_pct=2.0)
     base = {"layer_yuan": 10000.0, "in_cycle": True, "num_buys": 1,
             "avg_cost": 2.0, "current_value": 10000.0, "unrealized_pnl": 0.0,
@@ -1368,7 +1383,7 @@ def test_notify_legacy_signal_vocabulary_still_renders():
     旧记录只用于画曲线, 但 notify 仍可能被历史数据喂到 —— 兜底映射
     ("买入(旧)" / "回本(旧)") 必须存在。
     """
-    from src import notify
+    from src.presentation import digest as notify
     r = _make_record_with_qdii(premium_pct=2.0)
     base = {"layer_yuan": 10000.0, "in_cycle": True, "num_buys": 1,
             "avg_cost": 2.0, "current_value": 10000.0, "unrealized_pnl": 0.0,
@@ -1571,8 +1586,8 @@ def test_load_trades_missing_returns_empty():
     """Missing trades.json → [] (not an error)."""
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "trades.json"
-        record.TRADES = path
-        assert record.load_trades() == []
+        repos.TRADES = path
+        assert repos.load_trades() == []
 
 
 def test_load_trades_unreadable_returns_empty():
@@ -1580,13 +1595,13 @@ def test_load_trades_unreadable_returns_empty():
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "trades.json"
         path.write_text("not-json{", encoding="utf-8")
-        record.TRADES = path
-        assert record.load_trades() == []
+        repos.TRADES = path
+        assert repos.load_trades() == []
 
 
 def test_apply_trade_buy_increments_shares_decrements_cash():
     state = {"cash_rebalance": 10000.0, "cash_grid": 0.0, "positions": {}}
-    record.apply_trade(state, {
+    ledger.apply_trade(state, {
         "side": "buy", "code": "515180", "shares": 1000, "price": 1.40, "fee": 0.0,
     })
     assert state["cash_rebalance"] == round(10000 - 1000 * 1.40, 2) == 8600.0
@@ -1597,7 +1612,7 @@ def test_apply_trade_sell_rejects_oversell_raises():
     state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {"515180": 100.0}}
     raised = False
     try:
-        record.apply_trade(state, {
+        ledger.apply_trade(state, {
             "side": "sell", "code": "515180", "shares": 200, "price": 1.50,
         })
     except ValueError as ex:
@@ -1609,7 +1624,7 @@ def test_apply_trade_sell_rejects_oversell_raises():
 def test_rebuild_holdings_from_trades_deposit_only_yields_initial_state():
     """One deposit_rebalance → cash_rebalance = amount, positions empty."""
     trades = [{"side": "deposit_rebalance", "date": "2026-10-12", "amount": 175900.60}]
-    positions, cash_rebalance, cash_grid = record.rebuild_holdings_from_trades(
+    positions, cash_rebalance, cash_grid = ledger.rebuild_holdings_from_trades(
         trades, as_of_date="2026-10-12",
     )
     assert cash_rebalance == 175900.60
@@ -1631,7 +1646,7 @@ def test_rebuild_holdings_from_trades_chains_buy_sell_deposit_withdraw():
          "shares": 200, "price": 12.0, "fee": 0.0},
         {"side": "withdraw_rebalance","date": "2026-10-15", "amount": 500.0},
     ]
-    positions, cash_rebalance, cash_grid = record.rebuild_holdings_from_trades(
+    positions, cash_rebalance, cash_grid = ledger.rebuild_holdings_from_trades(
         trades, as_of_date="2026-10-15",
     )
     assert cash_rebalance == round(10000 - 10000 + 2400 - 500, 2) == 1900.0
@@ -1647,7 +1662,7 @@ def test_rebuild_holdings_from_trades_as_of_date_inclusive():
         {"side": "deposit_rebalance", "date": "2026-10-12", "amount": 1000.0},
         {"side": "deposit_rebalance", "date": "2026-10-15", "amount": 500.0},
     ]
-    _, cash_rebalance, _ = record.rebuild_holdings_from_trades(
+    _, cash_rebalance, _ = ledger.rebuild_holdings_from_trades(
         trades, as_of_date="2026-10-13",
     )
     assert cash_rebalance == 1000.0   # second deposit is after 10-13, skipped
@@ -1661,7 +1676,7 @@ def test_rebuild_holdings_from_trades_as_of_date_inclusive():
 
 def test_apply_trade_deposit_rebalance_credits_rebalance_only():
     state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
-    record.apply_trade(state, {
+    ledger.apply_trade(state, {
         "side": "deposit_rebalance", "amount": 5000.0,
     })
     assert state["cash_rebalance"] == 5000.0
@@ -1670,7 +1685,7 @@ def test_apply_trade_deposit_rebalance_credits_rebalance_only():
 
 def test_apply_trade_deposit_grid_credits_grid_only():
     state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
-    record.apply_trade(state, {
+    ledger.apply_trade(state, {
         "side": "deposit_grid", "amount": 8000.0,
     })
     assert state["cash_rebalance"] == 0.0
@@ -1681,7 +1696,7 @@ def test_apply_trade_withdraw_grid_rejects_insufficient():
     state = {"cash_rebalance": 0.0, "cash_grid": 100.0, "positions": {}}
     raised = False
     try:
-        record.apply_trade(state, {
+        ledger.apply_trade(state, {
             "side": "withdraw_grid", "amount": 200.0,
         })
     except ValueError as ex:
@@ -1694,7 +1709,7 @@ def test_apply_trade_withdraw_grid_rejects_insufficient():
 
 def test_apply_trade_transfer_to_grid_deducts_rebalance_adds_grid():
     state = {"cash_rebalance": 5000.0, "cash_grid": 1000.0, "positions": {}}
-    record.apply_trade(state, {
+    ledger.apply_trade(state, {
         "side": "transfer_to_grid", "amount": 2000.0,
     })
     assert state["cash_rebalance"] == 3000.0
@@ -1707,7 +1722,7 @@ def test_apply_trade_transfer_to_grid_rejects_insufficient_rebalance():
     state = {"cash_rebalance": 100.0, "cash_grid": 5000.0, "positions": {}}
     raised = False
     try:
-        record.apply_trade(state, {
+        ledger.apply_trade(state, {
             "side": "transfer_to_grid", "amount": 1000.0,
         })
     except ValueError as ex:
@@ -1721,7 +1736,7 @@ def test_apply_trade_transfer_to_grid_rejects_insufficient_rebalance():
 
 def test_apply_trade_transfer_to_rebalance_deducts_grid_adds_rebalance():
     state = {"cash_rebalance": 0.0, "cash_grid": 5000.0, "positions": {}}
-    record.apply_trade(state, {
+    ledger.apply_trade(state, {
         "side": "transfer_to_rebalance", "amount": 1500.0,
     })
     assert state["cash_rebalance"] == 1500.0
@@ -1735,10 +1750,10 @@ def test_apply_trade_transfer_sides_dont_change_positions():
         "positions": {"515180": 5000.0},
     }
     positions_before = dict(state["positions"])
-    record.apply_trade(state, {
+    ledger.apply_trade(state, {
         "side": "transfer_to_grid", "amount": 500.0,
     })
-    record.apply_trade(state, {
+    ledger.apply_trade(state, {
         "side": "transfer_to_rebalance", "amount": 200.0,
     })
     assert state["positions"] == positions_before
@@ -1754,7 +1769,7 @@ def test_rebuild_holdings_from_trades_six_new_cash_sides():
         {"side": "transfer_to_rebalance", "date": "2026-10-16", "amount": 400.0},
         {"side": "withdraw_rebalance",    "date": "2026-10-17", "amount": 100.0},
     ]
-    positions, cash_rebalance, cash_grid = record.rebuild_holdings_from_trades(
+    positions, cash_rebalance, cash_grid = ledger.rebuild_holdings_from_trades(
         trades, as_of_date="2026-10-17",
     )
     # rebalance: +10000 -2000(transfer out) +400(transfer in) -100(withdraw) = 8300
@@ -2065,7 +2080,7 @@ def _fake_cycle(dates, prices, exit_date, exit_price, pnl=None,
 def test_ops_from_cycles_maps_closed_cycle_to_open_add_tp():
     c = _fake_cycle(["2024-01-10", "2024-01-20"], [10.0, 9.5],
                     "2024-02-05", 10.6)
-    ops = grid_mod.ops_from_cycles([c])
+    ops = grid_sim.ops_from_cycles([c])
     assert len(ops) == 3, f"expected 3 ops, got {len(ops)}"
     # entries[0] -> open, entries[1] -> add, exit -> tp
     assert [o["op"] for o in ops] == ["open", "add", "tp"]
@@ -2095,7 +2110,7 @@ def test_ops_from_cycles_tp_reports_zero_cost_transfer():
     """
     c = _fake_cycle(["2024-01-10", "2024-01-20"], [10.0, 9.5],
                     "2024-02-05", 10.6, to_merge=250.0)
-    ops = grid_mod.ops_from_cycles([c])
+    ops = grid_sim.ops_from_cycles([c])
     tp = [o for o in ops if o["op"] == "tp"][0]
     assert tp["shares"] == pytest_approx(1750.0), "卖出的是回本所需那部分"
     assert tp["shares_to_merge"] == pytest_approx(250.0)
@@ -2107,14 +2122,14 @@ def test_ops_from_cycles_open_cycle_has_no_tp():
     open_cycle = [{"date": pd.Timestamp("2026-09-04"), "price": 13.446, "shares": 743.72},
                   {"date": pd.Timestamp("2026-09-28"), "price": 13.038, "shares": 766.99},
                   {"date": pd.Timestamp("2026-10-14"), "price": 12.634, "shares": 791.51}]
-    ops = grid_mod.ops_from_cycles([], open_cycle)
+    ops = grid_sim.ops_from_cycles([], open_cycle)
     assert len(ops) == 3
     assert [o["op"] for o in ops] == ["open", "add", "add"]
     assert not any(o["op"] == "tp" for o in ops)
     assert ops[2]["note"] == "回测·金字塔第3层"
     # no open cycle at all -> no ops, not a crash
-    assert grid_mod.ops_from_cycles([], None) == []
-    assert grid_mod.ops_from_cycles([], []) == []
+    assert grid_sim.ops_from_cycles([], None) == []
+    assert grid_sim.ops_from_cycles([], []) == []
 
 
 def test_ops_from_cycles_orders_add_before_tp_on_same_date():
@@ -2123,7 +2138,7 @@ def test_ops_from_cycles_orders_add_before_tp_on_same_date():
     be explicit, not incidental to dict/append order."""
     c = _fake_cycle(["2024-01-10", "2024-02-05"], [10.0, 9.5],
                     "2024-02-05", 10.6)
-    ops = grid_mod.ops_from_cycles([c])
+    ops = grid_sim.ops_from_cycles([c])
     same_day = [o for o in ops if o["date"] == "2024-02-05"]
     assert len(same_day) == 2, "fixture should put an add and a tp on one date"
     assert [o["op"] for o in same_day] == ["add", "tp"]
@@ -2138,15 +2153,15 @@ def test_merge_backtest_ops_is_idempotent_and_preserves_live_ops():
     state = {"A": {"in_cycle": False, "entries": [], "cum_realized": 0.0,
                    "last_prices": [1.0, 2.0], "ops": [auto, manual]}}
 
-    gen = grid_mod.ops_from_cycles(
+    gen = grid_sim.ops_from_cycles(
         [_fake_cycle(["2024-01-10"], [10.0], "2024-02-05", 10.6)])
 
-    preserved = grid_mod.merge_backtest_ops(state, "A", gen)
+    preserved = grid_sim.merge_backtest_ops(state, "A", gen)
     assert preserved == 2, "both live ops should survive"
     first = list(state["A"]["ops"])
 
     # Second run over the same state, same generated ops.
-    preserved = grid_mod.merge_backtest_ops(state, "A", gen)
+    preserved = grid_sim.merge_backtest_ops(state, "A", gen)
     assert preserved == 2
     assert state["A"]["ops"] == first, "re-running must be a no-op"
     assert len(state["A"]["ops"]) == 4       # 2 live + 2 backtest (open + tp)
@@ -2154,14 +2169,14 @@ def test_merge_backtest_ops_is_idempotent_and_preserves_live_ops():
     assert state["A"]["in_cycle"] is False
     assert state["A"]["last_prices"] == [1.0, 2.0]
     # unknown asset is a safe no-op
-    assert grid_mod.merge_backtest_ops(state, "NOPE", gen) == 0
+    assert grid_sim.merge_backtest_ops(state, "NOPE", gen) == 0
 
 
 def test_ops_from_cycles_reconciles_invested_yuan():
     """Every backtest layer costs exactly GRID_BASE_YUAN, so the sum of
     entry shares × price must equal layers × base. This is the assertion
     scripts/backfill_grid_ops.py prints as 对账."""
-    base = grid_mod.GRID_BASE_YUAN
+    base = grid_pos.GRID_BASE_YUAN
     cycles = [
         _fake_cycle(["2021-03-01", "2021-03-15"], [10.0, 9.7],
                     "2021-04-01", 10.3, pos_yuan=base),
@@ -2170,7 +2185,7 @@ def test_ops_from_cycles_reconciles_invested_yuan():
     ]
     open_cycle = [{"date": pd.Timestamp("2026-09-04"), "price": 13.446,
                    "shares": base / 13.446}]
-    ops = grid_mod.ops_from_cycles(cycles, open_cycle)
+    ops = grid_sim.ops_from_cycles(cycles, open_cycle)
 
     layers = [o for o in ops if o["op"] in ("open", "add")]
     assert len(layers) == 4
@@ -2207,7 +2222,7 @@ def test_build_record_strips_ops_from_grid_state_snapshot():
         "黄金ETF博时": {"in_cycle": False, "entries": [], "last_prices": [8.0],
                         "cum_realized": 0.0, "ops": []},
     }
-    rec = record.build_record(
+    rec = snapshot.build_record(
         today="2026-10-21", positions=[], cash_rebalance=0.0, cash_grid=0.0,
         total=0.0, weights=[], triggered_3pp=False, plan=[],
         grid_signals=[], grid_state=grid_state)
@@ -2231,7 +2246,7 @@ def test_advance_one_day_preserves_backtest_ops():
 
     advance_one_day rebuilds the asset state as a fixed 6-key literal, so
     anything riding in a 7th key would be silently dropped the first time
-    record.py runs. `ops` is the one array it copies forward verbatim —
+    the daily run. `ops` is the one array it copies forward verbatim —
     this test is the guard on that. The engine no longer writes ops, so
     the backfill must survive **byte-identical and un-augmented**.
     """
@@ -2246,9 +2261,9 @@ def test_advance_one_day_preserves_backtest_ops():
              "merged_shares": 321.5}   # 已归并份额, 必须跨天保留
 
     # A price far below the window min → 引擎**建议**开仓 (但不执行).
-    after, signal = grid_mod.advance_one_day(
+    after, signal = grid_pos.advance_one_day(
         state, date_str="2026-10-21", price=12.0,
-        layer_yuan_value=grid_mod.GRID_BASE_YUAN)
+        layer_yuan_value=grid_pos.GRID_BASE_YUAN)
 
     assert signal == "open", "fixture should trigger an open suggestion"
     assert after["in_cycle"] is False, "引擎不自动开仓"
@@ -2275,12 +2290,12 @@ def test_merged_shares_survive_subsequent_daily_runs():
     引擎**不再改变**归并份额 —— 它只会建议。归并份额只能由**手动** tp 产生,
     之后跨天原样存活。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
     # 周期 1: 手动开仓 @99, 手动止盈 @101.97 (first_buy * 1.03)
-    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+    state = grid_pos.manual_op(state, "open", "2026-01-01", price=99.0,
                                shares=10_000.0 / 99.0)
-    state = grid_mod.manual_op(state, "tp", "2026-01-02", price=101.98,
+    state = grid_pos.manual_op(state, "tp", "2026-01-02", price=101.98,
                                shares=0.0)
     merged_after_tp = state["merged_shares"]
     assert merged_after_tp > 0
@@ -2288,7 +2303,7 @@ def test_merged_shares_survive_subsequent_daily_runs():
     # 之后连续多天跑引擎 —— merged_shares 只能不变 (引擎不产生也不消耗它)
     seen = [merged_after_tp]
     for i, p in enumerate([101.0, 100.0, 98.0, 97.5, 100.98, 99.5]):
-        state, _ = grid_mod.advance_one_day(
+        state, _ = grid_pos.advance_one_day(
             state, f"2026-01-{3 + i:02d}", price=p,
             layer_yuan_value=10_000.0)
         seen.append(state["merged_shares"])
@@ -2296,17 +2311,17 @@ def test_merged_shares_survive_subsequent_daily_runs():
         assert cur == prev, f"引擎改变了 merged_shares: {seen}"
 
     # 再手动开一个新周期 + 再手动止盈 → 份额应当增加
-    state = grid_mod.manual_op(state, "open", "2026-02-01", price=97.0,
+    state = grid_pos.manual_op(state, "open", "2026-02-01", price=97.0,
                                shares=10_000.0 / 97.0)
-    state = grid_mod.manual_op(state, "tp", "2026-02-02", price=100.0,
+    state = grid_pos.manual_op(state, "tp", "2026-02-02", price=100.0,
                                shares=0.0)
     assert state["merged_shares"] > merged_after_tp
 
 
 # ---------------------------------------------------------------------------
-# src.record — 网格归并份额并入再平衡组合
+# src/domain/portfolio — 网格归并份额并入再平衡组合
 #
-# 规则 (src/grid.py:split_take_profit): 出场只卖出"回本所需"那部分, 余量
+# 规则 (src/domain/grid/grid_position.py:split_take_profit): 出场只卖出"回本所需"那部分, 余量
 # 归并到再平衡的持仓。归并份额从这一刻起是**组合**的资产: 必须计入市值、
 # 权重和总市值, 否则组合的真实敞口被低估。
 #
@@ -2321,7 +2336,7 @@ def test_merged_shares_by_code_maps_asset_names_to_codes():
         "红利ETF易方达": {"merged_shares": 250.0},
         "不认识的名字": {"merged_shares": 999.0},
     }
-    out = record.merged_shares_by_code(state)
+    out = portfolio.merged_shares_by_code(state)
     assert out == {"159937": 1125.0, "515180": 250.0}, (
         f"unexpected mapping: {out}")
     # 0 份额的资产不该出现 (否则会造出一个空仓位的行)
@@ -2334,7 +2349,7 @@ def test_merge_grid_shares_into_positions_folds_into_value():
         {"name": "黄金ETF博时", "code": "159937", "shares": 5200.0,
          "price": 8.18, "value": 42536.0},
     ]
-    out = record.merge_grid_shares_into_positions(
+    out = portfolio.merge_grid_shares_into_positions(
         positions, {"159937": 1000.0})
     assert len(out) == 1
     p = out[0]
@@ -2357,13 +2372,13 @@ def test_merged_shares_change_rebalance_weights():
         {"name": "B", "code": "159937", "shares": 1000.0, "price": 10.0,
          "value": 10000.0},
     ]
-    before_total, before_w, _, _ = record.evaluate(positions, 0.0, 0.0)
+    before_total, before_w, _, _ = policy.evaluate(positions, 0.0, 0.0)
     assert before_w[0] == pytest_approx(0.5)
     assert before_w[1] == pytest_approx(0.5)
 
-    merged = record.merge_grid_shares_into_positions(
+    merged = portfolio.merge_grid_shares_into_positions(
         positions, {"159937": 500.0})
-    after_total, after_w, _, _ = record.evaluate(merged, 0.0, 0.0)
+    after_total, after_w, _, _ = policy.evaluate(merged, 0.0, 0.0)
     assert after_total == pytest_approx(25000.0), "A 10,000 + B 15,000"
     assert after_w[0] == pytest_approx(10000.0 / 25000.0)
     assert after_w[1] == pytest_approx(15000.0 / 25000.0)
@@ -2376,7 +2391,7 @@ def test_merged_only_code_becomes_its_own_position_row():
         {"name": "红利ETF易方达", "code": "515180", "shares": 1000.0,
          "price": 10.0},
     ]
-    out = record.merge_grid_shares_into_positions(
+    out = portfolio.merge_grid_shares_into_positions(
         positions, {"513300": 500.0}, {"513300": 2.5})
     assert len(out) == 2
     row = [p for p in out if p["code"] == "513300"][0]
@@ -2386,7 +2401,7 @@ def test_merged_only_code_becomes_its_own_position_row():
     assert row["value"] == pytest_approx(1250.0)
     assert row.get("merged_only") is True
     # 定价失败的代码不能凭空造出一行 0 市值的持仓
-    out2 = record.merge_grid_shares_into_positions(
+    out2 = portfolio.merge_grid_shares_into_positions(
         positions, {"513300": 500.0}, {})
     assert len(out2) == 1
 
@@ -2396,13 +2411,13 @@ def test_grid_capital_drops_to_zero_after_exit_while_merged_survives():
 
     走**手动路径** —— 引擎不再出场。
     """
-    state = grid_mod.fresh_asset_state()
+    state = grid_pos.fresh_asset_state()
     state["last_prices"] = [100.0]
-    state = grid_mod.manual_op(state, "open", "2026-01-01", price=99.0,
+    state = grid_pos.manual_op(state, "open", "2026-01-01", price=99.0,
                                shares=10_000.0 / 99.0)
-    state = grid_mod.manual_op(state, "tp", "2026-01-02",
+    state = grid_pos.manual_op(state, "tp", "2026-01-02",
                                price=99.0 * 1.04, shares=0.0)
-    snap = grid_mod.asset_snapshot(state, current_price=103.0)
+    snap = grid_pos.asset_snapshot(state, current_price=103.0)
     assert snap["in_cycle"] is False
     assert snap["current_value"] == 0.0, "出场后网格不再占用资金"
     assert snap["merged_shares"] > 0.0, "余量归并给组合"
@@ -2420,7 +2435,7 @@ def test_merged_shares_never_leak_into_the_real_trade_ledger():
         {"name": "红利ETF易方达", "code": "515180", "shares": 1000.0,
          "price": 10.0},
     ]
-    merged = record.merge_grid_shares_into_positions(positions, {"515180": 500.0})
+    merged = portfolio.merge_grid_shares_into_positions(positions, {"515180": 500.0})
     # 归并后的持仓仍然是"一笔真实持仓 + 模拟的余量", 不是新的成交
     assert merged[0]["shares"] == 1000.0
     after = trades_path.read_text(encoding="utf-8") if trades_path.exists() else None
@@ -2436,7 +2451,7 @@ def _nf_fixture(files: dict, env: dict):
 
 
 # ---------------------------------------------------------------------------
-# src.notify_failure — 失败邮件必须上报真实步骤状态
+# src/presentation/notify_failure — 失败邮件必须上报真实步骤状态
 #
 # 背景 (2026-10-23 事故): 旧版邮件无论何种失败都写死 "失败原因: record
 # 步骤未成功完成" + 三条静态 "常见原因"。而当天实际是 apt 装字体被取消,

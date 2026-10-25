@@ -48,15 +48,15 @@ jobs:
 
       - name: Record today's snapshot
         id: record
-        # record.py 同时跑 3pp + 网格, 并在末尾调用 chart.render_chart
+        # daily_snapshot 同时跑 3pp + 网格, 并在末尾调用 chart_renderer.render_chart
         #
-        # 同样包装以便失败时上报真实 stderr。注意 record.py 通过
+        # 同样包装以便失败时上报真实 stderr。注意 daily_snapshot 通过
         # write_github_output() 追加 date/total/trigger 到 $GITHUB_OUTPUT,
         # 该文件经环境变量继承, 重定向 stdout 不影响它 —— 末尾的 Commit
         # 步骤仍能读到 steps.record.outputs.date。
         run: |
           set +e
-          python -m src.record > record_stdout.log 2> record_stderr.log
+          python -m src.application.daily_snapshot > record_stdout.log 2> record_stderr.log
           rc=$?
           tail -c 3000 record_stderr.log > record_stderr.tail.log || true
           cat record_stdout.log
@@ -65,12 +65,12 @@ jobs:
           exit $rc
 
       - name: Render chart (idempotent recovery)
-        # record.py 的 chart 渲染是 best-effort 静默失败; 在 runner 上
+        # daily_snapshot 的 chart 渲染是 best-effort 静默失败; 在 runner 上
         # akshare 网络不稳可能导致 PNG 没生成。单独再跑一次保证有图。
-        # 本地 `python -m src.record` 已自带渲染, 这次只是幂等冗余。
+        # 本地 `python -m src.application.daily_snapshot` 已自带渲染, 这次只是幂等冗余。
         id: chart
         continue-on-error: true
-        run: python -m src.chart
+        run: python -m src.infrastructure.chart_renderer
 
       - name: Verify data files
         # 调试: commit 之前看一眼 data/ 真实状态 (history / grid_state / chart 是否都在)
@@ -95,10 +95,10 @@ jobs:
           RECORD_RC:      ${{ steps.record.outputs.rc }}
         run: |
           if [ "${{ steps.record.outcome }}" = "success" ]; then
-            python -m src.notify
+            python -m src.presentation.digest
           else
             echo "::warning::record step did not succeed (outcome=${{ steps.record.outcome }}); sending failure notice"
-            python -m src.notify_failure
+            python -m src.presentation.notify_failure
           fi
 
       - name: Commit data files

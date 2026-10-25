@@ -31,10 +31,9 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from src import grid as grid_mod
-from src import three_pp
-from src.fetch import fetch_one
-
+from src.simulation import grid_simulator as grid_mod
+from src.simulation import equal_weight_backtest as three_pp
+from src.infrastructure.quote_providers import fetch_one
 # 3 资产 (跟 v3 一致)
 START = "2020-01-01"
 END = pd.Timestamp.today().strftime("%Y-%m-%d")

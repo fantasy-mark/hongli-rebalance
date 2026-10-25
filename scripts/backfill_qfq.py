@@ -26,8 +26,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from src.fetch import fetch_kline_history  # noqa: E402
-
+from src.infrastructure.quote_providers import fetch_kline_history  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("backfill_qfq")
 

@@ -26,13 +26,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.fetch import fetch_one          # noqa: E402
-
+from src.infrastructure.quote_providers import fetch_one          # noqa: E402
 HOLDINGS = ROOT / "data" / "holdings.json"
 TRADES   = ROOT / "data" / "trades.json"
 
-# Mirror src/record.py:ETF_DEFS for the close-fetch call. We don't import
-# src/record.py because we want this bootstrap to work even if a future
+# Mirror src/domain/portfolio/asset_universe.py:ETF_DEFS for the close-fetch call. We don't import
+# the domain layer because we want this bootstrap to work even if a future
 # refactor breaks that import surface.
 ETF_DEFS = {
     "515180": "sh515180",

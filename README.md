@@ -25,12 +25,25 @@ GitHub Pages 实时展示曲线和策略全景图。
 hongli-rebalance/
 ├── .github/workflows/daily.yml   # 由 repository_dispatch 触发 (外部 cron 驱动)
 ├── src/
-│   ├── fetch.py                  # akshare Sina 价格拉取 (含腾讯 K 线 fallback)
-│   ├── grid.py                   # 复合网格引擎 (120 日新低 + 3% 金字塔 + 3% TP, 全虚拟, **只给建议, 不自动下单**)
-│   ├── three_pp.py               # 3pp 再平衡回测引擎
-│   ├── record.py                 # 读 trades.json + 双策略 record + 持久化 (双池 cash_rebalance/cash_grid)
-│   ├── chart.py                  # matplotlib 渲染 grid_chart.png
-│   └── notify.py                 # SMTP 邮件摘要 (双策略段, 显示 3 个 cash 字段)
+│   ├── domain/                   # 纯领域层 (零 I/O / 零 pandas / 零 akshare)
+│   │   ├── ledger/               # 账本 (BC-A): 8 种 side, 现金池不变量
+│   │   ├── portfolio/            # 组合 (BC-B): 3pp 评估 / 归并份额 / 来源标注
+│   │   ├── grid/                 # 复合网格 (BC-C): 120 日新低 + 3% 金字塔 + 3% TP
+│   │   │                         #   **全虚拟, 只给建议, 不自动下单**
+│   │   ├── shared/               # 跨上下文共享的值对象
+│   │   └── events/               # 领域事件
+│   ├── application/              # 用例编排 (薄)
+│   │   └── daily_snapshot.py     # 每日快照: 读账本 → 定价 → 3pp → 推进网格 → 落盘
+│   ├── infrastructure/           # 适配器
+│   │   ├── json_repositories.py  # 4 个 JSON 文件的读写 (原子写)
+│   │   ├── quote_providers.py    # akshare Sina 价格拉取 (含腾讯 K 线 fallback)
+│   │   └── chart_renderer.py     # matplotlib 渲染 grid_chart.png
+│   ├── simulation/               # 回测 (独立上下文, 不写真实仓储)
+│   │   ├── grid_simulator.py     # 复合网格回放
+│   │   └── equal_weight_backtest.py  # 3pp 再平衡回测引擎
+│   └── presentation/             # 呈现
+│       ├── digest.py             # SMTP 邮件摘要 (双策略段, 显示 3 个 cash 字段)
+│       └── notify_failure.py     # 失败通知
 ├── data/
 │   ├── trades.json               # ← 用户维护 (真实成交账本, 唯一真相, 8 种 side)
 │   ├── holdings.json             # ← 由 trades.json 重建 (v2 schema, 双池派生缓存)
@@ -38,7 +51,7 @@ hongli-rebalance/
 │   ├── grid_state.json           # ← Action 自动维护 (网格 per-asset 虚拟状态)
 │   └── grid_chart.png            # ← Action 自动渲染 (策略全景图, 嵌入 Pages)
 ├── index.html / app.js / style.css  # GitHub Pages (Pages Source: / (root))
-├── tests/test_record.py          # 纯函数单测 (record + grid + 3pp)
+├── tests/test_record.py          # 纯函数单测 (domain + application + simulation)
 ├── docs/
 │   ├── domain_model.md           # DDD 领域模型分析 (限界上下文 / 聚合 / 不变量 / 重构路线)
 │   └── correlation_analysis.md   # 4 资产选择的相关性决策依据
@@ -55,17 +68,17 @@ hongli-rebalance/
 ```
 console.cron-job.org (北京 9:00) → POST repository_dispatch
   ↓
-record.py: fetch 4 ETF 价格 + 读 holdings.json
+daily_snapshot: fetch 4 ETF 价格 + 读 holdings.json
   ↓
 3pp: 计算 total / weights / triggered (snapshot)
   ↓
 grid: 读 grid_state.json → 推进 4 个资产的状态 → 写回
   ↓
-chart.py: 渲染 data/grid_chart.png (matplotlib, 中文字体)
+chart_renderer: 渲染 data/grid_chart.png (matplotlib, 中文字体)
   ↓
 append 到 history.json (覆盖重仓版本)
   ↓
-notify.py: 读 history.json → 邮件 (双策略段)
+digest: 读 history.json → 邮件 (双策略段)
   ↓
 git-auto-commit: 提交 history.json + grid_state.json + grid_chart.png
   ↓
@@ -109,7 +122,7 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
 - **买入份额 − 止盈卖出的份额 = 归并进再平衡的 `merged_shares`** ——
   也就是「网格赚的钱」变成组合里的持仓，此后按 3pp 再平衡的规则参与权重。
 - **唯一的实盘入口**是 Pages 的「交易记录 → 复合网格」表单 →
-  `scripts/apply_grid.py` → `src/grid.py:manual_op`。
+  `scripts/apply_grid.py` → `src/domain/grid/grid_position.py:manual_op`。
   服务端**整批 all-or-nothing**，所以前端会先按 `in_cycle` 预检
   (open 要求不在周期内, add/tp 要求在周期内)。
 - **引擎唯一会改的东西是 120 日窗口** (`last_prices`)。它**绝不**改
@@ -388,16 +401,16 @@ pip install -r requirements.txt        # akshare pandas openpyxl requests matplo
 # 跑单测 (无网络, 107 个测试)
 python -X utf8 -m tests.test_record
 
-# 跑一次 record (会拉真实价格, 需要网络; 写 history.json + grid_state.json + grid_chart.png)
-python -m src.record
+# 跑一次每日快照 (会拉真实价格, 需要网络; 写 history.json + grid_state.json + grid_chart.png)
+python -m src.application.daily_snapshot
 
 # 仅重渲染图表 (基于现有 history.json)
-python -m src.chart
+python -m src.infrastructure.chart_renderer
 
 # 邮件 (需要 SMTP env)
 SMTP_HOST=smtp.qq.com SMTP_PORT=465 \
 SMTP_USER=xxx@qq.com SMTP_PASS=xxxx MAIL_TO=you@x.com \
-python -m src.notify
+python -m src.presentation.digest
 ```
 
 ---

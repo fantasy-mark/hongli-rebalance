@@ -3,13 +3,13 @@
 WHY THE LOG WAS EMPTY: the live grid engine has never opened a cycle (all
 4 assets sit at `in_cycle: false`), and grid_state.json predates the ops-log
 migration, so it had no `ops` key at all. But data/grid_chart.png's 资金占用
-panel *does* show grid trades — that panel is `src/chart.py:_replay_grid_for_chart`,
+panel *does* show grid trades — that panel is `src/infrastructure/chart_renderer.py:_replay_grid_for_chart`,
 which calls `run_compound_grid(s, trigger_mode="window")` over the full price
 window and keeps ONLY `result["history"]`, throwing away `result["cycles"]`
 and `result["open_cycle"]`. The data is computed, then discarded.
 
 This script re-runs that same replay and converts its cycles into per-event
-ops rows via `src.grid.ops_from_cycles`, so the 复合网格 操作记录 table can be
+ops rows via `src.simulation.grid_simulator.ops_from_cycles`, so the 复合网格 操作记录 table can be
 cross-referenced against the committed PNG.
 
 THESE OPS ARE SIMULATED (source="backtest"), NOT LIVE:
@@ -20,7 +20,7 @@ THESE OPS ARE SIMULATED (source="backtest"), NOT LIVE:
     trigger watches K-line LOWS (see scripts/backfill_grid_window.py).
 So the share counts will NOT match what the live grid would actually place.
 
-EXIT RULE: exits use the "sell cost only" rule (src/grid.py:
+EXIT RULE: exits use the "sell cost only" rule (src/domain/grid/grid_position.py:
 split_take_profit) — the replay sells just enough shares to recover the
 principal and merges the remainder into the rebalance portfolio
 (`merged_shares`). So every tp row here has pnl == 0 and a non-zero
@@ -56,8 +56,7 @@ for _n in ("matplotlib", "akshare", "urllib3", "requests"):
 
 import pandas as pd
 
-from src import grid as grid_mod
-
+from src.simulation import grid_simulator as grid_mod
 GRID_STATE = ROOT / "data" / "grid_state.json"
 PRICE_SNAPSHOT = ROOT / "data" / "grid_prices_snapshot.json"
 
@@ -66,7 +65,7 @@ def _load_prices(offline: bool) -> dict:
     """Price series per asset, as {asset: pd.Series indexed by Timestamp}.
 
     Deliberately routed through chart.py's own fetchers rather than
-    src.fetch.fetch_kline_history: the ops must be provably derived from
+    src.infrastructure.quote_providers.fetch_kline_history: the ops must be provably derived from
     the same prices that produced the committed grid_chart.png.
     """
     if offline and PRICE_SNAPSHOT.exists():
@@ -78,7 +77,7 @@ def _load_prices(offline: bool) -> dict:
             for name, series in raw.items()
         }
 
-    from src.chart import _fetch_asset_window, _load_chart_assets
+    from src.infrastructure.chart_renderer import _fetch_asset_window, _load_chart_assets
     prices = _fetch_asset_window(_load_chart_assets())
     snapshot = {
         name: {ts.strftime("%Y-%m-%d"): float(p) for ts, p in s.items()}

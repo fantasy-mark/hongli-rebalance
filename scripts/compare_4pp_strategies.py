@@ -6,7 +6,7 @@
 输出综合对比表: 3pp + 网格 PnL + CAGR + Sharpe + MaxDD
 
 WARNING (2026-10-23 起): 网格出场规则已改为「只卖成本金额」(见
-src/grid.py:split_take_profit) —— 正常出场时已实现盈亏恒为 0, 浮盈转成
+src/domain/grid/grid_position.py:split_take_profit) —— 正常出场时已实现盈亏恒为 0, 浮盈转成
 永久持有的零成本份额。所以本脚本的 "网格 PnL" (取自 cum_realized) 会
 恒为 0, 输出不再代表网格的真实收益。要看真实收益用
 scripts/compare_grid_exit_mode.py。
@@ -27,10 +27,9 @@ for _n in ("matplotlib", "akshare", "urllib3", "requests"):
 
 import pandas as pd
 
-from src import grid as grid_mod
-from src import three_pp
-from src.fetch import fetch_one
-
+from src.simulation import grid_simulator as grid_mod
+from src.simulation import equal_weight_backtest as three_pp
+from src.infrastructure.quote_providers import fetch_one
 # 3 资产基础 (BASE_3) — 本地常量, 不引用 hongli/
 BASE_3 = [
     ("黄金ETF博时",   "sz159937", "159937"),

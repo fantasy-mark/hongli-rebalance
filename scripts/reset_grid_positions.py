@@ -18,7 +18,7 @@ scripts/apply_grid.py)。自动时代引擎自己开出来的实盘周期因此�
     source == "backtest" 的行 -> 原样保留 (历史模拟, 与实盘无关)
 
 一个周期 = N 笔买入 + 1 笔止盈, 买入份额 − 止盈卖出份额 = 归并进再平衡的
-merged_shares。这条规则由 src/grid.py:manual_op 落地。
+merged_shares。这条规则由 src/domain/grid/grid_position.py:manual_op 落地。
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def main() -> None:
         return
 
     tmp = GRID_STATE.with_suffix(GRID_STATE.suffix + ".tmp")
-    # 不加尾随换行 —— src/record.py:save_grid_state 也是这个口径, 免得两条
+    # 不加尾随换行 —— src/infrastructure/json_repositories.py:save_grid_state 也是这个口径, 免得两条
     # 写盘路径互相制造「只有一行之差」的假 diff。
     tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2),
                    encoding="utf-8")

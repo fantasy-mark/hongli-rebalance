@@ -13,9 +13,9 @@ payload on argv[1] with shape:
       ]
     }
 
-For each op, the math is run via `src/grid.py:manual_op` — the **single**
+For each op, the math is run via `src/domain/grid/grid_position.py:manual_op` — the **single**
 implementation of the grid rules, so the workflow doesn't need to install
-pandas/akshare (src/grid.py's module level only imports os/typing; pandas
+pandas/akshare (src/domain/grid/grid_position.py's module level only imports os/typing; pandas
 is a local import inside run_compound_grid). The take-profit rule: a `tp`
 sells only `total_invested / price` shares (recovering exactly the
 principal) and merges the remainder into the rebalance portfolio
@@ -47,15 +47,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 GRID_STATE = ROOT / "data" / "grid_state.json"
 
-# 复用 src/grid.py 的唯一实现。src/grid.py 模块级只 import os/typing
+# 复用 src/domain/grid/grid_position.py 的唯一实现。src/domain/grid/grid_position.py 模块级只 import os/typing
 # (pandas 是 run_compound_grid 里的局部 import) → 仍然是 stdlib-only,
 # workflow 不需要装 pandas/akshare。
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from src.grid import manual_op, split_take_profit  # noqa: E402,F401
-# split_take_profit 是 re-export (兼容既有 import), 规则本体在 src/grid.py。
+from src.domain.grid.grid_position import manual_op, split_take_profit  # noqa: E402,F401
+# split_take_profit 是 re-export (兼容既有 import), 规则本体在 src/domain/grid/grid_position.py。
 
-# Mirror scripts/apply_holdings.py — same whitelist as src/record.py:ETF_DEFS.
+# Mirror scripts/apply_holdings.py — same whitelist as src/domain/portfolio/asset_universe.py:ETF_DEFS.
 ALLOWED_CODES = {
     "515180": "红利ETF易方达",
     "159937": "黄金ETF博时",
@@ -80,7 +80,7 @@ def fail(msg: str) -> None:
 
 
 # -----------------------------------------------------------------------------
-# Pure-Python mutator (thin wrapper over src/grid.py:manual_op)
+# Pure-Python mutator (thin wrapper over src/domain/grid/grid_position.py:manual_op)
 # -----------------------------------------------------------------------------
 
 def inline_manual_op(state: dict, op: str, today: str,
@@ -88,7 +88,7 @@ def inline_manual_op(state: dict, op: str, today: str,
                      note: str = "") -> tuple[dict, float]:
     """Apply a manual grid operation. Returns (new_state, pnl_delta).
 
-    Thin wrapper over `src.grid.manual_op` — **单一实现**, 不再复制规则。
+    Thin wrapper over `src.domain.grid.grid_position.manual_op` — **单一实现**, 不再复制规则。
     保留 (state, pnl_delta) 的返回形状, 兼容既有调用方与测试。
 
     For `tp` the "sell cost only" rule applies (see split_take_profit):
@@ -162,7 +162,7 @@ def _validate_op(op: dict, idx: int, today: str) -> dict:
 
 def _atomic_write(path: Path, doc: dict) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    # 不加尾随换行 —— 与 src/record.py:save_grid_state 同一口径, 否则两条
+    # 不加尾随换行 —— 与 src/infrastructure/json_repositories.py:save_grid_state 同一口径, 否则两条
     # 写盘路径会互相制造「只有一行之差」的假 diff。
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2,
                               default=str),

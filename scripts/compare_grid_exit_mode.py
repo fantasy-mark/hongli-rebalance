@@ -1,6 +1,6 @@
 """回测: 网格出场时「只卖出成本金额」(现行规则) vs「全部卖出」(旧规则)。
 
-现行规则 (src/grid.py run_compound_grid + split_take_profit): 出场时只卖
+现行规则 (src/simulation/grid_simulator.py run_compound_grid + split_take_profit): 出场时只卖
 `total_invested / price` 份, 恰好取回本金 -> 已实现盈亏恒为 0; 剩余
 `total_shares - total_invested/price` 份**归并到再平衡的持仓**
 (merged_shares), 此后按组合的规则参与权重计算 —— 网格实质上变成了
@@ -17,7 +17,7 @@ WHY A RE-IMPLEMENTATION INSTEAD OF A PARAMETER:
 入场笔数 / 累计投入 / 归并份额 与 run_compound_grid 逐项相等 ——
 重实现若与生产逻辑漂移, 这个断言会先炸。
 
-口径与 data/grid_chart.png 的「网格 ROI」完全一致 (src/chart.py):
+口径与 data/grid_chart.png 的「网格 ROI」完全一致 (src/infrastructure/chart_renderer.py):
     网格 ROI   = (Σ已实现 + Σ浮盈 + Σ归并份额市值) / 峰值资金占用 × 100
     资金占用   = 网格**在周期内**的层 (出场后本金收回, 占用回落)
 另加一个更诚实的口径 (本金反复周转时分母会很大):
@@ -46,8 +46,7 @@ for _n in ("matplotlib", "akshare", "urllib3", "requests"):
 
 import pandas as pd
 
-from src import grid as grid_mod
-
+from src.simulation import grid_simulator as grid_mod
 PRICE_SNAPSHOT = ROOT / "data" / "grid_prices_snapshot.json"
 
 
@@ -59,7 +58,7 @@ def load_prices(fetch: bool) -> dict[str, pd.Series]:
             name: pd.Series({pd.Timestamp(d): float(p) for d, p in series.items()}).sort_index()
             for name, series in raw.items()
         }
-    from src.chart import _fetch_asset_window, _load_chart_assets
+    from src.infrastructure.chart_renderer import _fetch_asset_window, _load_chart_assets
     return _fetch_asset_window(_load_chart_assets())
 
 
@@ -187,7 +186,7 @@ def summarize(res: dict, label: str) -> dict:
 
 def selftest(prices: dict) -> None:
     """exit_mode="cost" 必须与生产 run_compound_grid 逐项一致。"""
-    print("一致性校验: 本脚本 exit_mode='cost' vs src.grid.run_compound_grid\n")
+    print("一致性校验: 本脚本 exit_mode='cost' vs src.simulation.grid_simulator.run_compound_grid\n")
     ok = True
     for name, s in prices.items():
         ref = grid_mod.run_compound_grid(s, trigger_mode="window")

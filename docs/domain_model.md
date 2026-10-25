@@ -599,6 +599,66 @@ src/
 `infrastructure` 的接口；`simulation` 依赖 `domain` 但**不依赖**
 `infrastructure` 的写仓储。
 
+#### 11.1.1 Phase 0 落地情况（2026-10-26）
+
+上面这棵树是**目标**。Phase 0 立柱之后实际长这样（✅ = 已建，⬜ = 后续阶段）：
+
+```
+src/
+  domain/                      ✅ 纯领域层 —— 零 I/O、零 pandas、零 akshare
+    shared/
+      provenance.py             ✅ REAL | SIMULATED_GRID
+      money.py                  ⬜ Phase 1
+      identifiers.py            ⬜ Phase 1
+    ledger/
+      ledger.py                 ✅ apply_trade / rebuild_holdings_from_trades
+      trade_side.py             ✅ 8 种 side
+      projection.py             ⬜ Phase 1+
+    portfolio/
+      portfolio.py              ✅ Position / PositionLot（Provenance 已就位）
+      rebalance_policy.py       ✅ evaluate(threshold_pp 显式参数)
+      valuation.py              ✅ value_positions / value_extra_codes（价格来源注入）
+      asset_universe.py         ✅ ETF_DEFS / ASSET_NAMES / NAME_TO_CODE / QDII_CODES
+    grid/
+      grid_position.py          ✅ 网格聚合的领域半（stdlib-only！）
+      grid_op.py                ⬜ Phase 2
+      trigger_policy.py         ⬜ Phase 3
+      exit_policy.py            ⬜ Phase 2
+      advisor.py                ⬜ Phase 2
+      layer_sizing.py           ⬜ Phase 3
+    events/
+      domain_events.py          ⬜ Phase 5
+  application/                 ✅ 用例编排
+    daily_snapshot.py           ✅ ← record.py:main()
+  infrastructure/              ✅ 适配器
+    json_repositories.py        ✅ 4 个 JSON 文件的读写（原子写）
+    quote_providers.py          ✅ sina/eastmoney/tencent/akshare 防腐层
+    chart_renderer.py           ✅ ← chart.py
+  simulation/                  ✅ BC-E 独立上下文
+    grid_simulator.py           ✅ ← run_compound_grid（依赖 domain，不碰写仓储）
+    equal_weight_backtest.py    ✅ ← three_pp.py
+  presentation/
+    digest.py                   ✅ ← notify.py
+    notify_failure.py           ✅
+```
+
+**与目标树的三处有意偏差**：
+
+1. **网格拆成两半**。`grid_position.py`（领域：状态、触发、成本出场、建议）
+   与 `grid_simulator.py`（回测：历史重放）**跨限界上下文**，所以不放在同一个
+   目录。⚠️ `grid_position.py` **必须保持 stdlib-only** ——
+   `scripts/apply_grid.py` 在一个**不装 pandas/akshare** 的 GitHub Actions
+   job 里 import 它；`import pandas` 留在 `run_compound_grid` 内部。
+2. **`AssetUniverse` 落在 `domain/portfolio/`** 而不是单列一个文件 ——
+   它就是「组合里有哪些资产」的定义，Phase 4 已顺手完成。
+3. **`valuation.py` 的价格来源是注入的**（`PriceProvider` 协议），领域层
+   因此不需要知道 sina/eastmoney 的存在。原来的 `record.py` 在估值循环里
+   直接调 `latest()`，领域逻辑和 I/O 焊死了。
+
+**已知的口径保留**：Phase 0 **只搬不改行为**。`chart_renderer.py` 里
+`holdings, _ = read_holdings()` 的解包 bug（见 D11）被**原样保留** ——
+修它会改变图表输出，属于另一个提交的事。
+
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
 #### Phase 0 — 立柱（不改行为，1 次提交）
@@ -670,15 +730,16 @@ src/
 | # | 问题 | 证据 | 影响 | 建议 |
 |---|---|---|---|---|
 | D1 | 同一天重复运行会让 120 日窗口少一天深度 | `apply-grid.yml` 提交后 re-trigger `daily.yml`；窗口尾部有重复值（黄金 `[8.35, 8.29, 8.12, 8.12]`） | 窗口是**唯一**的距开仓依据 | `PriceWindow` 改带日期（`list[(date, price)]`），重复日按日期覆盖而非追加 |
-| D2 | `ops` 混装执行日志与模拟日志 | `grid.py:720` 写 `source:"manual"`；`ops_from_cycles` 写 `source:"backtest"` | 容易被误读成"真实成交记录" | Phase 2 拆成 `ExecutedOp` / `SimulatedOp` |
-| D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `record.py:446` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | 改名为 `GridBudget`，在 `total` 里显式标注其虚拟性 |
+| D2 | `ops` 混装执行日志与模拟日志 | `src/domain/grid/grid_position.py:manual_op` 写 `source:"manual"`；`src/simulation/grid_simulator.py:ops_from_cycles` 写 `source:"backtest"` | 容易被误读成"真实成交记录" | Phase 2 拆成 `ExecutedOp` / `SimulatedOp` |
+| D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | 改名为 `GridBudget`，在 `total` 里显式标注其虚拟性 |
 | D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | 把网格那一栏标成"虚拟"或从合计剔除（**本轮不修**，迁移后两者已自动对齐到只剩 `cash_rebalance` 的差额） |
-| D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | `record.py:645/658` | 职责混乱 | Phase 4 拆出 `AssetUniverse` |
-| D6 | 归并份额（模拟）推着真实组合触发调仓 | `record.py:369` + `evaluate` | 模拟影响真实 | `Provenance` 标注 + 页面披露（规则本身是用户选的，不改语义） |
-| D7 | 网格规则两套实现 | `grid.py:395` vs `grid.py:116` | 改参数会静默分叉 | Phase 3 |
-| D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | `record.py:50`, `grid.py:43-51` | 无法做多策略并存、测试需改环境 | Phase 5 提为配置对象 |
-| D9 | `evaluate()` 的两段式求值是隐式近似 | `record.py:738-795` | 恢复自动行为时会有偏差 | 显式命名为 `LayerSizingBasis` / `SnapshotBasis` |
-| D10 | 规则参数在 `src/grid.py` 与 `scripts/apply_grid.py` 各有一份 | `apply_grid.py:71 VALID_OPS` vs `grid.py` 的 op 名 | 改一处漏一处 | 提到 `domain/grid` 单一处 |
+| D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | `src/infrastructure/json_repositories.py:read_holdings` | 职责混乱 | Phase 4 拆出 `AssetUniverse` |
+| D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:merge_grid_shares_into_positions` + `rebalance_policy.evaluate` | 模拟影响真实 | `Provenance` 标注 + 页面披露（规则本身是用户选的，不改语义） |
+| D7 | 网格规则两套实现 | `src/domain/grid/grid_position.py:_triggers` vs `src/simulation/grid_simulator.py:run_compound_grid` | 改参数会静默分叉 | Phase 3 |
+| D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | `src/application/daily_snapshot.py:THRESHOLD_PP`, `src/domain/grid/grid_position.py:GRID_*` | 无法做多策略并存、测试需改环境 | Phase 5 提为配置对象 |
+| D9 | `evaluate()` 的两段式求值是隐式近似 | `src/application/daily_snapshot.py:main` | 恢复自动行为时会有偏差 | 显式命名为 `LayerSizingBasis` / `SnapshotBasis` |
+| D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | `apply_grid.py` 的 `VALID_OPS` vs `grid_position.py` 的 op 名 | 改一处漏一处 | 提到 `domain/grid` 单一处 |
+| D11 | 图表永远用完整 `ETF_DEFS`，读不到用户实际持仓 | `src/infrastructure/chart_renderer.py:_load_chart_assets()` 里 `holdings, _ = read_holdings()` —— `read_holdings()` 返回 **3** 个值，解包抛 `ValueError`，被 `except Exception` 吞掉后走 fallback 分支 | 换仓/减仓后图表仍画全部 4 个品种 | 改成 `holdings, _cr, _cg = read_holdings()`（Phase 0 **保持原样**，只搬不改行为；修它会改变图表输出） |
 
 ---
 

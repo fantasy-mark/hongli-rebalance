@@ -32,10 +32,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src import grid as grid_mod
-from src import three_pp
-from src.fetch import fetch_one
-
+from src.simulation import equal_weight_backtest as three_pp
+from src.infrastructure.quote_providers import fetch_one
 # 3 资产基础 (BASE_3) — 本地常量, 不引用 hongli/
 BASE_3 = [
     ("黄金ETF博时",   "sz159937", "159937"),

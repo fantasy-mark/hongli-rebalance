@@ -5,7 +5,8 @@ Layout (2 stacked subplots, shared x-axis):
   Bottom: 网格 资金占用 堆叠 (per-asset ¥, 含永久持有的零成本份额)
 
 N is derived dynamically from `data/holdings.json` (whichever ETFs the
-user currently holds, codes must be registered in `src.record.ETF_DEFS`).
+user currently holds, codes must be registered in the asset universe
+`src/domain/portfolio/asset_universe.py`).
 This keeps the chart in sync when the user adds/removes/swaps ETFs.
 (.xlsx is only a legacy bootstrap fallback in `read_holdings()`.)
 
@@ -15,7 +16,7 @@ relies on the pre-installed `fonts-noto-cjk` package — the workflow
 installs it explicitly.
 
 The chart is generated from `data/history.json` + a full backtest:
-  - 3pp series: from `three_pp.run_backtest()` on fetched ETF prices
+  - 3pp series: from `equal_weight_backtest.run_backtest()` on fetched ETF prices
     (起点 ¥200,000, 跨 2020-11-05 → 今; 与 scripts/plot_strategy.py 同口径).
     This avoids the misleading "X% in 4 days" artefact that comes from
     normalizing history.json (which is too short to draw a meaningful curve).
@@ -73,14 +74,15 @@ EXTRA_PALETTE = [
 def _load_chart_assets() -> list[tuple[str, str, str]]:
     """Resolve (name, sina, eastmoney) for the user's current holdings.
 
-    Reads `data/holdings.json` (via `src.record.read_holdings()`) and joins
-    with `src.record.ETF_DEFS` (which is the registry of known codes with
+    Reads `data/holdings.json` (via `json_repositories.read_holdings()`) and
+    joins with the asset universe's `ETF_DEFS` (the registry of known codes with
     their sina/eastmoney symbols). Falls back to the full ETF_DEFS when
     the holdings file is unreadable — e.g. in tests or if the user is
     rendering the chart before record.py has run.
     """
     try:
-        from src.record import read_holdings, ETF_DEFS
+        from src.domain.portfolio.asset_universe import ETF_DEFS
+        from src.infrastructure.json_repositories import read_holdings
         holdings, _ = read_holdings()
         out: list[tuple[str, str, str]] = []
         seen: set[str] = set()
@@ -103,7 +105,7 @@ def _load_chart_assets() -> list[tuple[str, str, str]]:
         print(f"WARN chart: cannot read holdings ({ex}); using ETF_DEFS fallback",
               file=sys.stderr)
     # Fallback: full registry
-    from src.record import ETF_DEFS
+    from src.domain.portfolio.asset_universe import ETF_DEFS
     return [(name, sina, em) for _code, (sina, em, name, _qdii) in ETF_DEFS.items()]
 
 
@@ -181,7 +183,7 @@ def _fetch_asset_window(assets: list[tuple[str, str, str]]) -> dict[str, pd.Seri
 
     Imported lazily so chart rendering can be tested without network.
     """
-    from src.fetch import fetch_one
+    from src.infrastructure.quote_providers import fetch_one
     out: dict[str, pd.Series] = {}
     for name, sina, em in assets:
         df = fetch_one(sina, em)
@@ -222,7 +224,7 @@ def _replay_grid_for_chart(prices_by_asset: dict[str, pd.Series],
 
     trigger_mode='window' (120-day rolling low) matches the live rule.
     """
-    from src.grid import run_compound_grid
+    from src.simulation.grid_simulator import run_compound_grid
     out: dict[str, pd.DataFrame] = {}
     for name, s in prices_by_asset.items():
         result = run_compound_grid(s, trigger_mode="window")
@@ -298,7 +300,7 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     # price window. This is what scripts/plot_strategy.py does too, and
     # gives a proper multi-year curve (vs. history.json which usually has
     # only a handful of entries and produces a misleading flat-then-spike).
-    from src.three_pp import run_backtest
+    from src.simulation.equal_weight_backtest import run_backtest
     prices_df = pd.DataFrame(prices).sort_index().dropna()
     pp_bt = run_backtest(prices_df, initial_cash=INITIAL_3PP_CAPITAL)
     pp_series_bt = pp_bt["series"]
@@ -316,7 +318,7 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     # 资金占用 = 网格**在周期内**的层 (`current_value`)。止盈时本金全额收回,
     # 所以占用会回落 —— 这正是"只卖成本金额"规则的直接后果。
     # 归并到再平衡的那批份额**不再算网格的占用**: 它们已经离开网格的账,
-    # 变成再平衡组合的持仓 (见 src/grid.py:split_take_profit 的说明)。
+    # 变成再平衡组合的持仓 (见 src/domain/grid/grid_position.py:split_take_profit 的说明)。
     grid_capital_by_asset = {n: grid_histories[n]["current_value"]
                              for n in ASSET_NAMES}
     grid_capital_total = sum(grid_capital_by_asset[n] for n in ASSET_NAMES)

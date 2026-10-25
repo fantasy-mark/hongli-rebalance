@@ -4,7 +4,7 @@ Output: a side-by-side table of CAGR / Sharpe / max DD / n_trades / win-rate /
 avg hold-days / total realized P&L.
 
 WARNING (2026-10-23 起): 网格出场规则已改为「只卖成本金额」(见
-src/grid.py:split_take_profit) —— 正常出场时已实现盈亏恒为 0, 浮盈转成
+src/domain/grid/grid_position.py:split_take_profit) —— 正常出场时已实现盈亏恒为 0, 浮盈转成
 永久持有的零成本份额。所以本脚本的 realized P&L / win-rate 会恒为 0,
 输出不再代表网格的真实收益。要看真实收益用
 scripts/compare_grid_exit_mode.py。
@@ -28,9 +28,8 @@ for _n in ("matplotlib", "akshare", "urllib3", "requests"):
 
 import pandas as pd
 
-from src import grid as grid_mod
-from src.fetch import fetch_one
-
+from src.simulation import grid_simulator as grid_mod
+from src.infrastructure.quote_providers import fetch_one
 # 3 资产 (跟 v3 一致)
 ASSETS = [
     ("黄金ETF博时",   "sz159937", "159937"),

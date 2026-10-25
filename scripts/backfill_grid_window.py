@@ -3,7 +3,7 @@
 History: grid_state.json was originally persisted with a single
 "last_120d_min" scalar (old schema). The current live rule uses a
 rolling 120-day window of past K-line lows (the trigger is
-`price < min(last_prices)`, see src/grid.py:advance_one_day). After
+`price < min(last_prices)`, see src/domain/grid/grid_position.py:advance_one_day). After
 the schema switch, the new `last_prices` queue was bootstrapped with
 only the most recent ~2 days of data, which causes false triggers
 (any 1-day dip looks like a "new 120-day low" when the window is short).
@@ -42,9 +42,8 @@ for _n in ("matplotlib", "akshare", "urllib3", "requests"):
 
 import pandas as pd
 
-from src import grid as grid_mod
-from src.fetch import fetch_kline_history
-
+from src.simulation import grid_simulator as grid_mod
+from src.infrastructure.quote_providers import fetch_kline_history
 ASSETS = [
     ("黄金ETF博时",   "sz159937", "159937"),
     ("红利ETF易方达", "sh515180", "515180"),

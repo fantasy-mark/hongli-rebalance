@@ -14,9 +14,8 @@ payload on argv[1] with shape:
 
 Validates and appends the new trades to `data/trades.json`, then rebuilds
 `data/holdings.json` (schema v2, two cash pools) by replaying the full
-ledger. The script intentionally does NOT import src/record.py (the
-workflow doesn't install its deps); all replay logic is inlined as pure
-stdlib.
+ledger. The script intentionally does NOT import the domain layer (the workflow
+doesn't install its deps); all replay logic is inlined as pure stdlib.
 
 Validation rules:
   - schema == "trades-v1"
@@ -43,9 +42,10 @@ ROOT = Path(__file__).resolve().parent.parent
 TRADES = ROOT / "data" / "trades.json"
 HOLDINGS = ROOT / "data" / "holdings.json"
 
-# Mirror src/record.py:ETF_DEFS — whitelist of tradeable codes.
-# Source of truth for "what's tradeable". We don't import src/record.py
-# because the workflow doesn't install the Python deps for this step.
+# Mirror src/domain/portfolio/asset_universe.py:ETF_DEFS — whitelist of tradeable codes.
+# Source of truth for "what's tradeable". We don't import the asset universe
+# module (src/domain/portfolio/asset_universe.py) because the workflow
+# doesn't install the Python deps for this step.
 ALLOWED_CODES = {
     "515180": "红利ETF易方达",
     "159937": "黄金ETF博时",
@@ -79,8 +79,8 @@ def fail(msg: str) -> None:
 
 
 # -----------------------------------------------------------------------------
-# Pure-Python replay helpers (intentionally duplicated from src/record.py so
-# this script has no external imports beyond stdlib).
+# Pure-Python replay helpers (intentionally duplicated from
+# src/domain/ledger/ledger.py so this script has no external imports beyond stdlib).
 # -----------------------------------------------------------------------------
 
 def inline_apply(state: dict, t: dict) -> None:

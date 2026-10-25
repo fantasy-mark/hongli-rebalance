@@ -1,7 +1,7 @@
 """Send a failure notice email when the daily workflow fails.
 
 Called by daily.yml's `if: always()` email step: record step succeeded ->
-normal digest (src.notify), otherwise -> this module.
+normal digest (src.presentation.digest), otherwise -> this module.
 
 WHY THIS FILE REPORTS STEP STATE INSTEAD OF GUESSING
 ---------------------------------------------------
@@ -10,7 +10,7 @@ The first version hardcoded three "常见原因" (akshare 网络 / holdings.json
 
 On 2026-10-23 both claims were false. The job had died five steps EARLIER,
 at `sudo apt-get install -y fonts-noto-cjk`, which aborted with
-"Error: The operation was canceled." — so `python -m src.record` never
+"Error: The operation was canceled." — so `python -m src.application.daily_snapshot` never
 ran at all, and none of the three listed causes had anything to do with
 it. The email did not merely fail to help; it pointed the debugging at
 the wrong step.
@@ -37,7 +37,7 @@ import traceback
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .notify import build_html, build_text, send
+from .digest import build_html, build_text, send
 
 # 北京时间 (UTC+8) 用于邮件显示
 CST = timezone(timedelta(hours=8))

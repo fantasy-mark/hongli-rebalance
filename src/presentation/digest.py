@@ -139,7 +139,7 @@ def build_text(r: dict) -> str:
         delta = (w - r["target_w"]) * 100
         over = abs(delta) > r["threshold_pp"]
         flag = " ⚠" if over else "  "
-        # 数量 = 持仓 + 网格归并进来的份额 (模拟口径, 见 src/grid.py)。
+        # 数量 = 持仓 + 网格归并进来的份额 (模拟口径, 见 src/domain/grid/grid_position.py)。
         total_sh = int(p.get("total_shares", p["shares"]))
         merged = float(p.get("merged_shares", 0.0) or 0.0)
         merged_cell = f"{int(merged):,}" if merged > 0 else f"{'—':>10}"
