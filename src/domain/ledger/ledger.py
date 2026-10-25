@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ..shared.money import Money, ShareCount
 from .trade_side import TradeSide
 
 
@@ -38,7 +39,8 @@ def apply_trade(state: dict, trade: dict) -> None:
     negative pool, no oversell), then commits. On failure the original
     `state` is left untouched and ValueError is raised.
 
-    Rounds cash to 2 dp after each trade.
+    Rounds cash to 2 dp after each trade (`Money` — 现金永远是 2 位小数,
+    这条规则只写一遍, 不再散落成裸 `round(x, 2)`)。
     """
     side = trade["side"]
     # Compute new state in a scratch copy; commit only if validation passes.
@@ -83,8 +85,8 @@ def apply_trade(state: dict, trade: dict) -> None:
         new_state["cash_rebalance"] += sh * px - fee
     else:
         raise ValueError(f"unknown side: {side!r}")
-    new_state["cash_rebalance"] = round(new_state["cash_rebalance"], 2)
-    new_state["cash_grid"] = round(new_state["cash_grid"], 2)
+    new_state["cash_rebalance"] = Money(new_state["cash_rebalance"])
+    new_state["cash_grid"] = Money(new_state["cash_grid"])
     # Defense: any pool going negative is a programming error
     if new_state["cash_rebalance"] < 0 or new_state["cash_grid"] < 0:
         raise ValueError(
@@ -94,7 +96,7 @@ def apply_trade(state: dict, trade: dict) -> None:
     state["cash_rebalance"] = new_state["cash_rebalance"]
     state["cash_grid"] = new_state["cash_grid"]
     for c in list(new_state["positions"].keys()):
-        v = round(new_state["positions"][c], 2)
+        v = ShareCount(new_state["positions"][c])
         if v <= 0:
             # Drop zero/negative entries; if this was the only position for
             # a code, remove the key entirely.

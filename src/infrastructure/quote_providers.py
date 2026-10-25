@@ -35,6 +35,8 @@ from typing import Optional, Tuple
 import akshare as ak
 import pandas as pd
 
+from ..domain.shared.money import Price
+
 try:
     import requests
 except ImportError:                                  # pragma: no cover
@@ -307,8 +309,8 @@ def fetch_qdii_premium(code: str) -> Optional[dict]:
     premium_pct = (price - nav) / nav * 100.0
     return {
         "code": code6,
-        "price": round(price, 4),
-        "iopv": round(nav, 4),           # T-1 NAV (latest authoritative ref)
+        "price": Price(price),
+        "iopv": Price(nav),              # T-1 NAV (latest authoritative ref)
         "nav_date": nav_date,
         "premium_pct": round(premium_pct, 2),
         "quote_time": quote_time,

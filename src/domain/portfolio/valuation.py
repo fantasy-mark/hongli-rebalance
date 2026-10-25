@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime
 from typing import Callable, Optional, Protocol, Sequence, Tuple
 
+from ..shared.money import Money, Price
 from .asset_universe import ETF_DEFS
 
 
@@ -65,9 +66,9 @@ def value_positions(
                 "name": h.get("name", ""),
                 "code": code,
                 "shares": h.get("shares", 0.0),
-                "price": round(price, 4),
+                "price": Price(price),
                 "date": as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of),
-                "value": round(value, 2),
+                "value": Money(value),
             })
         except Exception as ex:
             errors.append((code, str(ex)))

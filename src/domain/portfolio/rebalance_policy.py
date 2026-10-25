@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any, Optional, Sequence
 
+from ..shared.money import DeviationPP, Money
+
 
 def evaluate(positions: list[dict], cash_rebalance: float, cash_grid: float,
               threshold_pp: float = 3.0,
@@ -48,9 +50,9 @@ def evaluate(positions: list[dict], cash_rebalance: float, cash_grid: float,
             plan.append({
                 "name": p["name"],
                 "code": p["code"],
-                "current_value": round(p["value"], 2),
-                "target_value": round(target_value, 2),
-                "delta_value": round(target_value - p["value"], 2),
+                "current_value": Money(p["value"]),
+                "target_value": Money(target_value),
+                "delta_value": Money(target_value - p["value"]),
             })
     return total, weights, triggered, plan
 
@@ -64,4 +66,4 @@ def max_deviation_pp(weights: Sequence[float], target_w: float) -> float:
     """Largest absolute deviation from the target, in percentage points."""
     if not weights:
         return 0.0
-    return max(abs(w - target_w) * 100 for w in weights)
+    return DeviationPP(max(abs(w - target_w) * 100 for w in weights))

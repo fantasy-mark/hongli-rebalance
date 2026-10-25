@@ -33,6 +33,7 @@ from ..domain.grid.grid_position import (
     GRID_TP_PCT,
     split_take_profit,
 )
+from ..domain.shared.money import Price, ShareCount
 
 
 def run_compound_grid(
@@ -203,8 +204,8 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
                 # readable — raw floats carry 16 significant digits
                 # (969.4619486185168 shares). Price matches the `last_prices`
                 # precision convention in grid_state.json.
-                "price": round(float(e["price"]), 4),
-                "shares": round(float(e["shares"]), 2),
+                "price": Price(e["price"]),
+                "shares": ShareCount(e["shares"]),
                 "note": "回测·窗口突破开仓" if i == 0 else f"回测·金字塔第{i + 1}层",
             })
 
@@ -218,13 +219,13 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
             "date": _iso_date(c["exit_date"]),
             "op": "tp",
             "source": "backtest",
-            "price": round(float(c["exit_price"]), 4),
-            "shares": round(sold, 2),
+            "price": Price(c["exit_price"]),
+            "shares": ShareCount(sold),
             "note": "回测·回本出场",
             "pnl": round(float(c["pnl"]), 2),
             "num_buys_exited": int(c["num_buys"]),
-            "total_shares_exited": round(sold + to_merge, 2),
-            "shares_to_merge": round(to_merge, 2),
+            "total_shares_exited": ShareCount(sold + to_merge),
+            "shares_to_merge": ShareCount(to_merge),
         })
 
     # The still-open cycle has no exit yet — entries only, no tp.

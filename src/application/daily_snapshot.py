@@ -35,6 +35,13 @@ from ..domain.portfolio.portfolio import (
 )
 from ..domain.portfolio.rebalance_policy import evaluate
 from ..domain.portfolio.valuation import value_extra_codes, value_positions
+from ..domain.shared.money import (
+    LayerSize,
+    Money,
+    Price,
+    ShareCount,
+    Weight,
+)
 from ..infrastructure.json_repositories import (
     GRID_CHART,
     GRID_STATE,
@@ -89,8 +96,8 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
         snap = grid_mod.asset_snapshot(new_asset_state, float(price))
         signals.append({
             "name": name,
-            "price": round(float(price), 4),
-            "layer_yuan": round(layer, 2),
+            "price": Price(price),
+            "layer_yuan": LayerSize(layer),
             # "open" | "add" | "tp" | None —— 建议提交哪种 op, 不是"已成交"
             "signal": signal,
             "in_cycle": snap["in_cycle"],
@@ -167,21 +174,24 @@ def build_record(today: str, positions: list[dict],
                              for p in positions)
     return {
         "date": today,
-        "total": round(total, 2),
-        "etf_value": round(etf_total, 2),
-        "cash_rebalance": round(cash_rebalance, 2),
-        "cash_grid": round(cash_grid, 2),
-        "cash_total": round(cash_rebalance + cash_grid, 2),
+        "total": Money(total),
+        "etf_value": Money(etf_total),
+        "cash_rebalance": Money(cash_rebalance),
+        "cash_grid": Money(cash_grid),
+        "cash_total": Money(cash_rebalance + cash_grid),
         "positions": positions,
-        "weights": [round(w, 4) for w in weights],
+        # ⚠️ `Weight` 只在**展示边界**构造 —— `evaluate` 内部算触发判定用的
+        # 必须是未取整的权重: 取整到 4 位会移动触发边界, 让「差 0.0001pp
+        # 不触发」变成「触发」。
+        "weights": [Weight(w) for w in weights],
         "target_w": target_w,
         "threshold_pp": threshold_pp,
         "triggered": triggered_3pp,
         "plan": plan,
         "grid_signals": grid_signals,
         "grid_state": slim_grid_state,
-        "merged_shares_total": round(merged_shares_total, 2),
-        "merged_value_total": round(merged_value_total, 2),
+        "merged_shares_total": ShareCount(merged_shares_total),
+        "merged_value_total": Money(merged_value_total),
         "qdii_premiums": qdii_premiums or [],
     }
 
@@ -367,7 +377,7 @@ def main() -> None:
     # the daily record shows the actual trigger price, not the close.
     for s in grid_signals:
         if s["name"] in lows_by_name:
-            s["intraday_low"] = round(lows_by_name[s["name"]], 4)
+            s["intraday_low"] = Price(lows_by_name[s["name"]])
     save_grid_state(new_state)
 
     # Re-merge: today's take-profit may have added new merged shares.

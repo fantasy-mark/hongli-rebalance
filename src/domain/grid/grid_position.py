@@ -52,6 +52,8 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+from ..shared.money import DeviationPP, LayerSize, Money, Price, ShareCount
+
 # 网格参数 (env-overridable for parameter sweeps)
 GRID_BASE_YUAN: float = float(os.environ.get("GRID_BASE_YUAN", "10000"))
 GRID_FLOATING_FRACTION: float = float(os.environ.get("GRID_FLOATING_FRACTION", "0.05"))
@@ -66,6 +68,10 @@ GRID_TP_BASIS: str = os.environ.get("GRID_TP_BASIS", "first_buy")
 
 def layer_yuan(pool_value: float, recent_min: float) -> float:
     """Compute today's per-layer buy amount in ¥.
+
+    ⚠️ 返回**未取整**的 float —— 层额要除以价格算份额 (`amount / price`),
+    提前取整会改掉份额。它只在**输出边界**上被包成 `LayerSize`
+    (见 `advisory` 的 `suggest_amount` 与快照里的 `layer_yuan`)。
 
     Args:
         pool_value: current 3pp portfolio total (¥).
@@ -303,19 +309,19 @@ def advisory(state: dict, price: float, layer_yuan_value: float,
     shares = (amount / float(price)) if (amount and price > 0) else 0.0
 
     def _r(v):
-        return round(v, 2) if v is not None else None
+        return DeviationPP(v) if v is not None else None
 
     return {
         "signal": sig,
         "trigger_kind": trig["kind"],
-        "trigger_pct": round(trig["pct"], 2),
-        "trigger_price": round(trig["price"], 4),
+        "trigger_pct": DeviationPP(trig["pct"]),
+        "trigger_price": Price(trig["price"]),
         "dist_open_pct": _r(trig["dist_open_pct"]),
         "dist_add_pct": _r(trig["dist_add_pct"]),
         "dist_tp_pct": _r(trig["dist_tp_pct"]),
-        "suggest_price": round(float(price), 4),
-        "suggest_shares": round(shares, 2),
-        "suggest_amount": round(amount, 2),
+        "suggest_price": Price(price),
+        "suggest_shares": ShareCount(shares),
+        "suggest_amount": LayerSize(amount),
     }
 
 
@@ -401,8 +407,8 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
     in_cycle = bool(state.get("in_cycle", False))
     # 份额先定到 2 位小数, 再由它算市值 —— 这样页面/邮件上"多少份"和
     # "多少钱"是自洽的 (用户拿 3.89 份 × 103 验算能对上 400.67)。
-    merged_shares = round(float(state.get("merged_shares", 0.0) or 0.0), 2)
-    merged_value = round(merged_shares * float(current_price), 2)
+    merged_shares = ShareCount(float(state.get("merged_shares", 0.0) or 0.0))
+    merged_value = Money(merged_shares * float(current_price))
     if in_cycle and entries:
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
@@ -412,13 +418,13 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
         return {
             "in_cycle": True,
             "num_buys": len(entries),
-            "avg_cost": round(avg_cost, 4),
-            "total_invested": round(total_invested, 2),
-            "current_value": round(current_value, 2),
-            "unrealized_pnl": round(unrealized, 2),
+            "avg_cost": Price(avg_cost),
+            "total_invested": Money(total_invested),
+            "current_value": Money(current_value),
+            "unrealized_pnl": Money(unrealized),
             "return_pct": round(unrealized / total_invested * 100, 2) if total_invested else 0.0,
-            "merged_shares": round(merged_shares, 2),
-            "merged_value": round(merged_value, 2),
+            "merged_shares": ShareCount(merged_shares),
+            "merged_value": Money(merged_value),
         }
     return {
         "in_cycle": False,
@@ -428,8 +434,8 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
         "current_value": 0.0,
         "unrealized_pnl": 0.0,
         "return_pct": 0.0,
-        "merged_shares": round(merged_shares, 2),
-        "merged_value": round(merged_value, 2),
+        "merged_shares": ShareCount(merged_shares),
+        "merged_value": Money(merged_value),
     }
 
 

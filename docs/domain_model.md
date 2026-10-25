@@ -345,6 +345,11 @@ advance_one_day` 只滚窗口 + 算建议；`grid.py:668 manual_op` 是唯一实
 "份额和市值不自洽"这一类 bug（`grid.py:632` 注释里记的那个 3.885 份 × 103 =
 400.16 vs 400.67 的问题）。
 
+> **落地说明（2026-10-26）**：这批值对象已实现，但**后端是 `float` 子类而不是
+> `Decimal`** —— `data/*.json` 由 `app.js` 读，`Decimal` 序列化不了；而
+> `Decimal` 的算术会改变舍入时机，把账上的数字全改掉。取值规则（构造时取整、
+> 算术不重写）与理由见 **§11.1.2**。
+
 ### 6.3 建议与成交必须分型
 
 当前 `signal` 是一个字符串，值为 `"open" | "add" | "tp" | None`（外加遗留的
@@ -608,8 +613,9 @@ src/
   domain/                      ✅ 纯领域层 —— 零 I/O、零 pandas、零 akshare
     shared/
       provenance.py             ✅ REAL | SIMULATED_GRID
-      money.py                  ⬜ Phase 1
-      identifiers.py            ⬜ Phase 1
+      money.py                  ✅ Phase 1 —— Money / ShareCount / Price /
+                                Weight / DeviationPP / LayerSize
+      identifiers.py            ✅ Phase 1 —— AssetCode / TradingDate
     ledger/
       ledger.py                 ✅ apply_trade / rebuild_holdings_from_trades
       trade_side.py             ✅ 8 种 side
@@ -659,6 +665,50 @@ src/
 `holdings, _ = read_holdings()` 的解包 bug（见 D11）被**原样保留** ——
 修它会改变图表输出，属于另一个提交的事。
 
+#### 11.1.2 Phase 1 落地情况（2026-10-26）
+
+Phase 1 分两次提交落地：
+
+| 提交 | 内容 |
+|---|---|
+| `687b828` | `src/domain/shared/identifiers.py` —— `AssetCode` / `TradingDate`；`apply_grid.py` 与 `apply_holdings.py` 各自那份 `CODE_RE` / `DATE_RE` 删除 |
+| 本次 | `src/domain/shared/money.py` —— `Money` / `ShareCount` / `Price` / `Weight` / `DeviationPP` / `LayerSize` |
+
+**⚠️ 一处有意偏差：值对象用 `float` 子类，不用 `Decimal`。**
+§6.2 建议用 `Decimal`，落地时改成了 `float` 子类，理由不是偏好，是两条硬约束：
+
+1. **`data/*.json` 由 `app.js` 读**。`Decimal` 不是 JSON 原生类型 ——
+   `json.dumps` 要么抛错，要么靠 `default=str` 变成字符串 `"1.5"`，
+   页面拿到字符串就没法算数了。
+2. **改算术会改数字**。`Decimal` 的加减乘除自带精度规则；一旦值对象参与
+   运算，舍入的**时机**就变了 —— 今天的 `round(x, 2)` 是**算完之后**做的，
+   换成 `Decimal` 会变成"每一步都舍入"，账上的数字就全变了。
+
+`float` 子类两头都躲开：**构造时按语义取整**（"份额就是 2 位小数"这条规则
+只写一遍，不再散落成裸 `round(x, 2)`），但**不重写算术**。于是
+`isinstance(x, float)` 依然成立、`json.dumps` 出来还是数字、
+`x * y` 与改动前**逐位相同**。
+
+**舍入点纪律**（这是本次最重要的约束）：**值对象的构造 = 原来那一次
+`round()`**。在没有 `round()` 的地方构造值对象，就是在偷偷改数字。
+据此有三个地方**刻意不包**：
+
+| 地方 | 为什么不包 |
+|---|---|
+| `rebalance_policy.evaluate` 内部算触发判定的权重 | 取整到 4 位会**移动触发边界** —— 让「差 0.0001pp 不触发」变成「触发」。`Weight` 只在写进 `history.json` 时构造 |
+| `split_take_profit` 的中间量（卖出份额 / 归并份额 / 盈亏） | 它们是**比例**。四舍五入会破坏「买入 − 卖出 == 归并」这个恒等式，也会让 `cum_realized` 的数字变 |
+| `layer_yuan()` 返回的层额 | 层额要除以价格算份额，提前取整会改掉份额。`LayerSize` 只在**输出边界**构造 |
+
+**逐位验证**：改动前后跑同一段**确定性**（不联网，价格写死）流程 ——
+账本重放 → 估值 → 归并 → 3pp → 网格推进 → `build_record` → `advisory` →
+`asset_snapshot` → `split_take_profit` —— 输出的 JSON **逐字节相同**。
+107 个测试全绿。
+
+**⚠️ 尚未替换的裸 float**（有意为之，Phase 2+ 再处理）：
+`asset_snapshot` 的 `return_pct`（收益率 %，不是百分点偏离）、
+`quote_providers` 的 `premium_pct`、`build_record` 的 `target_w`
+（`1/n` 不取整，页面按它算目标市值）、`rebalance_policy.target_weight`。
+
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
 #### Phase 0 — 立柱（不改行为，1 次提交）
@@ -669,7 +719,7 @@ src/
 - 验收：107 个测试全绿；`python -X utf8 -m tests.test_record` 输出不变
 - 收益：后面每一步都有清晰的落点
 
-#### Phase 1 — 值对象（2~3 次提交）
+#### Phase 1 — 值对象（2~3 次提交）✅ 已落地
 
 在 `domain/shared/` 引入 `Money` / `ShareCount` / `Price` / `Weight` /
 `TradingDate` / `AssetCode`，逐个替换裸 float / str。

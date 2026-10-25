@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..shared.money import Money, Price, ShareCount
 from ..shared.provenance import Provenance
 
 
@@ -50,19 +51,19 @@ class Position:
     @property
     def real_shares(self) -> float:
         """Shares bought with real money (the ledger's view)."""
-        return round(sum(l.shares for l in self.lots
-                         if l.provenance is Provenance.REAL), 2)
+        return ShareCount(sum(l.shares for l in self.lots
+                              if l.provenance is Provenance.REAL))
 
     @property
     def simulated_shares(self) -> float:
         """Shares handed over by the grid (simulated)."""
-        return round(sum(l.shares for l in self.lots
-                         if l.provenance.is_simulated), 2)
+        return ShareCount(sum(l.shares for l in self.lots
+                              if l.provenance.is_simulated))
 
     @property
     def total_shares(self) -> float:
         """All shares, real + simulated — the number the weights use."""
-        return round(sum(l.shares for l in self.lots), 2)
+        return ShareCount(sum(l.shares for l in self.lots))
 
     @property
     def merged_shares(self) -> float:
@@ -71,12 +72,12 @@ class Position:
 
     @property
     def merged_value(self) -> float:
-        return round(self.simulated_shares * self.price, 2)
+        return Money(self.simulated_shares * self.price)
 
     @property
     def value(self) -> float:
         """Market value of the whole position."""
-        return round(self.total_shares * self.price, 2)
+        return Money(self.total_shares * self.price)
 
     @property
     def merged_only(self) -> bool:
@@ -94,7 +95,7 @@ class Position:
             "name": self.name,
             "code": self.code,
             "shares": self.real_shares,
-            "price": round(self.price, 4),
+            "price": Price(self.price),
             "date": "",
             "value": self.value,
             "merged_shares": self.merged_shares,
@@ -154,15 +155,15 @@ def merge_grid_shares_into_positions(
         code = str(p.get("code", ""))
         # 份额先定到 2 位小数, 再由它算市值 —— 页面上的"多少份"和"多少钱"
         # 必须自洽 (用户拿显示的份额 × 价格验算要能对上)。
-        merged = round(float(merged_by_code.get(code, 0.0) or 0.0), 2)
+        merged = ShareCount(float(merged_by_code.get(code, 0.0) or 0.0))
         seen.add(code)
         real_shares = float(p.get("shares", 0.0))
         price = float(p.get("price", 0.0))
         new = dict(p)
         new["merged_shares"] = merged
-        new["total_shares"] = round(real_shares + merged, 2)
-        new["merged_value"] = round(merged * price, 2)
-        new["value"] = round(new["total_shares"] * price, 2)
+        new["total_shares"] = ShareCount(real_shares + merged)
+        new["merged_value"] = Money(merged * price)
+        new["value"] = Money(new["total_shares"] * price)
         out.append(new)
     # Codes with merged shares but no real holding → new position rows.
     from .asset_universe import ETF_DEFS
@@ -174,8 +175,8 @@ def merge_grid_shares_into_positions(
         if not price:
             continue
         name = ETF_DEFS[code][2]
-        merged = round(float(merged), 2)
-        merged_value = round(merged * float(price), 2)
+        merged = ShareCount(float(merged))
+        merged_value = Money(merged * float(price))
         out.append({
             "name": name,
             "code": code,
@@ -183,7 +184,7 @@ def merge_grid_shares_into_positions(
             "merged_shares": merged,
             "total_shares": merged,
             "merged_value": merged_value,
-            "price": round(float(price), 4),
+            "price": Price(price),
             "date": "",
             "value": merged_value,
             "merged_only": True,
