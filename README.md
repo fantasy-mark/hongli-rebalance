@@ -26,7 +26,7 @@ hongli-rebalance/
 ├── .github/workflows/daily.yml   # 由 repository_dispatch 触发 (外部 cron 驱动)
 ├── src/
 │   ├── fetch.py                  # akshare Sina 价格拉取 (含腾讯 K 线 fallback)
-│   ├── grid.py                   # 复合网格引擎 (120 日新低 + 3% 金字塔 + 3% TP, 全虚拟)
+│   ├── grid.py                   # 复合网格引擎 (120 日新低 + 3% 金字塔 + 3% TP, 全虚拟, **只给建议, 不自动下单**)
 │   ├── three_pp.py               # 3pp 再平衡回测引擎
 │   ├── record.py                 # 读 trades.json + 双策略 record + 持久化 (双池 cash_rebalance/cash_grid)
 │   ├── chart.py                  # matplotlib 渲染 grid_chart.png
@@ -85,9 +85,12 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
 
 ### 复合网格 (per-asset, independent)
 
-- **触发 (开仓)**: 今日收盘 < 过去 120 日 (含今日) 最低价 → 买 1 层
-- **加仓金字塔**: 在 cycle 中, 今日收盘 ≤ 上一笔买入价 × 97% → 再买 1 层
-- **回本出场 (first_buy 基准)**: 今日收盘 ≥ **第一笔买入价** × 103% → 出场,
+⚠️ **引擎只给建议, 不自动下单**。下面三条规则是引擎每天算出来的
+「建议」, 实际成交全部由你在 Pages「交易记录 → 复合网格」提交。
+
+- **建议开仓**: 今日 K 线最低 < 过去 120 日 (不含今日) 最低价 → 建议买 1 层
+- **建议加仓 (金字塔)**: 在 cycle 中, 今日 K 线最低 ≤ 上一笔买入价 × 97% → 建议再买 1 层
+- **建议回本出场 (first_buy 基准)**: 今日 K 线最低 ≥ **第一笔买入价** × 103% → 建议出场,
   但**只卖出「累计投入 / 出场价」份** (恰好取回本金), 余下的份额**归并进
   再平衡组合的持仓** (`merged_shares`), 进入等待下一次 120 日新低
   - 正常出场时 `cum_realized` 恒为 0 —— 网格的全部收益沉淀在归并份额的
@@ -96,6 +99,22 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
     固定以第一笔为基准, 必须真正回到起点 +3% 才卖, 拿住更多反弹空间。
   - 回测 (2020-04 → 2026-10, 3 ETF): first_buy 比 avg_cost 多赚 +33.9% 网格 PnL,
     CAGR 多 +0.27pp, MaxDD 不变。
+
+#### 实盘口径 (N 买 1 卖)
+
+- **一个周期 = N 笔买入 + 1 笔止盈**。N = 1 次开仓 + 若干次金字塔加仓。
+- **买入份额 − 止盈卖出的份额 = 归并进再平衡的 `merged_shares`** ——
+  也就是「网格赚的钱」变成组合里的持仓，此后按 3pp 再平衡的规则参与权重。
+- **唯一的实盘入口**是 Pages 的「交易记录 → 复合网格」表单 →
+  `scripts/apply_grid.py` → `src/grid.py:manual_op`。
+  服务端**整批 all-or-nothing**，所以前端会先按 `in_cycle` 预检
+  (open 要求不在周期内, add/tp 要求在周期内)。
+- **引擎唯一会改的东西是 120 日窗口** (`last_prices`)。它**绝不**改
+  `entries` / `in_cycle` / `cum_realized` / `merged_shares`, 也**绝不**写 `ops`。
+  `ops` 是「已成交」的账本，只有用户提交的操作才算成交。
+- **距离口径**: 正数 = 还没触发, ≤0 = 已越过触发线。
+  距开仓用 120 日窗口最低, 距加仓用最近一笔买价, 距回本用第一笔买价。
+
 - **加仓金额**: `layer_yuan = ¥10,000 + max(pool - recent_min, 0) × 5%`
   - `pool` = 当前 3pp 总市值 (ETF + cash_rebalance + cash_grid)
   - `recent_min` = 过去 756 交易日 (3 年) pool 最低值
@@ -107,6 +126,10 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
   - `GRID_FLOATING_WINDOW` (默认 756)
   - `GRID_TP_BASIS` (默认 `first_buy`; 可改回 `avg_cost` 切回 v2 行为)
   - `THRESHOLD_PP` (默认 3.0) — 同时影响 3pp 和网格的 ±3% 步长
+
+> ⚠️ **口径警告**：图表与 `scripts/compare_*.py` 都是**策略重放**
+> (固定 ¥10,000/层、按**收盘价**成交), 与实盘 (浮动层额、**K 线最低价**、
+> 手动提交) 不同 —— 两者**不可逐笔对账**, 仅供量级对照。
 
 ### 图表 (`data/grid_chart.png`)
 
@@ -210,7 +233,8 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
   市值 = 已持仓当前价估值 (再平衡: ETF 持仓; 网格: in_cycle 虚拟仓位的当前价);
   余额 = 可立即动用的现金 (再平衡: 真实现金; 网格: 虚拟现金)。
   6 种方向（见下方说明）。提现/转换不足时前端拦截 (服务端也会二次拒绝)。
-- **复合网格手动操作**（open / add / tp） —— 网格是**虚拟**的，不与真实交易挂钩，
+- **复合网格手动操作**（open / add / tp） —— 这是网格**唯一的实盘入口**
+  （引擎只给建议，不自动下单）。网格是**虚拟**的，不与真实交易挂钩，
   但开仓/加仓/出场会修改 `data/grid_state.json`。表头：日期 / 资产 / 操作 / 单价 / 数量 / 金额 / 备注
   顶部显示「当前网格: 515180 待开仓 | 159937 待开仓 | ...」。操作后 30 秒内
   history + chart + 邮件同步重跑。
@@ -218,6 +242,9 @@ Action 不再内置 schedule, 由外部 cron 服务驱动。
   - `add`  = 加仓 (要求 `in_cycle=true`；新单价成为 `entries[-1].price`，即"加仓参考价")
   - `tp`   = 回本出场 (要求 `in_cycle=true`；按 manual 价只卖成本金额, 余量
     累加到 `merged_shares` 归并进再平衡持仓; 正常出场 `cum_realized` 不变)
+  - **一个周期 = N 笔买入 + 1 笔 `tp`**；买入份额 − 卖出份额 = 归并份额。
+  - 服务端**整批 all-or-nothing**（一条不合法整批作废），所以前端会先按
+    `in_cycle` 按提交顺序预检；被拒时 Actions 日志里会有 `::error::` 说明。
 
 **双池 cash 模型 (v2 schema)**：`data/holdings.json` 里 `cash` 字段被拆成两个：
 - `cash_rebalance` —— 真实现金, buy/sell/deposit_rebalance/withdraw_rebalance 路由到这里
@@ -337,6 +364,16 @@ python -X utf8 scripts/init_trades_ledger.py
 - GitHub Actions 本身有 5-30 分钟排队延迟 (早上高峰期可能更长)。
   信号本身是确定的 (基于当日开盘前价格)，晚几分钟不影响决策。
 
+### 已知问题：同一天重复运行会少一天窗口深度
+
+`apply-grid.yml` 提交后会 re-trigger `daily.yml`，同一天 `record.py` 可能跑两次
+→ `last_prices` 同一天被 append 两次。当前 `data/grid_state.json` 里 4 个资产的
+窗口尾部都有重复值。
+
+引擎现在**只**滚动这个 120 日窗口（距开仓建议的唯一依据），所以窗口深度比
+以前更要紧。彻底修需要把 `last_prices` 改成带日期的 schema（`backfill_grid_window.py`
+和存量 JSON 都要迁移），收益不值 —— **深度差 1 天可忽略**。
+
 ---
 
 ## 本地开发
@@ -345,8 +382,8 @@ python -X utf8 scripts/init_trades_ledger.py
 cd C:\Users\Administrator\project\hongli-rebalance
 pip install -r requirements.txt        # akshare pandas openpyxl requests matplotlib
 
-# 跑单测 (无网络, 63 个测试)
-python -m tests.test_record
+# 跑单测 (无网络, 107 个测试)
+python -X utf8 -m tests.test_record
 
 # 跑一次 record (会拉真实价格, 需要网络; 写 history.json + grid_state.json + grid_chart.png)
 python -m src.record

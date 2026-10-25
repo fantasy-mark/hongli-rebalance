@@ -55,9 +55,12 @@ def fmt_delta_pp(d: float) -> str:
 
 
 def fmt_signal(sig: str | None) -> str:
-    # "sell" 不再是止盈: 只卖成本金额, 已实现盈亏恒为 0, 浮盈转成**归并到
-    # 再平衡持仓**的份额。叫它"止盈"会让人以为兑现了收益。
-    return {"buy": "⚠ 买入", "sell": "✓ 回本"}.get(sig or "", "持有")
+    # 网格引擎**不再自动交易** —— 只给建议, 由用户在「交易记录 → 复合网格」提交。
+    # 旧历史记录里存的是 "buy"/"sell" (自动时代), 保留映射让老记录还能读。
+    return {
+        "open": "建议开仓", "add": "建议加仓", "tp": "建议回本",
+        "buy": "买入(旧)", "sell": "回本(旧)",
+    }.get(sig or "", "— 无建议")
 
 
 def _grid_merged_note(grid_signals: list[dict]) -> str:
@@ -178,9 +181,10 @@ def build_text(r: dict) -> str:
     grid_signals = r.get("grid_signals", [])
     if grid_signals:
         lines += [
-            "[复合网格]  120 日新低 + 3% 加仓 + 3% 回本出场(余量归并再平衡持仓)",
-            f"{'名称':<14}{'信号':>8}{'层数':>5}{'均价':>10}{'现价':>10}"
-            f"{'资金占用(¥)':>11}{'浮盈%':>8}{'已归并':>10}{'距下次触发':>13}",
+            "[复合网格] 建议: 120 日新低开仓 / 3% 加仓 / 3% 回本出场"
+            " —— 引擎只给建议, 不自动下单",
+            f"{'名称':<14}{'建议':>8}{'层数':>5}{'均价':>10}{'现价':>10}"
+            f"{'资金占用(¥)':>11}{'浮盈%':>8}{'已归并':>10}{'距建议触发':>13}",
             "-" * 96,
         ]
         for s in grid_signals:
@@ -189,6 +193,8 @@ def build_text(r: dict) -> str:
             kind = s.get("trigger_kind", "open")
             if kind == "tp":
                 trig_label = f"距回本 {trig:+.2f}%"
+            elif kind == "add":
+                trig_label = f"距加仓 {trig:+.2f}%"
             else:
                 trig_label = f"距开仓 {trig:+.2f}%"
             # 浮盈% 只在周期内有意义 (唯一有成本基准的部分); 不在周期里时
@@ -207,8 +213,10 @@ def build_text(r: dict) -> str:
             )
         lines += [
             "-" * 96,
-            f"加仓额(本笔): ¥{grid_signals[0]['layer_yuan']:,.0f}  "
+            f"建议单层金额: ¥{grid_signals[0]['layer_yuan']:,.0f}  "
             f"= ¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%",
+            "⚠ 以上均为**建议** —— 请在页面「交易记录 → 复合网格」"
+            "提交开仓/加仓/回本, 引擎不会自动下单.",
         ]
         merged_note = _grid_merged_note(grid_signals)
         if merged_note:
@@ -249,15 +257,26 @@ def _position_row(p: dict, w: float, target_w: float, threshold_pp: float) -> st
 
 def _grid_row(s: dict) -> str:
     sig = s.get("signal")
-    if sig == "buy":
+    # 引擎**不再自动交易** —— 这三个值是"建议提交哪种 op", 不是"已成交"。
+    # "buy"/"sell" 是自动时代的旧值, 保留映射让老记录还能读。
+    if sig == "open":
         badge_color = COLOR_WARN
-        badge_text = "⚠ 买入"
+        badge_text = "⚠ 建议开仓"
+    elif sig == "add":
+        badge_color = COLOR_WARN
+        badge_text = "⚠ 建议加仓"
+    elif sig == "tp":
+        badge_color = COLOR_OK
+        badge_text = "✓ 建议回本"
+    elif sig == "buy":
+        badge_color = COLOR_WARN
+        badge_text = "买入(旧)"
     elif sig == "sell":
         badge_color = COLOR_OK
-        badge_text = "✓ 回本"
+        badge_text = "回本(旧)"
     else:
         badge_color = "#999"
-        badge_text = "— 持有"
+        badge_text = "— 无建议"
     badge = (
         f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
         f'background:{badge_color};color:#fff;font-size:12px;font-weight:600;">{badge_text}</span>'
@@ -268,16 +287,21 @@ def _grid_row(s: dict) -> str:
     in_cycle = bool(s.get("in_cycle", False))
     ret_color = COLOR_OK if s["unrealized_pnl"] >= 0 else COLOR_WARN
     ret_cell = (f'{s["return_pct"]:+.2f}%' if in_cycle else "—")
-    # "距下次触发" 一栏:
+    # "距建议触发" 一栏:
     #   待机 → 现价相对窗口最低的距离 (越大越安全)
-    #   持仓 → 现价相对止盈位的距离 (越小越接近清仓)
+    #   持仓 → 现价相对加仓位 / 止盈位的距离 (越小越接近触发)
     trigger_pct = s.get("trigger_pct", 0.0)
     trigger_kind = s.get("trigger_kind", "open")
     if trigger_kind == "tp":
         if trigger_pct <= 0.5:
-            trig_color = COLOR_WARN; trig_label = f"近止盈 {-trigger_pct:+.2f}%"
+            trig_color = COLOR_WARN; trig_label = f"近回本 {-trigger_pct:+.2f}%"
         else:
             trig_color = "#666"; trig_label = f"距回本 {trigger_pct:+.2f}%"
+    elif trigger_kind == "add":
+        if trigger_pct <= 0.5:
+            trig_color = COLOR_WARN; trig_label = f"近加仓 {-trigger_pct:+.2f}%"
+        else:
+            trig_color = "#666"; trig_label = f"距加仓 {trigger_pct:+.2f}%"
     else:
         if trigger_pct <= 0.5:
             trig_color = COLOR_WARN; trig_label = f"近开仓 {-trigger_pct:+.2f}%"
@@ -382,7 +406,7 @@ def build_html(r: dict, pages_url: str = "") -> str:
         layer = grid_signals[0].get("layer_yuan", 10000)
         any_grid_action = any(s.get("signal") for s in grid_signals)
         grid_accent = COLOR_WARN if any_grid_action else COLOR_GRID
-        grid_title = "⚠ 网格信号" if any_grid_action else "✓ 网格无操作"
+        grid_title = "⚠ 网格建议" if any_grid_action else "✓ 网格无建议"
         merged_total = sum(float(s.get("merged_value", 0.0) or 0.0)
                            for s in grid_signals)
         grid_merged_note_html = (
@@ -395,21 +419,22 @@ def build_html(r: dict, pages_url: str = "") -> str:
     <div style="padding:20px 24px;border-top:1px solid #eee;">
       <div style="background:{grid_accent};padding:10px 16px;color:#fff;border-radius:6px;margin-bottom:12px;font-weight:bold;font-size:14px;">{grid_title}</div>
       <div style="font-size:12px;color:#666;margin-bottom:10px;">
-        复合网格 · 120 日新低 + 3% 加仓 + 3% 回本出场(余量归并再平衡持仓) · 加仓额 <strong>¥{layer:,.0f}</strong>
-        (¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%)
+        复合网格 · 120 日新低 + 3% 加仓 + 3% 回本出场(余量归并再平衡持仓) · 建议单层金额 <strong>¥{layer:,.0f}</strong>
+        (¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%)<br/>
+        ⚠ <strong>引擎只给建议, 不会自动下单</strong> —— 开仓 / 加仓 / 回本请在页面「交易记录 → 复合网格」提交.
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <thead>
           <tr style="background:#f8f9fa;">
             <th style="text-align:left;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">名称</th>
-            <th style="text-align:center;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">信号</th>
+            <th style="text-align:center;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">建议</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">层数</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">均价</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">现价</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">资金占用</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">浮盈%</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">已归并</th>
-            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">距下次触发</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">距建议触发</th>
           </tr>
         </thead>
         <tbody>{grid_rows}</tbody>
@@ -495,24 +520,29 @@ def build_html(r: dict, pages_url: str = "") -> str:
 def build_subject(r: dict) -> str:
     triggered_3pp = r.get("triggered", False)
     grid_signals = r.get("grid_signals", [])
-    any_buy = any(s.get("signal") == "buy" for s in grid_signals)
-    any_sell = any(s.get("signal") == "sell" for s in grid_signals)
+    # 引擎不再自动交易 —— signal 是"建议提交哪种 op"。
+    # "buy"/"sell" 是自动时代的旧值, 保留映射让老记录还能读。
+    any_open = any(s.get("signal") in ("open", "buy") for s in grid_signals)
+    any_add = any(s.get("signal") == "add" for s in grid_signals)
+    any_tp = any(s.get("signal") in ("tp", "sell") for s in grid_signals)
     qdii_warn = any(
         e["premium_pct"] > 5 for e in _all_qdii(r)
     )
 
     if triggered_3pp and qdii_warn:
         tag = "⚠ 再平衡+QDII溢价"
-    elif triggered_3pp and any_buy:
-        tag = "⚠ 再平衡+买入"
+    elif triggered_3pp and (any_open or any_add):
+        tag = "⚠ 再平衡+网格建议"
     elif triggered_3pp:
         tag = "⚠ 触发"
     elif qdii_warn:
         tag = "⚠ QDII溢价"
-    elif any_buy:
-        tag = "⚠ 网格买入"
-    elif any_sell:
-        tag = "✓ 网格回本"
+    elif any_open:
+        tag = "⚠ 网格建议开仓"
+    elif any_add:
+        tag = "⚠ 网格建议加仓"
+    elif any_tp:
+        tag = "✓ 网格建议回本"
     else:
         tag = "✓ OK"
     return f"[{tag}] 稳健再平衡 {r['date']} 总市值 {fmt_money(r['total'])}"

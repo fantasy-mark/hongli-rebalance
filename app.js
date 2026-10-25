@@ -62,13 +62,14 @@ function renderChart() {
 
 function renderStatus(rec) {
   const grid = rec.grid_signals || [];
-  const anyBuy = grid.some(s => s.signal === 'buy');
-  const anySell = grid.some(s => s.signal === 'sell');
-  const anyAction = rec.triggered || anyBuy || anySell;
+  // 网格引擎**不再自动交易** —— signal 只是"建议提交哪种 op"。
+  // "buy"/"sell" 是自动时代的旧值 (只可能出现在旧 history.json 里), 兜底别崩。
+  const anySuggestion = grid.some(s =>
+    ['open', 'add', 'tp', 'buy', 'sell'].includes(s.signal));
 
-  const cls = anyAction ? 'warn' : 'ok';
-  const badgeCls = anyAction ? 'badge-warn' : 'badge-ok';
-  const txt = anyAction ? '⚠ 有操作' : '✓ 未触发';
+  const cls = rec.triggered ? 'warn' : (anySuggestion ? 'info' : 'ok');
+  const badgeCls = rec.triggered ? 'badge-warn' : (anySuggestion ? 'badge-info' : 'badge-ok');
+  const txt = rec.triggered ? '⚠ 需要调仓' : (anySuggestion ? 'ℹ 网格有建议' : '✓ 未触发');
   // Two-pool cash display; fall back to legacy `cash` field if record is
   // older than the pool-split migration.
   const cashReb = Number(rec.cash_rebalance ?? rec.cash ?? 0);
@@ -146,6 +147,18 @@ function renderCurve(history) {
   window.addEventListener('resize', () => chart.resize());
 }
 
+// 建议动作 → 徽章文案。新词表 "open"/"add"/"tp" —— 引擎**不再自动交易**,
+// 这三个值是"建议你在表单里提交哪种 op", 不是"已成交"。
+// "buy"/"sell" 是自动时代的旧值 (只可能出现在旧 history.json 里), 兜底别崩。
+function gridSuggestionLabel(sig) {
+  if (sig === 'open') return { cls: 'warn', text: '建议开仓' };
+  if (sig === 'add')  return { cls: 'warn', text: '建议加仓' };
+  if (sig === 'tp')   return { cls: 'ok',   text: '建议回本' };
+  if (sig === 'buy')  return { cls: 'warn', text: '买入(旧)' };
+  if (sig === 'sell') return { cls: 'ok',   text: '回本(旧)' };
+  return { cls: 'ok', text: '— 无建议' };
+}
+
 function renderLatest(rec) {
   const rows = rec.positions.map((p, i) => {
     const w = rec.weights[i];
@@ -172,22 +185,26 @@ function renderLatest(rec) {
 
   const grid = rec.grid_signals || [];
   const gridRows = grid.map(s => {
-    const sig = s.signal;
-    let sigClass = 'ok', sigText = '— 持有';
-    if (sig === 'buy') { sigClass = 'warn'; sigText = '⚠ 买入'; }
-    // "sell" 不再是止盈: 只卖出成本金额回本, 余量归并到再平衡持仓。
-    // 已实现盈亏恒为 0, 叫它"止盈"会让人以为收益已经兑现了。
-    else if (sig === 'sell') { sigClass = 'ok'; sigText = '✓ 回本'; }
-    // 距下次触发: 待机=距开仓(距窗口最低), 持仓=距回本出场位
+    const lab = gridSuggestionLabel(s.signal);
+    let sigText = lab.text;
+    // 有建议时把建议金额挂在后面 (¥10000 / 份额) —— 让用户照着填表单。
+    const sugAmount = Number(s.suggest_amount || 0);
+    if (s.signal === 'open' || s.signal === 'add') {
+      sigText += ` ¥${Math.round(sugAmount).toLocaleString()}`;
+    }
+    // 距建议触发: 待机=距开仓(距窗口最低), 持仓=距加仓 / 距回本出场位。
+    // 距离口径: 正数 = 还没触发, ≤0 = 已越过触发线。
     const trigPct = s.trigger_pct ?? 0;
     const trigKind = s.trigger_kind || 'open';
-    const trigPrefix = trigKind === 'tp' ? '距回本' : '距开仓';
+    const trigPrefix = trigKind === 'tp' ? '距回本'
+                     : (trigKind === 'add' ? '距加仓' : '距开仓');
     let trigClass = 'ok';
-    if (trigKind === 'tp' && trigPct <= 0.5) trigClass = 'warn';
-    if (trigKind === 'open') {
-      if (trigPct <= 0.5) trigClass = 'warn';
-      else if (trigPct <= 2.0) trigClass = 'warn';
-    }
+    if (trigPct <= 0.5) trigClass = 'warn';
+    else if (trigKind === 'open' && trigPct <= 2.0) trigClass = 'warn';
+    // 有建议 = 已经越过触发线 → 这一格显示"已触发"而不是百分比。
+    const trigCell = s.signal
+      ? `<span title="触发价 ¥${Number(s.trigger_price ?? 0).toFixed(3)}">已触发</span>`
+      : `${trigPrefix} ${trigPct >= 0 ? '+' : ''}${trigPct.toFixed(2)}%`;
     // 资金占用 = 网格**在周期内**的层 (出场后本金收回, 占用回落)。
     // 已归并的份额不再占网格的钱 —— 它们是再平衡组合的持仓了。
     const useValue = Number(s.current_value || 0);
@@ -203,14 +220,14 @@ function renderLatest(rec) {
       : '<span class="muted">—</span>';
     return `<tr>
       <td>${s.name}</td>
-      <td class="${sigClass}">${sigText}</td>
+      <td class="${lab.cls}">${sigText}</td>
       <td>${s.num_buys}</td>
       <td>¥${s.avg_cost.toFixed(3)}</td>
       <td>¥${s.price.toFixed(3)}</td>
       <td>${valueCell}</td>
       <td class="${s.unrealized_pnl >= 0 ? 'ok' : 'warn'}">${s.in_cycle ? (s.return_pct >= 0 ? '+' : '') + s.return_pct.toFixed(2) + '%' : '—'}</td>
       <td>${mergedCell}</td>
-      <td class="${trigClass}">${trigPrefix} ${trigPct >= 0 ? '+' : ''}${trigPct.toFixed(2)}%</td>
+      <td class="${trigClass}">${trigCell}</td>
     </tr>`;
   }).join('');
 
@@ -231,11 +248,11 @@ function renderLatest(rec) {
     <p class="muted" style="font-size:12px;">数量与市值含网格归并进来的份额(模拟口径) · 含归并 = 其中来自网格的部分</p>
 
     ${grid.length ? `
-    <h3 style="margin-top:1.5em;">复合网格 <span class="muted" style="font-size:12px;font-weight:normal;">(加仓额 ¥${layer.toLocaleString()})</span></h3>
+    <h3 style="margin-top:1.5em;">复合网格 <span class="muted" style="font-size:12px;font-weight:normal;">(引擎只给建议, 不会自动下单 · 单层金额 ¥${layer.toLocaleString()})</span></h3>
     <table>
       <thead>
         <tr>
-          <th>名称</th><th>信号</th><th>层数</th><th>均价</th><th>现价</th><th>资金占用</th><th>浮盈%</th><th>已归并</th><th>距下次触发</th>
+          <th>名称</th><th>建议</th><th>层数</th><th>均价</th><th>现价</th><th>资金占用</th><th>浮盈%</th><th>已归并</th><th>距建议触发</th>
         </tr>
       </thead>
       <tbody>${gridRows}</tbody>
@@ -953,11 +970,14 @@ function renderGridEditor(state) {
 
 // Render the per-asset grid operations log under the strategy chart.
 // Each row = one open/add/tp event. Sorted date desc. Up to 10 visible
-// (container clips with vertical scroll). Three source tiers:
-//   auto     → blue chip 自动    (live: record.py daily trigger)
-//   manual   → orange chip 手动  (live: page editor)
+// (container clips with vertical scroll). Two source tiers now that the
+// engine stopped trading:
+//   manual   → orange chip 手动  (**唯一的实盘来源**: page editor)
 //   backtest → purple chip 回测  (SIMULATED: replayed from historical prices,
 //                                   see scripts/backfill_grid_ops.py)
+// "auto" is a legacy value from the auto-trading era — the migration
+// (scripts/reset_grid_positions.py) removed those rows; the mapping is kept
+// so an old state file isn't mislabelled as 手动.
 // tp ops show per-event realized P&L (green positive / red negative);
 // open/add show —.
 function renderGridOpsLog(state) {
@@ -985,10 +1005,10 @@ function renderGridOpsLog(state) {
   // Render ALL rows; container clips to ~10 visible via max-height: 360px.
   // (User asked "界面显示最多10笔，通过滚动条查看" — DOM may hold more.)
   const OP_LABELS = { open: '开仓', add: '加仓', tp: '回本' };
-  const SRC_LABELS = { auto: '自动', manual: '手动', backtest: '回测' };
+  const SRC_LABELS = { manual: '手动', backtest: '回测', auto: '旧自动' };
   // Whitelist: `src` lands in a class attribute, so never interpolate the
   // raw value — an unknown source falls back to the manual tier.
-  const SRC_TIERS = ['auto', 'manual', 'backtest'];
+  const SRC_TIERS = ['manual', 'backtest', 'auto'];
   const body = rows.map(r => {
     const isTp = r.op === 'tp';
     // 出场时归并到再平衡持仓的份额数 —— 新规则下这才是"出场"的实际结果,
@@ -1087,7 +1107,9 @@ function makeGridCard(t = {}) {
   const card = document.createElement('div');
   card.className = 'trade-card';
   const today = new Date().toISOString().slice(0, 10);
-  const op = GRID_OPS[t.op] ? t.op : 'add';
+  // 默认选 open —— 网格从零开始, 新一行最常见的动作就是开仓。
+  // (曾经默认 'add', 而引擎不再自动开仓, 于是新行的第一件事老是要改成 open。)
+  const op = GRID_OPS[t.op] ? t.op : 'open';
   const firstCode = Object.keys(ETF_CATALOG)[0];
   const code = (t.code && t.code in ETF_CATALOG) ? t.code : firstCode;
   card.innerHTML = `
@@ -1124,12 +1146,42 @@ function makeGridCard(t = {}) {
   return card;
 }
 
+// 网格 op 的前置条件 —— 与 scripts/apply_grid.py:inline_manual_op 的服务端校验
+// 一一对应。引擎不再自动交易, 开/加/回本只能在这里提交, 所以前置条件必须
+// 在前端先说清楚, 否则整批操作会被服务端静默拒绝 (只有 Actions 日志能看到)。
+function gridOpPrecondition(code, op, inCycle) {
+  if (op === 'open') {
+    return inCycle
+      ? `${code} 当前已有周期 (持仓中), 开仓要求先回本出场 (tp)`
+      : null;
+  }
+  if (op === 'add' || op === 'tp') {
+    return inCycle
+      ? null
+      : `${code} 当前不在周期内 (待开仓), 请先提交 open, 再 add / tp`;
+  }
+  return `${code}: 未知操作 ${op}`;
+}
+
 function collectGridRows() {
-  // Returns array of validated ops {date, code, op, price, shares, note}
-  // or null if any non-blank card is invalid.
+  // 返回 {ops, errors}
+  //   ops    — 校验通过的操作数组
+  //   errors — [{card, msg}], 有错时整批不提交
   const cards = [...document.querySelectorAll('#grid-list .trade-card')];
-  let ok = true;
-  const out = [];
+  const ops = [];
+  const errors = [];
+
+  // 按提交顺序模拟服务端状态 (服务端也是顺序应用同一资产的连续操作)。
+  // sim[code] = 该资产在"本批次执行到当前行"之后的 in_cycle。
+  const sim = {};
+  const inCycleOf = (code) => {
+    if (code in sim) return sim[code];
+    const name = ETF_CATALOG[code];
+    const s = name ? (currentGridState || {})[name] : null;
+    sim[code] = !!(s && s.in_cycle);
+    return sim[code];
+  };
+
   cards.forEach((card) => {
     const get = k => (card.querySelector(`[data-k="${k}"]`) || {}).value || '';
     const date   = get('date').trim();
@@ -1138,43 +1190,62 @@ function collectGridRows() {
     const price  = get('price').trim();
     const shares = get('shares').trim();
     const note   = get('note').trim();
-    // Skip fully-blank cards (date + code default; check op/price/note)
-    if (!op && !price && !shares && !note) return;
+
+    // ---- 空白卡片跳过 ----
+    // 之前判的是 "op/price/shares/note 全空", 但 op 有默认值 ('add')、
+    // date/code 也有默认值 → 条件永远为假 → 一张没填的卡片会卡死整批。
+    // 正确判据: 用户真正要填的三个字段 (价格 / 数量 / 备注) 都没动。
+    if (!price && !shares && !note) return;
 
     const row = { date, code, op };
-    let rowOK = true;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) rowOK = false;
-    if (!GRID_OPS[op]) rowOK = false;
-    if (!(code in ETF_CATALOG)) rowOK = false;
+    let rowOK = true, msg = '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { rowOK = false; msg = '日期必须是 YYYY-MM-DD'; }
+    if (!GRID_OPS[op]) { rowOK = false; msg = msg || `未知操作 ${op}`; }
+    if (!(code in ETF_CATALOG)) { rowOK = false; msg = msg || `未知资产 ${code}`; }
     const p = parseFloat(price);
-    if (!(p > 0)) rowOK = false; else row.price = p;
+    if (!(p > 0)) { rowOK = false; msg = msg || '价格必须 > 0'; } else { row.price = p; }
     if (op === 'tp') {
-      row.shares = 0;   // ignored by server, but valid
+      row.shares = 0;   // 服务端忽略 tp 的数量
     } else {
       const s = parseFloat(shares);
-      if (!(s > 0)) rowOK = false; else row.shares = s;
+      if (!(s > 0)) { rowOK = false; msg = msg || `${op} 必须填数量 (> 0)`; } else { row.shares = s; }
     }
     if (note) row.note = note;
 
+    // ---- 前置条件 (与服务端一致) ----
+    if (rowOK) {
+      const pre = gridOpPrecondition(code, op, inCycleOf(code));
+      if (pre) { rowOK = false; msg = pre; }
+    }
+
+    if (rowOK) {
+      // 推进模拟状态: open → 进入周期; tp → 结束周期; add → 不变
+      if (op === 'open') sim[code] = true;
+      else if (op === 'tp') sim[code] = false;
+      ops.push(row);
+    } else {
+      errors.push({ card, msg });
+    }
+    // 每次都重算红框 —— 上一轮标红的行, 用户改好了就得把红框去掉
+    // (只 add 不 remove 的话, 卡片会一直红着, 看着像还没通过校验)。
     card.classList.toggle('invalid', !rowOK);
-    if (!rowOK) ok = false;
-    if (rowOK) out.push(row);
   });
-  return ok ? out : null;
+  return { ops, errors };
 }
 
 async function submitGridOp() {
   const statusEl = document.getElementById('grid-status');
   const btn = document.getElementById('grid-save-btn');
-  const ops = collectGridRows();
-  if (ops === null) {
+  const { ops, errors } = collectGridRows();
+  if (errors.length) {
     statusEl.className = 'err';
-    statusEl.textContent = '❌ 表格有红色高亮的行, 请检查必填字段.';
+    statusEl.textContent = '❌ ' + errors[0].msg
+      + (errors.length > 1 ? ` (另有 ${errors.length - 1} 处问题, 都已标红)` : '');
     return;
   }
   if (ops.length === 0) {
     statusEl.className = 'err';
-    statusEl.textContent = '❌ 表格为空, 请先点「+ 加一行」录入复合网格操作.';
+    statusEl.textContent = '❌ 没有要提交的操作, 请先点「+ 加一行」录入复合网格操作.';
     return;
   }
   if (ops.length > 20) {
@@ -1210,7 +1281,9 @@ async function submitGridOp() {
     if (res.status === 204 || res.ok) {
       statusEl.className = 'ok';
       statusEl.textContent =
-        `✅ 已提交 ${ops.length} 个复合网格操作. Action 约 30 秒后 commit 完成, 邮件+图表同步更新. 刷新页面查看新数据.`;
+        `✅ 已派发 ${ops.length} 个复合网格操作 (Action 约 30 秒后 commit). ` +
+        `若 1 分钟内「操作记录」没有新增, 说明批次被服务端拒绝 —— ` +
+        `请到 Actions 日志看 apply_grid 的报错.`;
       // Refresh grid state preview from server
       try {
         const fresh = await loadGridState();
