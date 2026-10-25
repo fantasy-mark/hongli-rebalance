@@ -39,6 +39,9 @@ hongli-rebalance/
 │   └── grid_chart.png            # ← Action 自动渲染 (策略全景图, 嵌入 Pages)
 ├── index.html / app.js / style.css  # GitHub Pages (Pages Source: / (root))
 ├── tests/test_record.py          # 纯函数单测 (record + grid + 3pp)
+├── docs/
+│   ├── domain_model.md           # DDD 领域模型分析 (限界上下文 / 聚合 / 不变量 / 重构路线)
+│   └── correlation_analysis.md   # 4 资产选择的相关性决策依据
 └── requirements.txt              # akshare, pandas, openpyxl, requests, matplotlib
 ```
 
