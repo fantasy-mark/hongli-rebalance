@@ -42,6 +42,12 @@ ROOT = Path(__file__).resolve().parent.parent
 TRADES = ROOT / "data" / "trades.json"
 HOLDINGS = ROOT / "data" / "holdings.json"
 
+# 代码格式与日期格式的唯一实现 (以前这里跟 apply_grid.py 各带一份正则)。
+# identifiers 模块是 stdlib-only → 这个 job 不装任何依赖也能跑。
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402
+
 # Mirror src/domain/portfolio/asset_universe.py:ETF_DEFS — whitelist of tradeable codes.
 # Source of truth for "what's tradeable". We don't import the asset universe
 # module (src/domain/portfolio/asset_universe.py) because the workflow
@@ -55,8 +61,6 @@ ALLOWED_CODES = {
 NAME_LOOKUP = ALLOWED_CODES  # 6-digit code → Chinese display name
 
 MAX_ROWS = 20
-CODE_RE = re.compile(r"^\d{6}$")
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # 8 valid trade sides — two cash pools (rebalance=real ETF money, grid=virtual).
 # buy/sell always touch cash_rebalance.  transfer_* are inter-pool moves.
 VALID_SIDES = {
@@ -159,28 +163,30 @@ def _coerce_number(v, name: str, allow_zero: bool = False) -> float:
     return n
 
 
-def _validate_trade(t: dict, idx: int, today: str) -> dict:
+def _validate_trade(t: dict, idx: int, today: datetime.date) -> dict:
     if not isinstance(t, dict):
         fail(f"trade {idx}: not an object")
     side = str(t.get("side", "")).strip()
     if side not in VALID_SIDES:
         fail(f"trade {idx}: side must be one of {sorted(VALID_SIDES)}, got {side!r}")
-    date = str(t.get("date", "")).strip()
-    if not DATE_RE.match(date):
-        fail(f"trade {idx}: date must be YYYY-MM-DD, got {date!r}")
-    if date > today:
+    raw_date = str(t.get("date", "")).strip()
+    try:
+        trade_date = TradingDate(raw_date)
+    except ValueError:
+        fail(f"trade {idx}: date must be YYYY-MM-DD, got {raw_date!r}")
+    if trade_date > today:
         # Tolerate date == today+1d (timezone buffer)
-        max_date = (datetime.date.fromisoformat(today) +
-                    datetime.timedelta(days=1)).isoformat()
-        if date > max_date:
-            fail(f"trade {idx}: date {date} is in the future (today={today})")
+        if trade_date > today + datetime.timedelta(days=1):
+            fail(f"trade {idx}: date {raw_date} is in the future (today={today})")
     note = str(t.get("note", "") or "").strip()
 
-    out: dict = {"side": side, "date": date, "note": note}
+    out: dict = {"side": side, "date": trade_date.isoformat(), "note": note}
     if side in ETF_SIDES:
-        code = str(t.get("code", "")).strip().split(".")[0]
-        if not CODE_RE.match(code):
-            fail(f"trade {idx}: code must be 6 digits, got {code!r}")
+        raw_code = str(t.get("code", "")).strip()
+        try:
+            code = AssetCode(raw_code)
+        except ValueError:
+            fail(f"trade {idx}: code must be 6 digits, got {raw_code.split('.')[0]!r}")
         if code not in ALLOWED_CODES:
             fail(f"trade {idx}: code {code} not in whitelist; allowed: "
                  f"{sorted(ALLOWED_CODES)}")
@@ -273,7 +279,7 @@ def main() -> None:
     if not raw_trades:
         fail("no trades to apply")
 
-    today = datetime.date.today().isoformat()
+    today = datetime.date.today()
     cleaned: list[dict] = []
     for i, t in enumerate(raw_trades):
         cleaned.append(_validate_trade(t, i, today))

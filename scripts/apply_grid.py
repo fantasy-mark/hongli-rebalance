@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -53,7 +52,10 @@ GRID_STATE = ROOT / "data" / "grid_state.json"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from src.domain.grid.grid_position import manual_op, split_take_profit  # noqa: E402,F401
+from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402
 # split_take_profit 是 re-export (兼容既有 import), 规则本体在 src/domain/grid/grid_position.py。
+# AssetCode / TradingDate 是**代码格式与日期格式的唯一实现** (以前这里跟
+# apply_holdings.py 各带一份正则, 改一处漏一处)。
 
 # Mirror scripts/apply_holdings.py — same whitelist as src/domain/portfolio/asset_universe.py:ETF_DEFS.
 ALLOWED_CODES = {
@@ -66,8 +68,6 @@ NAME_LOOKUP = ALLOWED_CODES  # code -> Chinese display name (used as state key)
 CODE_TO_NAME = ALLOWED_CODES
 
 MAX_OPS = 20
-CODE_RE = re.compile(r"^\d{6}$")
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 VALID_OPS = {"open", "add", "tp"}
 
 
@@ -121,29 +121,33 @@ def _coerce_number(v, name: str, allow_zero: bool = False) -> float:
     return n
 
 
-def _validate_op(op: dict, idx: int, today: str) -> dict:
+def _validate_op(op: dict, idx: int, today: datetime.date) -> dict:
     if not isinstance(op, dict):
         fail(f"op {idx}: not an object")
     kind = str(op.get("op", "")).strip()
     if kind not in VALID_OPS:
         fail(f"op {idx}: op must be one of {sorted(VALID_OPS)}, got {kind!r}")
-    date = str(op.get("date", "")).strip()
-    if not DATE_RE.match(date):
-        fail(f"op {idx}: date must be YYYY-MM-DD, got {date!r}")
-    if date > today:
-        max_date = (datetime.date.fromisoformat(today) +
-                    datetime.timedelta(days=1)).isoformat()
-        if date > max_date:
-            fail(f"op {idx}: date {date} is in the future (today={today})")
-    code = str(op.get("code", "")).strip().split(".")[0]
-    if not CODE_RE.match(code):
-        fail(f"op {idx}: code must be 6 digits, got {code!r}")
+    raw_date = str(op.get("date", "")).strip()
+    try:
+        trade_date = TradingDate(raw_date)
+    except ValueError:
+        fail(f"op {idx}: date must be YYYY-MM-DD, got {raw_date!r}")
+    if trade_date > today:
+        # Tolerate date == today+1d (timezone buffer)
+        if trade_date > today + datetime.timedelta(days=1):
+            fail(f"op {idx}: date {raw_date} is in the future (today={today})")
+    raw_code = str(op.get("code", "")).strip()
+    try:
+        code = AssetCode(raw_code)
+    except ValueError:
+        fail(f"op {idx}: code must be 6 digits, got {raw_code.split('.')[0]!r}")
     if code not in ALLOWED_CODES:
         fail(f"op {idx}: code {code} not in whitelist; allowed: "
              f"{sorted(ALLOWED_CODES)}")
     price = _coerce_number(op.get("price"), f"op {idx}.price")
     note = str(op.get("note", "") or "").strip()
-    out = {"op": kind, "date": date, "code": code, "price": price, "note": note}
+    out = {"op": kind, "date": trade_date.isoformat(), "code": code,
+           "price": price, "note": note}
     if kind in ("open", "add"):
         out["shares"] = _coerce_number(op.get("shares"), f"op {idx}.shares")
     else:  # tp
@@ -197,7 +201,7 @@ def main() -> None:
     if not raw_ops:
         fail("no ops to apply")
 
-    today = datetime.date.today().isoformat()
+    today = datetime.date.today()
     cleaned: list[dict] = []
     for i, o in enumerate(raw_ops):
         cleaned.append(_validate_op(o, i, today))
