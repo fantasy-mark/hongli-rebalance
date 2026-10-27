@@ -511,9 +511,12 @@ def report_snapshot(run: SnapshotRun) -> None:
     for p, w in zip(positions, weights):
         delta = (w - dyn_target) * 100
         flag = " ⚠" if abs(delta) > THRESHOLD_PP else ""
-        merged_tag = (f"  (含归并 {p['merged_shares']:,.0f}份)"
-                      if p.get("merged_shares") else "")
-        print(f"    {p['name']:<14} {w:>6.2%}  Δ={delta:+.2f}pp{flag}{merged_tag}")
+        # D6: 真实持仓与归并**分开报** —— 页面/邮件也是这个口径 (见
+        # src/presentation/digest.py)。日志里能直接看出哪部分是虚拟的。
+        shares_tag = f"  真实 {float(p.get('shares', 0.0)):,.0f}份"
+        if p.get("merged_shares"):
+            shares_tag += f" + 归并 {p['merged_shares']:,.0f}份"
+        print(f"    {p['name']:<14} {w:>6.2%}  Δ={delta:+.2f}pp{flag}{shares_tag}")
     print(f"  grid layer: ¥{LayerSizingPolicy.from_config(APP_CONFIG.grid).layer_yuan(total, run.recent_min):,.0f} "
           f"(pool ¥{total:,.0f}, recent_min ¥{run.recent_min:,.0f})")
     for s in run.grid_signals:

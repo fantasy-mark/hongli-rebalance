@@ -14,8 +14,8 @@
 > Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
 > Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身
 > —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化 ·
-> Phase 7 ✅ 账本读侧拆成投影。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.9。
+> Phase 7 ✅ 账本读侧拆成投影 · D6 ✅ 披露侧（真实持仓 / 归并 分栏）。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.10。
 
 ---
 
@@ -722,7 +722,7 @@ src/
     grid_simulator.py           ✅ ← run_compound_grid（依赖 domain，不碰写仓储）
     equal_weight_backtest.py    ✅ ← three_pp.py
   presentation/
-    digest.py                   ✅ ← notify.py
+    digest.py                   ✅ ← notify.py（Phase 5d: 真实持仓 / 归并 分栏披露）
     notify_failure.py           ✅
 ```
 
@@ -1590,6 +1590,17 @@ position.in_cycle = edge.to_in_cycle
   op / side 词表改为领域枚举的投影（D10 收口）；账本重放**只剩一份实现**
   （写路径与每日快照共用 `src/domain/ledger/projection.py`）。详见 §11.1.7 (d)。
 
+#### Phase 5d — D6 披露侧（1 次提交）✅ 已落地
+
+§12 的 D6 只剩最后一半：**披露侧** —— 页面/邮件把「真实持仓」与「归并」
+分开显示。**规则本身不动**（归并仍计入权重 —— 那是用户选的），只改呈现。
+
+- 页面「最新持仓」表：`数量` / `含归并` → **`真实持仓`** / **`归并`**
+- 邮件 3pp 再平衡表：同上
+- 每日快照 stdout：`真实 N 份` + `归并 N 份`
+
+- ✅ **已落地**（2026-10-27）：详见 §11.1.10。
+
 #### Phase 6 — 状态机显式化（1 次提交）✅ 已落地
 
 - 把 `manual_op` 里内联的「哪个状态能做哪个动作」收成一张**合法边表**
@@ -1649,6 +1660,64 @@ class LedgerProjection(NamedTuple):
 - ✅ **已落地**（2026-10-27）：`src/domain/ledger/projection.py`；
   `ledger.py` 只剩写侧。目标树（§11.1）对齐。详见 §11.1.9。
 
+#### 11.1.10 D6 披露侧落地情况（2026-10-27）
+
+§12 的 D6 剩最后一半：**披露侧** —— 读者要能一眼看出「这个仓位里有多少是
+我真金白银买的、多少是网格这个虚拟策略带进来的」。规则本身是用户选的，
+**语义一个字不改**，只改呈现。
+
+##### (a) 记录里本来就有这两个数
+
+`Position.to_record()` 写出去的键一直是分开的：
+
+| 键 | 含义 |
+|---|---|
+| `shares` | 账本里的**真实**成交份额 |
+| `merged_shares` | 网格归并进来的**模拟**份额 |
+| `total_shares` | 两者之和 —— **权重与市值用它** |
+
+以前页面只显示「数量」（= `total_shares`）和「含归并」（= `merged_shares`），
+读者要自己减一遍才知道自己真金白银拿了多少。
+
+##### (b) 三个披露面，一套词
+
+| 面 | 原来 | 现在 |
+|---|---|---|
+| 页面「最新持仓」(`app.js:renderLatest`) | 数量 / 含归并 | **真实持仓** / **归并** |
+| 邮件 3pp 再平衡表(`src/presentation/digest.py`) | 数量 / 含归并 | **真实持仓** / **归并** |
+| 每日快照 stdout(`src/application/daily_snapshot.py`) | (含归并 N 份) | **真实 N 份 + 归并 N 份** |
+
+每一面自己的脚注都写清口径：
+
+- **真实持仓** = 账本里的真实成交份额
+- **归并** = 网格归并进来的份额（模拟口径，虚拟策略）
+- **市值 / 权重 / 偏离** = **(真实持仓 + 归并)** —— 不是「真实持仓 × 价格」
+
+⚠️ 网格**操作记录**表里的「数量」是**另一回事** —— 那是那一笔操作的份数，
+语义不同，不改。
+
+##### (c) 为什么「真实持仓」直接取 `shares`，而不是 `total_shares − merged_shares`
+
+`shares` 在**每一条**历史记录里都是真实份额 —— `Position.to_record()` 从
+一开始就是这么写的；`data/history.json` 里 0~9 号记录没有
+`total_shares` / `merged_shares` 两列，但那时归并恒为 0，`shares` 就是全部。
+所以三个面都直接读 `shares`，**不做减法** —— 少一处可能算错的算术。
+
+##### (d) 一个「归并-only」的仓位现在看得很清楚
+
+网格把某个资产的余量归并进组合、而组合自己一笔没买过时，那一行现在是
+「真实持仓 **0** / 归并 N」—— 以前显示的是「数量 N」，看不出来这份持仓
+是虚拟的。
+
+##### (e) 验证
+
+| 检查 | 结果 |
+|---|---|
+| `python -X utf8 -m tests.test_record` | **192/192 通过**（新增 2 个） |
+| `node --check app.js` | ✓ |
+| 页面（chrome-devtools，硬刷新） | ✓ —— 表头 `真实持仓 / 归并`；灌一份带归并的假记录，行显示 `5,200 / 1,232`，归并那栏是红的 |
+| 邮件（真实记录渲染） | ✓ —— 文本表 `真实持仓 32,000 / 归并 —`，脚注两行口径说明 |
+
 ### 11.3 明确**不要**做的
 
 | 不做 | 理由 |
@@ -1670,7 +1739,7 @@ class LedgerProjection(NamedTuple):
 | D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | 改名为 `GridBudget`，在 `total` 里显式标注其虚拟性 |
 | D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | 把网格那一栏标成"虚拟"或从合计剔除（**本轮不修**，迁移后两者已自动对齐到只剩 `cash_rebalance` 的差额） |
 | D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | ✅ **已解决**（Phase 4）—— 资产清单独立成 `AssetUniverse` 注册表（`src/domain/portfolio/asset_universe.py`），`holdings.json` 只剩持仓 | 职责混乱 | ✅ 已解决（§11.1.6） |
-| D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:Portfolio.from_holdings` + `RebalancePolicy.evaluate` | 模拟影响真实 | ⚠️ **半解决**（Phase 4）—— 标注侧已落地：`Provenance` 落在 `PositionLot` 上，`Position.simulated_shares` 是**求和出来的**；**披露侧**（页面/邮件分别显示「真实持仓」与「含归并」）还没做，留到 Phase 5（规则本身是用户选的，不改语义） |
+| D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:Portfolio.from_holdings` + `RebalancePolicy.evaluate` | 模拟影响真实 | ✅ **已解决**（Phase 4 标注 + Phase 5d 披露）—— 标注侧：`Provenance` 落在 `PositionLot` 上，`Position.simulated_shares` 是**求和出来的**；披露侧：页面/邮件/日志都把「**真实持仓**」与「**归并**」分成两栏显示，口径写在各自脚注里（详见 §11.1.10）。**规则本身不改** —— 归并仍计入权重，那是用户 2026-10-25 拍板的 |
 | D7 | 网格规则两套实现 | ✅ **已解决**（Phase 3）—— `src/domain/grid/trigger_policy.py:TriggerPolicy` 现在是**生产 + 回测**两条路径**唯一**的判定来源 | 改参数会静默分叉 | ✅ 已解决（§11.1.5）—— `run_compound_grid` 调用 `policy.levels(...)`，并有静态测试防止内联算术回流 |
 | D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | ✅ **已解决**（Phase 5a）—— 参数收进 `src/domain/grid/config.py:GridConfig` 与 `src/application/config.py:AppConfig`；模块级别名保留为**配置对象的投影**；`TriggerPolicy.from_config` / `LayerSizingPolicy.from_config` / `advance_all_grids(config=)` / `run_backtest(threshold_pp=)` 让多套策略在一个进程里并存 | 无法做多策略并存、测试需改环境 | ✅ 已解决（§11.1.7 a）—— `test_env_reads_are_confined_to_the_config_objects` 静态钉住「只有配置对象读环境变量」 |
 | D9 | `evaluate()` 的两段式求值是隐式近似 | ✅ **已解决**（Phase 5c）—— `SnapshotRun.layer_sizing_basis` / `SnapshotRun.snapshot_basis` 各有名字：层额定尺用前者，记录用后者 | 恢复自动行为时会有偏差 | ✅ 已解决（§11.1.7 c）—— `test_size_grid_layer_uses_the_layer_sizing_basis_total` 钉住「层额用的是层额定尺那个数」 |
@@ -1688,7 +1757,7 @@ class LedgerProjection(NamedTuple):
 - [x] 「出场只卖成本额」在哪里保证？→ `cost_only_exit` 唯一实现（Phase 2a ✅）
 - [x] 「什么算触发只有一份规则」在哪里保证？→ `TriggerPolicy.levels` 是生产路径与回测路径**唯一**的判定来源（Phase 3 ✅）；`test_simulator_has_no_inline_trigger_arithmetic` 静态挡住内联算术回流
 - [x] 「归并份额不写 trades.json」在哪里保证？→ `MergedSharesTransferred` 事件，账本上下文无写权限（Phase 5b ✅）—— 组合**只**从事件吸收归并份额；八个 `TradeSide` 里没有「归并」这一档，`apply_trade` 遇到未知 side 直接抛错
-- [x] 「模拟不是实盘」在哪里保证？→ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b ✅）；`Provenance` 落在 `PositionLot` 上、`Position.simulated_shares` 是求和出来的（Phase 4 ✅）；**呈现层的披露**待 Phase 5
+- [x] 「模拟不是实盘」在哪里保证？→ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b ✅）；`Provenance` 落在 `PositionLot` 上、`Position.simulated_shares` 是求和出来的（Phase 4 ✅）；**呈现层的披露**：页面/邮件/日志都把「真实持仓」与「归并」**分成两栏**（Phase 5d ✅，§11.1.10）
 - [x] 「目标权重 = 1/n」在哪里保证？→ `TargetWeightPolicy`（Phase 4 ✅）—— 类里只有这一处实现；UI 从 `Portfolio` / 记录推导而非硬编码（Phase 4 ✅，`app.js` 里手抄的清单已删）
 - [x] 「持仓市值不会被抄错」在哪里保证？→ `Position.value` 是 `total_shares × price` **推出来的**，`Position.to_record()` 是它的输出（Phase 4 ✅）；`test_position_value_is_derived_from_lots_not_copied` 钉住这条
 - [x] 「状态形状固定」在哪里保证？→ `GridPosition` dataclass，mapper 显式（Phase 2a ✅）

@@ -164,9 +164,14 @@ function renderLatest(rec) {
     const w = rec.weights[i];
     const delta = (w - rec.target_w) * 100;
     const over = Math.abs(delta) > rec.threshold_pp;
-    // 数量 = 真实持仓 + 网格归并进来的份额 (模拟口径)。市值 p.value 已经是
-    // total_shares × price, 所以数量必须跟着 total_shares 走, 否则两栏对不上。
-    const totalShares = Number(p.total_shares ?? p.shares ?? 0);
+    // D6: 份额拆成**两个数**摆出来 —— 「真实持仓」与「归并」。
+    //   真实持仓 ← p.shares        (账本里的真实成交份额)
+    //   归并     ← p.merged_shares (网格归并进来的**模拟**份额)
+    // 两个数分开显示, 才看得出某个仓位里有多少是虚拟的 (网格是虚拟策略)。
+    // ⚠️ 市值 p.value / 权重 / 偏离 走的是**另一个口径** ——
+    //    (真实持仓 + 归并) × 价格, 页脚写清楚了, 别拿「真实持仓 × 价格」
+    //    去对市值。
+    const realShares = Number(p.shares ?? 0);
     const mergedShares = Number(p.merged_shares || 0);
     const mergedCell = mergedShares > 0
       ? `<span style="color:#B03A2E;">${Math.round(mergedShares).toLocaleString()}</span>`
@@ -174,12 +179,12 @@ function renderLatest(rec) {
     return `<tr>
       <td>${p.name}</td>
       <td>${p.code}</td>
-      <td>${Math.round(totalShares).toLocaleString()}</td>
+      <td>${Math.round(realShares).toLocaleString()}</td>
+      <td>${mergedCell}</td>
       <td>¥${p.price.toFixed(3)}</td>
       <td>¥${Math.round(p.value).toLocaleString()}</td>
       <td>${(w * 100).toFixed(2)}%</td>
       <td class="${over ? 'warn' : ''}">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}pp</td>
-      <td>${mergedCell}</td>
     </tr>`;
   }).join('');
 
@@ -240,12 +245,12 @@ function renderLatest(rec) {
     <table>
       <thead>
         <tr>
-          <th>名称</th><th>代码</th><th>数量</th><th>价格</th><th>市值</th><th>权重</th><th>偏离</th><th>含归并</th>
+          <th>名称</th><th>代码</th><th>真实持仓</th><th>归并</th><th>价格</th><th>市值</th><th>权重</th><th>偏离</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
-    <p class="muted" style="font-size:12px;">数量与市值含网格归并进来的份额(模拟口径) · 含归并 = 其中来自网格的部分</p>
+    <p class="muted" style="font-size:12px;">真实持仓 = 账本里的真实成交份额 · 归并 = 网格归并进来的份额(模拟口径, 虚拟策略) · 市值 = (真实持仓 + 归并) × 价格 · 权重与偏离按含归并口径</p>
 
     ${grid.length ? `
     <h3 style="margin-top:1.5em;">复合网格 <span class="muted" style="font-size:12px;font-weight:normal;">(引擎只给建议, 不会自动下单 · 单层金额 ¥${layer.toLocaleString()})</span></h3>

@@ -3933,6 +3933,77 @@ def test_the_state_machine_stays_stdlib_only():
         assert banned not in src, banned
 
 
+# -----------------------------------------------------------------------------
+# D6 —— 披露侧: 「真实持仓」与「归并」分开显示 (页面 / 邮件 / 日志)
+# -----------------------------------------------------------------------------
+
+def _make_record_with_merged() -> dict:
+    """一个「真实持仓 + 网格归并」的仓位 —— 记录里两个数分开存。"""
+    return {
+        "date": "2026-10-27",
+        "total": 100000.0,
+        "etf_value": 100000.0,
+        "cash_rebalance": 0.0,
+        "cash_grid": 0.0,
+        "cash_total": 0.0,
+        "positions": [
+            {"name": "黄金ETF博时", "code": "159937", "shares": 5200.0,
+             "price": 8.148, "date": "2026-10-27", "value": 52390.44,
+             "merged_shares": 1231.53, "total_shares": 6431.53,
+             "merged_value": 10034.50},
+        ],
+        "weights": [0.5],
+        "target_w": 1.0,
+        "threshold_pp": 3.0,
+        "triggered": False,
+        "plan": [],
+        "grid_signals": [],
+        "grid_state": {},
+    }
+
+
+def test_the_disclosure_splits_real_holdings_from_merged_shares():
+    """D6: 邮件把份额拆成「真实持仓」与「归并」两栏 —— 读者不用自己减。"""
+    from src.presentation import digest as notify
+    r = _make_record_with_merged()
+    text = notify.build_text(r)
+    html = notify.build_html(r, pages_url="https://x/")
+
+    # 表头: 两栏分开, 不再有含糊的「数量」
+    assert "真实持仓" in text, text
+    assert ">数量</th>" not in html, html
+    assert "真实持仓</th>" in html, html
+    assert ">归并</th>" in html, html
+
+    # 行: 真实 5,200 / 归并 1,232 —— 含归并的合计 (6,432) 不再单独出现
+    line = [ln for ln in text.splitlines() if "黄金ETF博时" in ln][0]
+    assert "5,200" in line, line
+    assert "1,232" in line, line
+    assert "6,432" not in line, line
+
+    # 页脚把口径写清楚 —— 免得拿「真实持仓 × 价格」去对市值
+    assert "真实持仓 = 账本里的真实成交" in text, text
+    assert "真实持仓 = 账本里的真实成交" in html, html
+
+
+def test_the_page_and_the_email_disclose_the_same_two_numbers():
+    """页面与邮件用**同一套词** —— 真实持仓 / 归并。"""
+    js = (ROOT / "app.js").read_text(encoding="utf-8")
+    # 「最新持仓」表的表头 —— 两栏分开 (别的表的「数量」不受影响:
+    # 网格操作记录里的数量是那一笔操作的份数, 语义不同)。
+    assert ("<th>名称</th><th>代码</th><th>真实持仓</th><th>归并</th>"
+            in js), js
+    assert "<th>名称</th><th>代码</th><th>数量</th>" not in js, js
+    assert "<th>含归并</th>" not in js, js
+    # 真实持仓取的是记录里的 `shares` (账本真实份额), 不是合计减出来的
+    assert "realShares = Number(p.shares" in js, js
+
+    src = (ROOT / "src" / "presentation" / "digest.py").read_text(encoding="utf-8")
+    assert ">数量</th>" not in src, src
+    assert ">含归并</th>" not in src, src
+    assert 'real_sh = float(p.get("shares"' in src, src
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]

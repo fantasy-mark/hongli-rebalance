@@ -118,6 +118,9 @@
           归并份额是<strong>模拟口径</strong>：网格本身是虚拟策略，所以归并进组合的份额
           也不会写进 <code>data/trades.json</code>（那里只记录真实成交）；
           它们只参与页面/邮件里的组合权重与市值。
+          「最新持仓」表把份额拆成<strong>两列</strong>：<strong>真实持仓</strong>
+          （账本里的真实成交）与<strong>归并</strong>（网格进来的模拟份额）——
+          不用自己拿合计减一遍。
         </p>
         <p class="muted" style="font-size:12px;">
           <strong>副作用提醒</strong>：回本出场的余量并入再平衡持仓后，该资产权重可能

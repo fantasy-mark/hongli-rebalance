@@ -132,23 +132,29 @@ def build_text(r: dict) -> str:
         f"目标权重:  {fmt_pct(r['target_w'])}    阈值: ±{r['threshold_pp']:.1f}pp",
         "",
         "[3pp 再平衡]",
-        f"{'名称':<14}{'权重':>8}{'偏离':>10}{'当前价':>10}{'数量':>14}{'含归并':>10}{'触发':>6}",
+        f"{'名称':<14}{'权重':>8}{'偏离':>10}{'当前价':>10}{'真实持仓':>14}{'归并':>10}{'触发':>6}",
         "-" * 74,
     ]
     for p, w in zip(r["positions"], r["weights"]):
         delta = (w - r["target_w"]) * 100
         over = abs(delta) > r["threshold_pp"]
         flag = " ⚠" if over else "  "
-        # 数量 = 持仓 + 网格归并进来的份额 (模拟口径, 见 src/domain/grid/grid_position.py)。
-        total_sh = int(p.get("total_shares", p["shares"]))
+        # D6: 份额**拆成两个数** —— 「真实持仓」与「归并」分开显示, 才看得出
+        # 这个仓位里有多少是虚拟的 (网格是虚拟策略)。
+        #   真实持仓 ← p["shares"]        (账本里的真实成交份额)
+        #   归并     ← p["merged_shares"] (网格归并进来的**模拟**份额)
+        # ⚠️ 权重/总市值走的是**另一个口径** —— (真实持仓 + 归并), 见下面那行说明。
+        real_sh = float(p.get("shares", 0.0) or 0.0)
         merged = float(p.get("merged_shares", 0.0) or 0.0)
-        merged_cell = f"{int(merged):,}" if merged > 0 else f"{'—':>10}"
+        merged_cell = f"{int(round(merged)):,}" if merged > 0 else f"{'—':>10}"
         lines.append(
             f"{p['name']:<14}{fmt_pct(w):>7}{fmt_delta_pp(delta):>9}"
-            f"{p['price']:>10.3f}{total_sh:>14,}{merged_cell}{flag}"
+            f"{p['price']:>10.3f}{int(round(real_sh)):>14,}{merged_cell}{flag}"
         )
     lines += [
         "-" * 74,
+        "份额口径: 真实持仓 = 账本里的真实成交 · 归并 = 网格归并进来的(模拟)",
+        "  权重与总市值按 (真实持仓 + 归并) 计算",
         "",
         f"3pp 结论: {'⚠ 触发调仓' if r['triggered'] else '✓ 无需调仓'}",
         "",
@@ -236,10 +242,11 @@ def _position_row(p: dict, w: float, target_w: float, threshold_pp: float) -> st
     over = abs(delta) > threshold_pp
     delta_color = COLOR_WARN if over else "#222"
     delta_str = fmt_delta_pp(delta)
-    # 数量 = 真实持仓 + 网格归并进来的份额 (模拟口径)。
-    shares_int = int(p.get("total_shares", p["shares"]))
+    # D6: 真实持仓与归并**分开显示** (口径同文本版, 见 build_text)。
+    real_sh = float(p.get("shares", 0.0) or 0.0)
+    shares_int = int(round(real_sh))
     merged = float(p.get("merged_shares", 0.0) or 0.0)
-    merged_cell = (f'<span style="color:#B03A2E;font-weight:600;">{int(merged):,}</span>'
+    merged_cell = (f'<span style="color:#B03A2E;font-weight:600;">{int(round(merged)):,}</span>'
                    if merged > 0 else
                    '<span style="color:#bbb;">—</span>')
     weight_bold = "bold" if over else "normal"
@@ -497,14 +504,14 @@ def build_html(r: dict, pages_url: str = "") -> str:
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">权重</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">偏离</th>
             <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">价格</th>
-            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">数量</th>
-            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">含归并</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">真实持仓</th>
+            <th style="text-align:right;padding:10px 6px;color:#666;font-weight:600;border-bottom:2px solid #dee2e6;">归并</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
       </table>
       <div style="font-size:11px;color:#999;margin-top:6px;">
-        数量含网格归并进来的份额(模拟口径) · 含归并 = 其中来自网格的部分
+        真实持仓 = 账本里的真实成交份额 · 归并 = 网格归并进来的份额(模拟口径, 虚拟策略) · 市值与权重按 (真实持仓 + 归并) 计算
       </div>
     </div>
 {grid_section}
