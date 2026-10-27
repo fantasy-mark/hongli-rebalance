@@ -374,6 +374,13 @@ class GridSuggestion:
 而 `GridOp` 是**已经发生**的操作，带 `source: manual`。这样：
 "引擎永远不下单"这条不变量由**类型**保证，而不是靠注释和 code review。
 
+> ✅ **Phase 2b 已落地**（2026-10-27）。实际落地形状与上面的草稿略有不同：
+> `GridSuggestion` 的三个距离分成了 `open_distance` / `add_distance` /
+> `tp_distance` 三个独立字段（不是一个 `distance`）—— 页面要分别显示
+> 「距开仓 / 距加仓 / 距回本」；成交侧分成了 `GridOp`（基类）/ `ExecutedOp`
+> （`source="manual"`）/ `SimulatedOp`（`source="backtest"`）三个类型。
+> 详见 §11.1.4。
+
 ---
 
 ## 7. 领域服务
@@ -385,8 +392,8 @@ class GridSuggestion:
 | `ValuationService` | `record.py:295 fetch_positions` | 有 I/O | 属 BC-D，但结果组装在 BC-B |
 | `RebalancePolicy` | `record.py:431 evaluate` | 纯 | ⚠ 依赖模块级 `THRESHOLD_PP` |
 | `RebalancePlanner` | `record.py:452-462`（plan 构造） | 纯 | 混在 `evaluate` 里，应拆 |
-| `TriggerPolicy` | `grid.py:395 _triggers` | 纯 | ✅ 已经是单一事实源 |
-| `GridAdvisor` | `grid.py:501 advisory` | 纯 | ✅ 纯函数，不改 state |
+| `TriggerPolicy` | `grid.py:395 _triggers` | 纯 | ✅ 已经是单一事实源 → Phase 2b 提成类 `domain/grid/trigger_policy.py` |
+| `GridAdvisor` | `grid.py:501 advisory` | 纯 | ✅ 纯函数，不改 state → Phase 2b 提成类 `domain/grid/advisor.py` |
 | `LayerSizingPolicy` | `grid.py:54 layer_yuan` | 纯 | 依赖模块级常量 |
 | `CostOnlyExitPolicy` | `grid/exit_policy.py cost_only_exit` | 纯 | ✅ 三处复用，唯一实现 |
 | `GridSimulator` | `grid.py:116 run_compound_grid` | 纯（有 I/O 取价） | ⚠ 自带一套触发逻辑 |
@@ -418,6 +425,12 @@ TriggerPolicy
 三个 driver 的**驱动价/层额**不同是**合理的**（它们本来就是三种场景），
 但**判定规则**必须只有一份。现在的两套实现在 `GRID_TP_BASIS`、`GRID_STEP_PCT`
 被改动时会静默分叉。
+
+> **进度**：`TriggerPolicy` 类已在 Phase 2b 落地
+> （`src/domain/grid/trigger_policy.py`，生产路径 `_triggers` 已改成它的薄适配器）。
+> Phase 3 剩的那一步是**把回测路径接上** —— `run_compound_grid` 里的内联
+> 判断换成调用同一个 `TriggerPolicy`。注意回测用的是**收盘价 + 固定 ¥10k 层额**，
+> 所以接上去之后**行为必须逐位不变**（60 行 `backtest` ops 会重算，需比对）。
 
 ---
 
@@ -539,12 +552,12 @@ total      (归并后)  → 写进快照 + 3pp 判阈
 | I7 | 正常回本出场的已实现盈亏 ≡ 0 | `grid.py:108` | `CostOnlyExitPolicy` |
 | I8 | 网格资金占用 = 仅周期内的层市值 | `grid.py:614 asset_snapshot` | `GridPosition.capital_tied_up` |
 | I9 | 归并份额**不写** `trades.json` | 靠"没人写"这个事实 | `MergedSharesTransferred` 事件 + 无写权限 |
-| I10 | 引擎**永不**改仓位/层数/盈亏/归并份额 | `grid.py:539` + 单测 | `LiveAdvisor` 返回**不可变**建议对象 |
-| I11 | 网格状态只由固定 6 个 key 构成 | ⚠ 隐含在 `grid.py:599` / `grid.py:702` 的字面量 | 显式 dataclass + 显式序列化 |
+| I10 | 引擎**永不**改仓位/层数/盈亏/归并份额 | `grid.py:539` + 单测 | ✅ `GridAdvisor` 返回**不可变** `GridSuggestion`（Phase 2b） |
+| I11 | 网格状态只由固定 6 个 key 构成 | ⚠ 隐含在 `grid.py:599` / `grid.py:702` 的字面量 | ✅ 显式 dataclass + 显式序列化（Phase 2a） |
 | I12 | 目标权重 = 1/持仓数（动态篮子） | `record.py:449` | `TargetWeightPolicy` |
 | I13 | 偏离 > 3pp 才触发，全额快照回正 | `record.py:451` | `RebalancePolicy` |
 | I14 | 一批网格操作 all-or-nothing | `apply_grid.py` 校验失败即退出 | `GridOpBatch` 的原子性 |
-| I15 | 页面/邮件不得把模拟说成实盘 | ⚠ 靠文案自觉 | `Provenance` + 呈现层强制 |
+| I15 | 页面/邮件不得把模拟说成实盘 | ⚠ 靠文案自觉 | ✅ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b）+ `Provenance` + 呈现层强制 |
 
 ### I11 的具体危害（已发生过）
 
@@ -631,10 +644,11 @@ src/
       asset_universe.py         ✅ ETF_DEFS / ASSET_NAMES / NAME_TO_CODE / QDII_CODES
     grid/
       grid_position.py          ✅ 网格聚合的领域半（stdlib-only！）
-      grid_op.py                ⬜ Phase 2
-      trigger_policy.py         ⬜ Phase 3
+      grid_op.py                ✅ Phase 2b —— GridOp / ExecutedOp / SimulatedOp
+      trigger_policy.py         ✅ Phase 2b —— TriggerPolicy / TriggerLevel /
+                                TriggerDistance（Phase 3 再把回测接上）
       exit_policy.py            ✅ Phase 2 —— ExitAtCost / cost_only_exit
-      advisor.py                ⬜ Phase 2
+      advisor.py                ✅ Phase 2b —— GridAdvisor → GridSuggestion
       layer_sizing.py           ⬜ Phase 3
     events/
       domain_events.py          ⬜ Phase 5
@@ -713,14 +727,14 @@ Phase 1 分两次提交落地：
 `quote_providers` 的 `premium_pct`、`build_record` 的 `target_w`
 （`1/n` 不取整，页面按它算目标市值）、`rebalance_policy.target_weight`。
 
-#### 11.1.3 Phase 2 落地情况（2026-10-27）
+#### 11.1.3 Phase 2a 落地情况（2026-10-27）
 
 Phase 2 分两次提交落地，**这一节记的是 2a（聚合 + mapper + 改名）**：
 
 | 提交 | 内容 |
 |---|---|
-| 本次（2a） | `src/domain/grid/exit_policy.py` + `GridPosition` 聚合根 + 显式 mapper |
-| 2b（未做） | `src/domain/grid/grid_op.py`（`GridOp` / `ExecutedOp` / `SimulatedOp`）、`src/domain/grid/advisor.py`（`GridSuggestion`） |
+| 2a | `src/domain/grid/exit_policy.py` + `GridPosition` 聚合根 + 显式 mapper |
+| 2b | `src/domain/grid/grid_op.py`（`GridOp` / `ExecutedOp` / `SimulatedOp`）、`src/domain/grid/advisor.py`（`GridSuggestion`）、`src/domain/grid/trigger_policy.py`（`TriggerPolicy`）—— 详见 §11.1.4 |
 
 ##### (a) 出场规则独立成模块 + 改名
 
@@ -808,13 +822,113 @@ class GridPosition:
 
 ##### (e) Phase 2b 待做
 
-- `grid_op.py`：`GridOp`（基类）/ `ExecutedOp`（`source="manual"`）/
-  `SimulatedOp`（`source="backtest"`）—— 把「建议 ≠ 成交」写成类型（§6.3）。
-- `advisor.py`：`GridSuggestion` —— 把 `advisory()` 现在返回的裸 dict 变成
-  具名值对象，`signal: str` 变成 `level: TriggerLevel | None`。
+- ~~`grid_op.py`：`GridOp`（基类）/ `ExecutedOp`（`source="manual"`）/
+  `SimulatedOp`（`source="backtest"`）—— 把「建议 ≠ 成交」写成类型（§6.3）。~~
+  ✅ 见 §11.1.4
+- ~~`advisor.py`：`GridSuggestion` —— 把 `advisory()` 现在返回的裸 dict 变成
+  具名值对象，`signal: str` 变成 `level: TriggerLevel | None`。~~ ✅ 见 §11.1.4
 
 > ⚠️ 本文档 §4 / §7 里的 `grid.py:NNN` 行号引用指的是 **Phase 0 之前**的文件布局；
 > 该文件现在是 `src/domain/grid/grid_position.py`。
+
+#### 11.1.4 Phase 2b 落地情况（2026-10-27）
+
+Phase 2b 把「**建议**」和「**成交**」从两个裸 dict 变成**两个不同的类型**，
+并顺手把触发规则提成独立的 `TriggerPolicy`（§7 点名的最严重那处重复的第一步）。
+
+新增三个模块，全部 **stdlib-only**（`scripts/apply_grid.py` 在不装
+pandas/akshare 的 Actions job 里 import 这条链路）：
+
+```
+domain/grid/trigger_policy.py   TriggerLevel / TriggerDistance /
+                                 TriggerLevels / TriggerPolicy
+domain/grid/grid_op.py           OpKind / OpSource / GridOp /
+                                 ExecutedOp / SimulatedOp
+domain/grid/advisor.py           GridSuggestion / GridAdvisor
+```
+
+依赖方向是单向的：`trigger_policy`（叶子）→ `grid_op` → `advisor` →
+`grid_position`。`advisor` 收的是**裸参数**（`in_cycle` / `entries` /
+`window` / `price`），所以它不需要 import `grid_position`，也就没有环。
+
+##### (a) `TriggerPolicy` —— 触发规则的**唯一**定义
+
+`trigger_policy.py` 的 `TriggerPolicy.levels(...)` 是老 `_triggers` 的**逐字移植**：
+同样的分支顺序、同样的 `min(cands, key=abs)` 平手取 `add`、同样的 `or 0.0` 兜底。
+
+生产路径的 `_triggers` 现在只是个**薄适配器**（返回 `TriggerLevels.to_dict()`，
+形状与老版本一字不差），`advance_one_day` 直接调 `policy.levels(...)`。
+
+⚠️ **`TriggerDistance.pct` / `.price` 保持原始 float**，不套 `DeviationPP` /
+`Price` —— 取整发生在**输出边界**（`GridSuggestion` 构造时）。这跟 §11.1.2 的
+舍入点纪律是同一条：在没有 `round()` 的地方构造值对象，就是在偷偷改数字。
+
+##### (b) `GridOp` —— 「已经发生」的那一条
+
+| 类型 | `source` | 含义 |
+|---|---|---|
+| `ExecutedOp` | `"manual"` | **实盘成交** —— 用户在页面提交的 op。**唯一的实盘来源** |
+| `SimulatedOp` | `"backtest"` | **模拟成交** —— 历史重放产物。**不是**成交 |
+| `GridOp` | 其它 | 遗留的 `"auto"`（自动交易时代引擎自己下的单）落在这里，**不猜** |
+
+`ExecutedOp` / `SimulatedOp` 在 `__post_init__` 里**校验** `source`：
+`ExecutedOp(source="backtest")` 直接抛 `ValueError`。这条不变量
+（**没有任何实盘 op 来自引擎**）因此由类型保证。
+
+⚠️ **`data/grid_state.json` 的 JSON 格式不变**：`GridOp.to_dict()` 的 key 顺序
+与老版本一字不差（`date/op/source/price/shares/note`，tp 额外四个在后面），
+值也**不取整** —— 这些数字原样进出文件，套值对象会改掉账。
+
+##### (c) `GridSuggestion` —— 「应该做什么」
+
+`advisory()` 现在返回 `GridSuggestion`（具名值对象）而不是裸 dict：
+
+| 字段 | 老 dict 里的对应 |
+|---|---|
+| `level: TriggerLevel \| None` | `signal` |
+| `nearest: TriggerDistance` | `trigger_kind` + `trigger_pct` + `trigger_price` |
+| `open_distance` / `add_distance` / `tp_distance` | `dist_open_pct` / `dist_add_pct` / `dist_tp_pct` |
+| `suggest_price` / `suggest_shares` / `suggest_amount` | 同名 |
+
+`to_dict()` 输出的形状与老 `advisory()` **一字不差**，`history.json` 里
+`grid_signals` 的形状、`app.js` 读的字段名都不用动。
+
+##### (d) 两个过渡期入口
+
+`GridOp` 和 `GridSuggestion` 都实现了 `__getitem__` / `__contains__` ——
+既有的调用方（`daily_snapshot.py`、`app.js` 的数据来源、`scripts/` 的对账脚本、
+测试）都按 `o["op"]` 读 dict，保持这个入口它们就不必跟着改。
+
+##### (e) 一个必须避开的坑：`str, Enum` 的格式化
+
+`TriggerLevel` 是 `str` 的子类，所以 `TriggerLevel.OPEN == "open"` 成立、
+`json.dumps` 直接输出 `"open"`。**但** `Enum` 覆盖了 `str.__str__` ——
+`f"{TriggerLevel.OPEN}"` 会显示成 `TriggerLevel.OPEN` 而不是 `open`。
+
+`daily_snapshot.py` 里有一处 `距{trigger_kind}` 的 f-string。踩中就是
+**页面显示「距TriggerLevel.OPEN」**。三道防线：
+
+1. 两个 enum 都显式定义了 `__str__` 返回 `self.value`；
+2. 所有 JSON / 格式化边界一律用 `.value`；
+3. `GridSuggestion.__getitem__` 返回 `to_dict()[key]`（**裸字符串**），
+   所以 `daily_snapshot.py` 一行都不用改。
+
+##### (f) 验证
+
+| 检查 | 结果 |
+|---|---|
+| 逐字节回归（确定性流程 dump 前后对比：state 往返 / `advance_one_day` × 20 天 × 4 资产 / `advisory` / `manual_op` open→add→tp / `ops_from_cycles` / `merge_backtest_ops`） | **逐字节相同** |
+| `python -X utf8 -m tests.test_record` | **131/131 通过**（新增 16 个 TriggerPolicy / GridOp / GridSuggestion 测试） |
+| `data/grid_state.json` 往返（4 个资产） | 每个都 `to_state() == 原 dict`，6 个 key 不变 |
+| `scripts/apply_grid.py` 真实 payload 冒烟 | import 链正常；非法 op 正确报错并退出 rc=1（`::error::` annotation 在） |
+| `import src.domain.grid.{trigger_policy,grid_op,advisor,grid_position}` 拉起 pandas / akshare？ | **没有**（stdlib-only 约束仍成立） |
+
+##### (g) Phase 3 还剩什么
+
+`TriggerPolicy` 已经就位，但**回测路径还没接上** ——
+`run_compound_grid` 仍是内联判断。接的时候注意：回测用的是**收盘价 + 固定
+¥10k 层额**，接上去之后**行为必须逐位不变**（60 行 `backtest` ops 会重算，
+需逐行比对）。
 
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
@@ -836,18 +950,21 @@ class GridPosition:
 - 风险：影响面最大的一步。**每替换一个值对象就跑一次全量测试**
 - 收益：一旦完成，§10 里所有"round 到 2 位小数"的手工代码都可以删掉
 
-#### Phase 2 — 网格聚合显式化（2 次提交）✅ 进行中（2a 已落地）
+#### Phase 2 — 网格聚合显式化（2 次提交）✅ 已落地
 
 - 把 6 key 字面量换成 `GridPosition` dataclass + 显式 mapper ✅ **2a**
 - `take_profit` 系列改名 `ExitAtCost` / `cost_only_exit` ✅ **2a**
-- `GridSuggestion` 与 `GridOp` 分型 ⬜ **2b**
-- 保留 `data/grid_state.json` 的 **JSON 格式不变**（mapper 负责读写） ✅ **2a**
+- `GridSuggestion` 与 `GridOp` 分型 ✅ **2b**
+- 保留 `data/grid_state.json` 的 **JSON 格式不变**（mapper 负责读写） ✅ **2a / 2b**
 
 - 收益：I11 的静默丢数据风险消失；"引擎不下单"由类型保证
 
 #### Phase 3 — 触发规则去重（1~2 次提交）
 
-把 `run_compound_grid` 内联的触发判断换成调用 `TriggerPolicy`。
+`TriggerPolicy` 已在 **2b** 提成独立的类（`domain/grid/trigger_policy.py`），
+生产路径 `_triggers` 已改成它的薄适配器。剩下的是把 **`run_compound_grid`
+内联的触发判断换成调用同一个 `TriggerPolicy`**。
+
 **行为必须逐位不变**（回测历史和 ops 的 60 行会重算，需比对）。
 
 - 注意：`ops` 里已有的 60 行 `backtest` op 是用旧逻辑算的。若新逻辑结果不同，
@@ -892,7 +1009,7 @@ class GridPosition:
 | D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | 把网格那一栏标成"虚拟"或从合计剔除（**本轮不修**，迁移后两者已自动对齐到只剩 `cash_rebalance` 的差额） |
 | D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | `src/infrastructure/json_repositories.py:read_holdings` | 职责混乱 | Phase 4 拆出 `AssetUniverse` |
 | D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:merge_grid_shares_into_positions` + `rebalance_policy.evaluate` | 模拟影响真实 | `Provenance` 标注 + 页面披露（规则本身是用户选的，不改语义） |
-| D7 | 网格规则两套实现 | `src/domain/grid/grid_position.py:_triggers` vs `src/simulation/grid_simulator.py:run_compound_grid` | 改参数会静默分叉 | Phase 3 |
+| D7 | 网格规则两套实现 | `src/domain/grid/trigger_policy.py:TriggerPolicy`（生产路径已接）vs `src/simulation/grid_simulator.py:run_compound_grid`（仍是内联判断） | 改参数会静默分叉 | Phase 3 —— `TriggerPolicy` 已就位，只剩回测接上 |
 | D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | `src/application/daily_snapshot.py:THRESHOLD_PP`, `src/domain/grid/grid_position.py:GRID_*` | 无法做多策略并存、测试需改环境 | Phase 5 提为配置对象 |
 | D9 | `evaluate()` 的两段式求值是隐式近似 | `src/application/daily_snapshot.py:main` | 恢复自动行为时会有偏差 | 显式命名为 `LayerSizingBasis` / `SnapshotBasis` |
 | D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | `apply_grid.py` 的 `VALID_OPS` vs `grid_position.py` 的 op 名 | 改一处漏一处 | 提到 `domain/grid` 单一处 |
@@ -904,14 +1021,14 @@ class GridPosition:
 
 重构后，下面每一条都应该能被**代码结构**回答，而不是靠注释或文档：
 
-- [ ] 「网格引擎不交易」在哪里保证？→ `LiveAdvisor` 返回不可变 `GridSuggestion`，类型上无法写 state
+- [x] 「网格引擎不交易」在哪里保证？→ `GridAdvisor` 返回不可变 `GridSuggestion`，类型上无法写 state（Phase 2b ✅）
 - [ ] 「一个周期 N 买 1 卖」在哪里保证？→ `GridPosition` 状态机的合法边
-- [ ] 「出场只卖成本额」在哪里保证？→ `CostOnlyExitPolicy` 唯一实现
+- [x] 「出场只卖成本额」在哪里保证？→ `cost_only_exit` 唯一实现（Phase 2a ✅）
 - [ ] 「归并份额不写 trades.json」在哪里保证？→ `MergedSharesTransferred` 事件，账本上下文无写权限
-- [ ] 「模拟不是实盘」在哪里保证？→ `Provenance` 值对象 + `ExecutedOp` / `SimulatedOp` 分型
+- [x] 「模拟不是实盘」在哪里保证？→ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b ✅）；`Provenance` 待 Phase 4/5
 - [ ] 「目标权重 = 1/n」在哪里保证？→ `TargetWeightPolicy`，且 UI 从 `Portfolio` 推导而非硬编码
-- [ ] 「状态形状固定」在哪里保证？→ `GridPosition` dataclass，mapper 显式
-- [ ] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型、不同仓储权限
+- [x] 「状态形状固定」在哪里保证？→ `GridPosition` dataclass，mapper 显式（Phase 2a ✅）
+- [ ] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型、不同仓储权限（`SimulatedOp` 已就位，Phase 3 收尾）
 
 ---
 

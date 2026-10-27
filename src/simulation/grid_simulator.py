@@ -26,9 +26,12 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from ..domain.grid.exit_policy import cost_only_exit
+from ..domain.grid.grid_op import OpKind, OpSource, SimulatedOp
 from ..domain.grid.grid_position import (
     GRID_BASE_YUAN,
     GRID_LOOKBACK,
+)
+from ..domain.grid.trigger_policy import (
     GRID_STEP_PCT,
     GRID_TP_BASIS,
     GRID_TP_PCT,
@@ -171,14 +174,18 @@ def _iso_date(d) -> str:
     return str(d)[:10]
 
 
-def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
+def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list:
     """Convert a `run_compound_grid` result into per-event ops rows.
 
     Pure function: no I/O, no pandas import (so tests can call it without
     akshare/matplotlib). Mirrors the schema `advance_one_day` /
-    `manual_op` append, but tagged source="backtest" because the inputs
+    `manual_op` append, but tagged `source="backtest"` because the inputs
     come from a historical replay rather than the live engine — the page
     renders that as a separate 回测 chip.
+
+    ⚠️ 返回的是**带类型**的 `SimulatedOp` —— 「模拟成交」与实盘的
+    `ExecutedOp` 是不同的类型, 混不进去。要写进 JSON 时用 `op.to_dict()`
+    (形状与老版本一字不差), 按 dict 读也仍然可用 (`op["op"]`)。
 
     Mapping:
       cycle.entries[0]     -> op="open", note "回测·窗口突破开仓"
@@ -192,22 +199,22 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
     `run_compound_grid` a pyramid add and the take-profit can land on the
     same bar, so the order has to be explicit rather than incidental.
     """
-    ops: list[dict] = []
+    ops: list = []
 
     def _entries(entries) -> None:
         for i, e in enumerate(entries):
-            ops.append({
-                "date": _iso_date(e["date"]),
-                "op": "open" if i == 0 else "add",
-                "source": "backtest",
+            ops.append(SimulatedOp(
+                date=_iso_date(e["date"]),
+                op=OpKind.OPEN if i == 0 else OpKind.ADD,
+                source=OpSource.BACKTEST,
                 # Rounded so grid_state.json stays auditable and its git diffs
                 # readable — raw floats carry 16 significant digits
                 # (969.4619486185168 shares). Price matches the `last_prices`
                 # precision convention in grid_state.json.
-                "price": Price(e["price"]),
-                "shares": ShareCount(e["shares"]),
-                "note": "回测·窗口突破开仓" if i == 0 else f"回测·金字塔第{i + 1}层",
-            })
+                price=Price(e["price"]),
+                shares=ShareCount(e["shares"]),
+                note="回测·窗口突破开仓" if i == 0 else f"回测·金字塔第{i + 1}层",
+            ))
 
     for c in cycles or []:
         _entries(c["entries"])
@@ -215,29 +222,29 @@ def ops_from_cycles(cycles: list[dict], open_cycle=None) -> list[dict]:
         # `total_shares` 已经是"卖出的份额", 归并出去的那部分另计。
         sold = float(c.get("total_shares", 0.0))
         to_merge = float(c.get("shares_transferred", 0.0) or 0.0)
-        ops.append({
-            "date": _iso_date(c["exit_date"]),
-            "op": "tp",
-            "source": "backtest",
-            "price": Price(c["exit_price"]),
-            "shares": ShareCount(sold),
-            "note": "回测·回本出场",
-            "pnl": round(float(c["pnl"]), 2),
-            "num_buys_exited": int(c["num_buys"]),
-            "total_shares_exited": ShareCount(sold + to_merge),
-            "shares_to_merge": ShareCount(to_merge),
-        })
+        ops.append(SimulatedOp(
+            date=_iso_date(c["exit_date"]),
+            op=OpKind.TP,
+            source=OpSource.BACKTEST,
+            price=Price(c["exit_price"]),
+            shares=ShareCount(sold),
+            note="回测·回本出场",
+            pnl=round(float(c["pnl"]), 2),
+            num_buys_exited=int(c["num_buys"]),
+            total_shares_exited=ShareCount(sold + to_merge),
+            shares_to_merge=ShareCount(to_merge),
+        ))
 
     # The still-open cycle has no exit yet — entries only, no tp.
     if open_cycle:
         _entries(open_cycle)
 
     _order = {"open": 0, "add": 1, "tp": 2}
-    ops.sort(key=lambda o: (o["date"], _order[o["op"]]))
+    ops.sort(key=lambda o: (o.date, _order[o.op.value]))
     return ops
 
 
-def merge_backtest_ops(state: dict, name: str, ops: list[dict]) -> int:
+def merge_backtest_ops(state: dict, name: str, ops: list) -> int:
     """Replace `name`'s backtest ops in `state`, keeping any live ops.
 
     The idempotency rule for scripts/backfill_grid_ops.py: re-running drops
@@ -247,6 +254,9 @@ def merge_backtest_ops(state: dict, name: str, ops: list[dict]) -> int:
     the engine stopped trading) survive untouched. No-op with a warning if
     the asset isn't in the state.
 
+    `ops` normally holds `SimulatedOp` objects; plain dicts are accepted
+    too (older callers) and pass through unchanged.
+
     Returns the number of live ops preserved.
     """
     asset = state.get(name)
@@ -254,5 +264,6 @@ def merge_backtest_ops(state: dict, name: str, ops: list[dict]) -> int:
         print(f"[{name}] 不在 grid_state 里, 跳过")
         return 0
     live = [o for o in asset.get("ops", []) if o.get("source") != "backtest"]
-    asset["ops"] = live + list(ops)
+    fresh = [o.to_dict() if hasattr(o, "to_dict") else o for o in ops]
+    asset["ops"] = live + fresh
     return len(live)

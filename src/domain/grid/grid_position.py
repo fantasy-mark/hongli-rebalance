@@ -67,19 +67,27 @@ import os
 from dataclasses import dataclass, field, fields
 from typing import Optional
 
-from ..shared.money import DeviationPP, LayerSize, Money, Price, ShareCount
+from ..shared.money import Money, Price, ShareCount
+from .advisor import GridAdvisor, GridSuggestion
 from .exit_policy import ExitAtCost, cost_only_exit
+from .grid_op import ExecutedOp, GridOp, OpKind, OpSource
+from .trigger_policy import (
+    GRID_STEP_PCT,
+    GRID_TP_BASIS,
+    GRID_TP_PCT,
+    TriggerLevel,
+    TriggerPolicy,
+)
 
 # 网格参数 (env-overridable for parameter sweeps)
 GRID_BASE_YUAN: float = float(os.environ.get("GRID_BASE_YUAN", "10000"))
 GRID_FLOATING_FRACTION: float = float(os.environ.get("GRID_FLOATING_FRACTION", "0.05"))
 GRID_FLOATING_WINDOW: int = int(os.environ.get("GRID_FLOATING_WINDOW", "756"))
 GRID_LOOKBACK: int = 120
-GRID_STEP_PCT: float = 3.0
-GRID_TP_PCT: float = 3.0
+# ⚠️ 触发参数 (`GRID_STEP_PCT` / `GRID_TP_PCT` / `GRID_TP_BASIS`) 的**本体**
+# 在 `trigger_policy.py` —— 这里只是 re-export, 既有 import 不断。
 # "avg_cost"   — exit when price >= avg_cost * (1 + tp_pct/100)             [v2]
 # "first_buy"  — exit when price >= first_buy_price * (1 + tp_pct/100)       [v3]
-GRID_TP_BASIS: str = os.environ.get("GRID_TP_BASIS", "first_buy")
 
 
 def layer_yuan(pool_value: float, recent_min: float) -> float:
@@ -186,16 +194,16 @@ class GridPosition:
       - 一个资产同时最多一个进行中的周期 (I5);
       - 一个周期 = N 买 + 1 卖 (I6)。
 
-    ⚠️ `entries` / `ops` 里存的是 **dict**, 不是 dataclass —— 它们的形状
-    是**变长的** (tp 的 op 多几个字段), 而 `data/grid_state.json` 的格式
-    不能变。这两个的显式化留给后续阶段。
+    ⚠️ `entries` 里存的仍是 **dict** —— 每一层的形状会变 (将来还要带
+    「这一层是第几层」), 而 `data/grid_state.json` 的格式不能变。它的
+    显式化留给后续阶段。`ops` 已经是**带类型**的 (`GridOp`)。
     """
 
     in_cycle: bool = False
     entries: list[dict] = field(default_factory=list)
     last_prices: list[float] = field(default_factory=list)
     cum_realized: float = 0.0
-    ops: list[dict] = field(default_factory=list)
+    ops: list[GridOp] = field(default_factory=list)
     merged_shares: float = 0.0
 
     # -- mapper: 领域对象 ↔ JSON -------------------------------------------
@@ -212,7 +220,7 @@ class GridPosition:
             "entries": self.entries,
             "last_prices": self.last_prices,
             "cum_realized": self.cum_realized,
-            "ops": self.ops,
+            "ops": [op.to_dict() for op in self.ops],
             "merged_shares": self.merged_shares,
         }
         produced = frozenset(state)
@@ -247,7 +255,7 @@ class GridPosition:
             entries=list(state.get("entries") or []),
             last_prices=last_prices,
             cum_realized=float(state.get("cum_realized", 0.0) or 0.0),
-            ops=list(state.get("ops") or []),
+            ops=[GridOp.from_dict(o) for o in (state.get("ops") or [])],
             merged_shares=float(state.get("merged_shares", 0.0) or 0.0),
         )
 
@@ -277,6 +285,9 @@ def _triggers(state: dict, price: float, step_pct: float, tp_pct: float,
               tp_basis: str) -> dict:
     """算出三个触发位与今日价的关系。**纯函数, 不改 state。**
 
+    ⚠️ 规则本体在 `trigger_policy.TriggerPolicy` —— 这里只是**适配器**
+    (从 state 取出字段 + 转回老的 dict 形状)。
+
     Returns:
       signal  "open"|"add"|"tp"|None  —— 已触发的建议 (至多一个)
       kind    "open"|"add"|"tp"        —— **最近**的那个触发位
@@ -285,131 +296,30 @@ def _triggers(state: dict, price: float, step_pct: float, tp_pct: float,
       dist_open_pct / dist_add_pct / dist_tp_pct: float|None
       open_price / add_price / tp_price: float|None
     """
-    price = float(price)
     position = GridPosition.from_state(state)
-    in_cycle = position.in_cycle
-    entries: list[dict] = position.entries
-    window: list[float] = position.last_prices
-
-    out: dict = {
-        "signal": None,
-        "kind": "open",
-        "pct": 0.0,
-        "price": 0.0,
-        "dist_open_pct": None,
-        "dist_add_pct": None,
-        "dist_tp_pct": None,
-        "open_price": None,
-        "add_price": None,
-        "tp_price": None,
-    }
-
-    # --- open 的触发位: 窗口最低 (待机时才用得到) ---
-    wmin = min(window) if window else None
-    if wmin and wmin > 0:
-        out["open_price"] = float(wmin)
-        out["dist_open_pct"] = (price - wmin) / wmin * 100
-
-    if not in_cycle:
-        # 待机: 只可能建议开仓
-        if wmin and price < wmin:
-            out["signal"] = "open"
-            out["kind"] = "open"
-            out["pct"] = out["dist_open_pct"]
-            out["price"] = float(wmin)
-        else:
-            out["kind"] = "open"
-            out["pct"] = out["dist_open_pct"] if out["dist_open_pct"] is not None else 0.0
-            out["price"] = float(wmin) if wmin else 0.0
-        return out
-
-    # --- 周期中: 加仓位 + 出场位 ---
-    total_shares = sum(e["shares"] for e in entries)
-    total_invested = sum(e["shares"] * e["price"] for e in entries)
-    avg_cost = total_invested / total_shares if total_shares else 0.0
-
-    if entries:
-        add_target = float(entries[-1]["price"]) * (1 - step_pct / 100)
-        out["add_price"] = add_target
-        if price > 0:
-            out["dist_add_pct"] = (add_target - price) / price * 100
-
-    if total_shares > 0 and avg_cost > 0:
-        if tp_basis == "first_buy" and entries:
-            tp_target = float(entries[0]["price"]) * (1 + tp_pct / 100)
-        else:
-            tp_target = avg_cost * (1 + tp_pct / 100)
-        out["tp_price"] = tp_target
-        if price > 0:
-            out["dist_tp_pct"] = (tp_target - price) / price * 100
-
-    # --- 判定 ---
-    # 顺序: **先 tp 后 add**。正常金字塔里后一笔买价更低 (entries[-1] ≤
-    # entries[0]), 所以 "再跌 3%" 与 "涨回 3%" 不可能同时成立; 只有用户手动
-    # 在比首笔高 6.2% 以上加仓时才会撞上, 此时报 tp —— 一个周期以 1 笔出场
-    # 收尾, 更贴合 "N 买 1 卖" 的口径。
-    tp_hit = out["tp_price"] is not None and price >= out["tp_price"]
-    add_hit = out["add_price"] is not None and price <= out["add_price"]
-
-    if tp_hit:
-        out["signal"] = "tp"
-        out["kind"] = "tp"
-        out["pct"] = out["dist_tp_pct"] if out["dist_tp_pct"] is not None else 0.0
-        out["price"] = out["tp_price"]
-    elif add_hit:
-        out["signal"] = "add"
-        out["kind"] = "add"
-        out["pct"] = out["dist_add_pct"] if out["dist_add_pct"] is not None else 0.0
-        out["price"] = out["add_price"]
-    else:
-        # 都没触发 → 取**更近**的那个
-        cands = [(k, p) for k, p in (("add", out["dist_add_pct"]),
-                                     ("tp", out["dist_tp_pct"]))
-                 if p is not None]
-        if cands:
-            kind, pct = min(cands, key=lambda kv: abs(kv[1]))
-            out["kind"] = kind
-            out["pct"] = pct
-            out["price"] = out["add_price"] if kind == "add" else out["tp_price"]
-        else:
-            out["kind"] = "tp"
-            out["pct"] = 0.0
-            out["price"] = out["tp_price"] or 0.0
-    return out
+    policy = TriggerPolicy(step_pct=step_pct, tp_pct=tp_pct, tp_basis=tp_basis)
+    return policy.levels(in_cycle=position.in_cycle, entries=position.entries,
+                          window=position.last_prices,
+                          price=float(price)).to_dict()
 
 
 def advisory(state: dict, price: float, layer_yuan_value: float,
              step_pct: float = GRID_STEP_PCT,
              tp_pct: float = GRID_TP_PCT,
-             tp_basis: str = GRID_TP_BASIS) -> dict:
+             tp_basis: str = GRID_TP_BASIS) -> GridSuggestion:
     """给页面/邮件用的完整建议。纯函数 (不改 state)。
 
-    返回: signal / trigger_kind / trigger_pct / trigger_price /
-          dist_open_pct / dist_add_pct / dist_tp_pct /
-          suggest_price (= 今日 K 线最低价) / suggest_shares / suggest_amount
+    返回一个 `GridSuggestion` —— **建议**, 不是成交 (成交是 `GridOp`)。
+    老代码按 dict 读它 (`adv["suggest_shares"]`) 仍然可用, 那是
+    `GridSuggestion.__getitem__` 提供的过渡期入口。
 
     ⚠️ `signal` 是**建议提交哪种 op**, 不是"已成交" —— 引擎不再下单。
     """
-    trig = _triggers(state, float(price), step_pct, tp_pct, tp_basis)
-    sig = trig["signal"]
-    amount = float(layer_yuan_value) if sig in ("open", "add") else 0.0
-    shares = (amount / float(price)) if (amount and price > 0) else 0.0
-
-    def _r(v):
-        return DeviationPP(v) if v is not None else None
-
-    return {
-        "signal": sig,
-        "trigger_kind": trig["kind"],
-        "trigger_pct": DeviationPP(trig["pct"]),
-        "trigger_price": Price(trig["price"]),
-        "dist_open_pct": _r(trig["dist_open_pct"]),
-        "dist_add_pct": _r(trig["dist_add_pct"]),
-        "dist_tp_pct": _r(trig["dist_tp_pct"]),
-        "suggest_price": Price(price),
-        "suggest_shares": ShareCount(shares),
-        "suggest_amount": LayerSize(amount),
-    }
+    position = GridPosition.from_state(state)
+    advisor = GridAdvisor(step_pct=step_pct, tp_pct=tp_pct, tp_basis=tp_basis)
+    return advisor.suggest(in_cycle=position.in_cycle, entries=position.entries,
+                            window=position.last_prices, price=price,
+                            layer_yuan_value=layer_yuan_value)
 
 
 # -----------------------------------------------------------------------------
@@ -442,9 +352,11 @@ def advance_one_day(
     """
     position = GridPosition.from_state(state)
 
-    # 建议基于**追加今天之前**的窗口算
-    suggestion = _triggers(position.to_state(), float(price),
-                           step_pct, tp_pct, tp_basis)["signal"]
+    # 建议基于**追加今天之前**的窗口算 (规则本体在 trigger_policy.TriggerPolicy)
+    policy = TriggerPolicy(step_pct=step_pct, tp_pct=tp_pct, tp_basis=tp_basis)
+    levels = policy.levels(in_cycle=position.in_cycle, entries=position.entries,
+                            window=position.last_prices, price=float(price))
+    suggestion = levels.signal.value if levels.signal is not None else None
 
     # 唯一的副作用: 滚动窗口
     position.last_prices.append(float(price))
@@ -556,11 +468,10 @@ def manual_op(state: dict, op: str, today: str,
             position.last_prices.append(float(price))
             if len(position.last_prices) > GRID_LOOKBACK:
                 position.last_prices = position.last_prices[-GRID_LOOKBACK:]
-        position.ops.append({
-            "date": today, "op": op, "source": "manual",
-            "price": float(price), "shares": float(shares),
-            "note": note,
-        })
+        position.ops.append(ExecutedOp(
+            date=today, op=OpKind(op), source=OpSource.MANUAL,
+            price=float(price), shares=float(shares), note=note,
+        ))
     else:  # tp
         entries = position.entries
         total_shares = sum(e["shares"] for e in entries)
@@ -568,17 +479,17 @@ def manual_op(state: dict, op: str, today: str,
         split = cost_only_exit(total_shares, total_invested, float(price))
         position.merged_shares += split.merged_shares
         # Capture per-event exit stats BEFORE clearing `entries`.
-        position.ops.append({
-            "date": today, "op": "tp", "source": "manual",
-            "price": float(price), "shares": float(split.shares_sold),
-            "note": note,
-            "pnl": float(split.pnl),
-            "num_buys_exited": len(entries),
+        position.ops.append(ExecutedOp(
+            date=today, op=OpKind.TP, source=OpSource.MANUAL,
+            price=float(price), shares=float(split.shares_sold),
+            note=note,
+            pnl=float(split.pnl),
+            num_buys_exited=len(entries),
             # "出场"的全部份额 = 卖出的 + 归并出去的 (== 原持仓)
-            "total_shares_exited": float(split.shares_sold
-                                         + split.merged_shares),
-            "shares_to_merge": float(split.merged_shares),
-        })
+            total_shares_exited=float(split.shares_sold
+                                      + split.merged_shares),
+            shares_to_merge=float(split.merged_shares),
+        ))
         position.cum_realized += split.pnl
         position.entries = []
         position.in_cycle = False

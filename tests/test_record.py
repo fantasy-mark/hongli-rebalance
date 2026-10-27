@@ -2559,6 +2559,228 @@ def test_manual_op_preserves_merged_identity_bit_exact():
 
 
 # ---------------------------------------------------------------------------
+# src/domain/grid/{trigger_policy,grid_op,advisor} — Phase 2b 分型
+#
+# 背景: 「建议 ≠ 成交」这条不变量 (I10 / I15) 以前只靠注释守着。现在:
+#   - 触发规则的**唯一**定义住在 TriggerPolicy 里 (生产路径 + 回测路径共用);
+#   - 「已经发生」的那一条是 GridOp (ExecutedOp=实盘 / SimulatedOp=模拟);
+#   - 「应该做什么」是 GridSuggestion —— 与 GridOp 是**不同的类型**。
+# ---------------------------------------------------------------------------
+
+def test_trigger_policy_signals_open_when_price_breaks_window_low():
+    """待机 + 今日价跌破窗口最低 → 建议开仓 (负数 = 已越过触发线)。"""
+    from src.domain.grid.trigger_policy import TriggerLevel, TriggerPolicy
+    lv = TriggerPolicy().levels(in_cycle=False, entries=[],
+                                window=[10.0, 9.5], price=9.0)
+    assert lv.signal is TriggerLevel.OPEN
+    assert lv.nearest.level is TriggerLevel.OPEN
+    assert lv.open is not None and lv.open.price == 9.5
+    assert lv.open.pct == (9.0 - 9.5) / 9.5 * 100
+    assert lv.add is None and lv.tp is None, "待机时不该有加仓/回本触发位"
+
+
+def test_trigger_policy_no_signal_when_price_above_window_low():
+    from src.domain.grid.trigger_policy import TriggerLevel, TriggerPolicy
+    lv = TriggerPolicy().levels(in_cycle=False, entries=[],
+                                window=[10.0, 9.5], price=11.0)
+    assert lv.signal is None
+    assert lv.nearest.level is TriggerLevel.OPEN
+    assert lv.open.pct == (11.0 - 9.5) / 9.5 * 100
+
+
+def test_trigger_policy_signals_add_at_three_percent_below_last_entry():
+    """周期中 + 今日价 ≤ 最近一笔买价 × 97% → 建议加仓。"""
+    from src.domain.grid.trigger_policy import TriggerLevel, TriggerPolicy
+    entries = [{"date": "2026-10-01", "price": 10.0, "shares": 1000.0}]
+    lv = TriggerPolicy().levels(in_cycle=True, entries=entries,
+                                window=[10.0, 9.8], price=9.7)
+    assert lv.signal is TriggerLevel.ADD
+    assert lv.add is not None and lv.add.price == 10.0 * 0.97
+    assert lv.add.pct == 0.0, "正好踩在触发线上 → 距离 0"
+
+
+def test_trigger_policy_signals_tp_at_three_percent_above_first_buy():
+    """周期中 + 今日价 ≥ 首笔买价 × 103% → 建议回本出场。"""
+    from src.domain.grid.trigger_policy import TriggerLevel, TriggerPolicy
+    entries = [{"date": "2026-10-01", "price": 10.0, "shares": 1000.0}]
+    lv = TriggerPolicy().levels(in_cycle=True, entries=entries,
+                                window=[10.0, 9.8], price=10.3)
+    assert lv.signal is TriggerLevel.TP, "tp 优先于 add"
+    assert lv.tp is not None and lv.tp.price == 10.0 * 1.03
+
+
+def test_trigger_policy_picks_nearest_trigger_when_nothing_hit():
+    """都没触发 → 取**更近**的那个 (|距离| 最小)。"""
+    from src.domain.grid.trigger_policy import TriggerLevel, TriggerPolicy
+    entries = [{"date": "2026-10-01", "price": 10.0, "shares": 1000.0}]
+    lv = TriggerPolicy().levels(in_cycle=True, entries=entries,
+                                window=[10.0, 9.8], price=10.05)
+    assert lv.signal is None
+    # add 距 3.48pp, tp 距 2.49pp → 更近的是 tp
+    assert lv.nearest.level is TriggerLevel.TP
+    assert lv.nearest.pct == (10.3 - 10.05) / 10.05 * 100
+
+
+def test_trigger_policy_tie_goes_to_add():
+    """平手时取**先**出现的那个 (add) —— 与老实现一致, 不能漂移。"""
+    from src.domain.grid.trigger_policy import TriggerLevel, TriggerPolicy
+    entries = [{"date": "2026-10-01", "price": 100.0, "shares": 1000.0}]
+    lv = TriggerPolicy().levels(in_cycle=True, entries=entries,
+                                window=[100.0], price=100.0)
+    assert lv.signal is None
+    assert lv.add.pct == -3.0 and lv.tp.pct == 3.0, "两边正好对称"
+    assert lv.nearest.level is TriggerLevel.ADD, "平手 → add"
+
+
+def test_trigger_level_formats_as_bare_value():
+    """⚠️ `str, Enum` 的坑: f"{TriggerLevel.OPEN}" 默认会显示 `TriggerLevel.OPEN`。
+
+    页面/邮件里有 `距{trigger_kind}` 这种 f-string —— 踩中就是显示
+    「距TriggerLevel.OPEN」。所以 __str__ 必须返回裸值。
+    """
+    from src.domain.grid.trigger_policy import TriggerLevel
+    assert f"{TriggerLevel.OPEN}" == "open"
+    assert str(TriggerLevel.TP) == "tp"
+    assert TriggerLevel.ADD == "add", "还得是 str 的子类, 老代码的 == 才成立"
+    assert json.dumps({"k": TriggerLevel.OPEN}) == '{"k": "open"}'
+
+
+def test_grid_op_to_dict_keeps_legacy_json_shape():
+    """data/grid_state.json 里一行 op 的 key 与顺序**一字不改**。"""
+    from src.domain.grid.grid_op import ExecutedOp, OpSource
+    op = ExecutedOp(date="2026-10-20", op="open", price=1.3, shares=1000.0,
+                    source=OpSource.MANUAL, note="x")
+    d = op.to_dict()
+    assert list(d) == ["date", "op", "source", "price", "shares", "note"]
+    assert d["op"] == "open" and d["source"] == "manual"
+    # 非 tp 的 op 不输出那 4 个额外字段
+    for k in ("pnl", "num_buys_exited", "total_shares_exited",
+              "shares_to_merge"):
+        assert k not in d
+
+
+def test_executed_op_rejects_non_manual_source():
+    """实盘成交只能来自用户提交 —— 类型上就不许标成 backtest。"""
+    from src.domain.grid.grid_op import ExecutedOp, OpSource
+    try:
+        ExecutedOp(date="2026-10-20", op="open", price=1.3, shares=1000.0,
+                   source=OpSource.BACKTEST)
+    except ValueError as ex:
+        assert "manual" in str(ex)
+    else:
+        raise AssertionError("ExecutedOp 不许接受 source='backtest'")
+
+
+def test_simulated_op_rejects_non_backtest_source():
+    """模拟成交不许被标成实盘。"""
+    from src.domain.grid.grid_op import OpSource, SimulatedOp
+    try:
+        SimulatedOp(date="2026-10-20", op="open", price=1.3, shares=1000.0,
+                    source=OpSource.MANUAL)
+    except ValueError as ex:
+        assert "backtest" in str(ex)
+    else:
+        raise AssertionError("SimulatedOp 不许接受 source='manual'")
+
+
+def test_grid_op_from_dict_types_by_source():
+    """读盘时按 source 分型 —— 遗留的 'auto' 落进通用 GridOp, **不猜**。"""
+    from src.domain.grid.grid_op import (ExecutedOp, GridOp, OpSource,
+                                        SimulatedOp)
+    row = {"date": "2026-10-20", "op": "open", "source": "manual",
+           "price": 1.3, "shares": 1000.0, "note": "x"}
+    assert isinstance(GridOp.from_dict(row), ExecutedOp)
+    assert isinstance(GridOp.from_dict({**row, "source": "backtest"}),
+                      SimulatedOp)
+    legacy = GridOp.from_dict({**row, "source": "auto"})
+    assert type(legacy) is GridOp, "遗留的 auto 不许被当成实盘"
+    assert legacy.source is OpSource.AUTO
+
+
+def test_grid_op_dict_roundtrip_is_lossless():
+    from src.domain.grid.grid_op import GridOp
+    row = {"date": "2026-10-22", "op": "tp", "source": "manual",
+           "price": 1.5, "shares": 1000.0, "note": "take profit",
+           "pnl": 0.0, "num_buys_exited": 2, "total_shares_exited": 1030.0,
+           "shares_to_merge": 30.0}
+    assert GridOp.from_dict(row).to_dict() == row
+
+
+def test_grid_suggestion_to_dict_keeps_legacy_shape():
+    """advisory() 的 dict 形状**一字不变** —— history.json / app.js 不用改。"""
+    from src.domain.grid.advisor import GridSuggestion
+    st = grid_pos.fresh_asset_state()
+    st["last_prices"] = [10.0, 9.5]
+    adv = grid_pos.advisory(st, 9.0, 10000.0)
+    assert isinstance(adv, GridSuggestion)
+    d = adv.to_dict()
+    assert set(d) == {"signal", "trigger_kind", "trigger_pct",
+                      "trigger_price", "dist_open_pct", "dist_add_pct",
+                      "dist_tp_pct", "suggest_price", "suggest_shares",
+                      "suggest_amount"}
+    assert d["signal"] == "open"
+    assert d["trigger_kind"] == "open"
+    assert d["trigger_pct"] == round((9.0 - 9.5) / 9.5 * 100, 2)
+    assert d["suggest_price"] == 9.0
+    assert d["suggest_amount"] == 10000.0
+    assert d["suggest_shares"] == round(10000.0 / 9.0, 2)
+    # 过渡期入口: 老代码按 dict 读它
+    assert adv["signal"] == "open"
+    assert "trigger_kind" in adv
+
+
+def test_suggestion_and_executed_op_are_different_types():
+    """I10 / I15 的类型级保证: 建议**不是**成交。"""
+    from src.domain.grid.advisor import GridAdvisor, GridSuggestion
+    from src.domain.grid.grid_op import ExecutedOp, GridOp
+    st = grid_pos.fresh_asset_state()
+    adv = grid_pos.advisory(st, 9.0, 10000.0)
+    assert isinstance(adv, GridSuggestion)
+    assert not isinstance(adv, GridOp)
+    op = ExecutedOp(date="2026-10-20", op="open", price=1.3, shares=1000.0)
+    assert isinstance(op, GridOp)
+    assert not isinstance(op, GridSuggestion)
+    # 建议对象是 frozen 的 —— 拿到它也改不动任何状态
+    try:
+        adv.level = "open"
+    except Exception:
+        pass
+    else:
+        raise AssertionError("GridSuggestion 必须不可变")
+
+
+def test_manual_op_appends_executed_op_not_simulated():
+    """用户提交的 op 必须是**实盘**类型。"""
+    from src.domain.grid.grid_op import ExecutedOp, GridOp, SimulatedOp
+    st = grid_pos.fresh_asset_state()
+    st = grid_pos.manual_op(st, op="open", today="2026-10-20", price=1.30,
+                             shares=1000.0, note="手动开仓")
+    op = GridOp.from_dict(st["ops"][0])
+    assert isinstance(op, ExecutedOp)
+    assert not isinstance(op, SimulatedOp)
+    assert op.source.value == "manual"
+    assert op.note == "手动开仓"
+
+
+def test_ops_from_cycles_returns_simulated_ops():
+    """回测产物是**模拟**类型 —— 页面上要标成「回测」, 不进实盘账。"""
+    from src.domain.grid.grid_op import ExecutedOp, SimulatedOp
+    cycles = [{
+        "entries": [{"date": "2026-01-05", "price": 10.0, "shares": 1000.0}],
+        "exit_date": "2026-02-20", "exit_price": 10.4, "num_buys": 1,
+        "avg_cost": 10.0, "total_shares": 1000.0, "shares_transferred": 0.0,
+        "total_invested": 10000.0, "exit_value": 10400.0, "pnl": 0.0,
+        "return_pct": 0.0,
+    }]
+    ops = grid_sim.ops_from_cycles(cycles, None)
+    assert len(ops) == 2
+    for op in ops:
+        assert isinstance(op, SimulatedOp)
+        assert not isinstance(op, ExecutedOp)
+        assert op.source.value == "backtest"
+
+
+# ---------------------------------------------------------------------------
 # src/presentation/notify_failure — 失败邮件必须上报真实步骤状态
 #
 # 背景 (2026-10-23 事故): 旧版邮件无论何种失败都写死 "失败原因: record
