@@ -362,9 +362,12 @@ const ETF_CATALOG = {
 //           here is how this row silently under-reported 纳斯达克ETF华夏's
 //           ¥38,736 after the 2026-10-14 four-asset migration — the 3pp
 //           table above it and the 总市值 badge both showed 4 assets.
-//   网格:    every asset the grid tracks (mirrors src/application/daily_snapshot.py ASSET_NAMES).
-// Arrays (not Sets) so we can render in a fixed display order.
-const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
+//   网格:    every asset the grid tracks — derived from the record's
+//           `grid_signals` (one row per grid asset, written by the engine).
+//           ⚠️ 这两个清单都**不再抄在页面里**: 引擎换篮子时, 页面跟着记录走,
+//           不会拿一份过期的手抄清单继续说谎。
+// (The engine's universe lives in src/domain/portfolio/asset_universe.py;
+//  the page reads it out of the record rather than duplicating it.)
 
 // The rebalance basket, in the engine's own order. Falls back to the full
 // catalog when the record hasn't loaded yet.
@@ -382,6 +385,19 @@ function nameForCode(code, latestRec) {
     if (p?.name) return p.name;
   }
   return ETF_CATALOG[code] || code;
+}
+
+// The inverse lookup: display name → code. Prefers the latest record
+// (the engine's own view of the basket), falls back to the static
+// ETF_CATALOG, and finally to the name itself. Lets the UI follow the
+// engine's asset list instead of a hand-copied one.
+function codeForName(name, latestRec) {
+  const p = (latestRec?.positions || []).find(x => x.name === name);
+  if (p?.code) return p.code;
+  for (const [code, n] of Object.entries(ETF_CATALOG)) {
+    if (n === name) return code;
+  }
+  return name;
 }
 
 // Minimal HTML escape for cell text (we control the inputs but defense in depth).
@@ -469,16 +485,12 @@ function renderCashPoolSummary(latestRec, holdings) {
   // "Holds" means the grid still has capital tied up in that asset, i.e.
   // current_value > 0 (the layers of the currently-open cycle). 出场后本金
   // 全额收回, 网格不再持有该资产 —— 归并出去的那批份额归再平衡组合管。
-  // grid_signals records only carry the asset name (no code), so match
-  // against the name resolved from each GRID_CODES_LIST entry.
-  const heldGridNames = new Set(
-    (latestRec?.grid_signals || [])
-      .filter(s => Number(s.current_value || 0) > 0)
-      .map(s => s.name)
-  );
-  const gridAssetTags = GRID_CODES_LIST
-    .filter(c => heldGridNames.has(nameForCode(c, latestRec)))
-    .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)
+  //
+  // 资产清单**取自记录** (grid_signals —— 引擎自己的清单, 每个网格资产一行),
+  // 不再是页面里抄的一份: 引擎换篮子时这一行跟着记录走, 不会漏掉新资产。
+  const gridAssetTags = (latestRec?.grid_signals || [])
+    .filter(s => Number(s.current_value || 0) > 0)
+    .map(s => `<span class="asset-tag">${escapeHtml(s.name)}</span>`)
     .join('');
   setHTML('cash-grid-assets',
     gridAssetTags || '<span class="muted">— 无持仓 —</span>');
@@ -1076,13 +1088,11 @@ function renderGridOpsLog(state) {
 function refreshGridPreview() {
   const el = document.getElementById('grid-preview');
   if (!el || !currentGridState) { if (el) el.textContent = ''; return; }
-  // Map code → state using ETF_CATALOG.
-  const codeToState = {};
-  for (const [code, name] of Object.entries(ETF_CATALOG)) {
-    codeToState[code] = currentGridState[name] || null;
-  }
-  const parts = Object.entries(ETF_CATALOG).map(([code, name]) => {
-    const s = codeToState[code];
+  // 网格的资产清单以 **grid_state.json 的 key** 为准 —— 那是引擎的宇宙。
+  // 页面里那份 ETF_CATALOG 只是交易表单下拉框的候选项, 不是网格的清单:
+  // 引擎换篮子时, 这一行会跟着 grid_state 走, 不会漏掉新资产。
+  const parts = Object.entries(currentGridState).map(([name, s]) => {
+    const code = codeForName(name, latestRec);
     // 已归并到再平衡持仓的份额 —— 它们不再属于网格, 只是记在这儿方便对照。
     const mergedShares = Number((s && s.merged_shares) || 0);
     const mergedTail = mergedShares > 0

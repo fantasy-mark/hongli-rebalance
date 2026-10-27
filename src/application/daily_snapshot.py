@@ -30,10 +30,13 @@ from ..domain.grid import grid_position as grid_mod
 from ..domain.ledger.ledger import rebuild_holdings_from_trades
 from ..domain.portfolio.asset_universe import ASSET_NAMES, ETF_DEFS, QDII_CODES
 from ..domain.portfolio.portfolio import (
-    merge_grid_shares_into_positions,
+    Portfolio,
     merged_shares_by_code,
 )
-from ..domain.portfolio.rebalance_policy import evaluate
+from ..domain.portfolio.rebalance_policy import (
+    RebalancePolicy,
+    TargetWeightPolicy,
+)
 from ..domain.portfolio.valuation import value_extra_codes, value_positions
 from ..domain.shared.money import (
     LayerSize,
@@ -65,6 +68,23 @@ from ..infrastructure.quote_providers import (
 # (The env var is the legacy way to override it; the domain no longer
 #  reads the environment itself.)
 THRESHOLD_PP = float(os.environ.get("THRESHOLD_PP", "3.0"))
+
+#: 目标权重规则 (等权 1/n) —— 页面显示的「目标 ±x%」也是它算的。
+TARGET_WEIGHT_POLICY = TargetWeightPolicy()
+
+
+def rebalance_policy() -> RebalancePolicy:
+    """当前生效的 3pp 再平衡策略（阈值取模块级的 `THRESHOLD_PP`）。
+
+    刻意做成**函数**而不是一个模块级常量实例 —— 旧的
+    `evaluate(..., threshold_pp=THRESHOLD_PP)` 是在**调用时**读这个模块
+    全局的，绑定时机必须保持一致（有人在 import 之后改这个全局，行为也要
+    跟着变）。
+
+    阈值仍然是**实例状态**：想用别的阈值就
+    `RebalancePolicy(threshold_pp=1.0)`，一个进程里可以并存多套。
+    """
+    return RebalancePolicy(threshold_pp=THRESHOLD_PP)
 
 
 # -----------------------------------------------------------------------------
@@ -156,7 +176,7 @@ def build_record(today: str, positions: list[dict],
                  threshold_pp: float = THRESHOLD_PP) -> dict:
     etf_total = sum(p["value"] for p in positions)
     n = len(positions)
-    target_w = 1.0 / n if n > 0 else 0.0
+    target_w = TARGET_WEIGHT_POLICY.target_weight(n)
     # `ops` is an append-only log whose canonical home is
     # data/grid_state.json (the page fetches that file directly for the
     # 复合网格 操作记录 table). Embedding it in every daily record would
@@ -339,12 +359,14 @@ def main() -> None:
     extra_prices, extra_errors = value_extra_codes(extra_codes, latest_for_code)
     for code, msg in extra_errors:
         print(f"WARN merged-share price {code}: {msg}", file=sys.stderr)
-    positions_eff = merge_grid_shares_into_positions(
-        positions, merged_before, extra_prices,
+    portfolio = Portfolio.from_holdings(
+        positions, merged_by_code=merged_before, extra_prices=extra_prices,
+        cash_rebalance=cash_rebalance, cash_grid=cash_grid,
     )
-    total_pre, _w_pre, _t_pre, _p_pre = evaluate(
-        positions_eff, cash_rebalance, cash_grid, threshold_pp=THRESHOLD_PP,
-    )
+    total_pre, _w_pre, _t_pre, _p_pre = rebalance_policy().evaluate(
+        portfolio,
+    ).as_tuple()
+    positions_eff = portfolio.to_records()
 
     # 3pp pool for grid layer sizing (history.totals + today)
     history = load_history()
@@ -387,12 +409,13 @@ def main() -> None:
         extra_prices, extra_errors = value_extra_codes(extra_codes, latest_for_code)
         for code, msg in extra_errors:
             print(f"WARN merged-share price {code}: {msg}", file=sys.stderr)
-    positions_eff = merge_grid_shares_into_positions(
-        positions, merged_after, extra_prices,
+    portfolio = Portfolio.from_holdings(
+        positions, merged_by_code=merged_after, extra_prices=extra_prices,
+        cash_rebalance=cash_rebalance, cash_grid=cash_grid,
     )
-    total, weights, triggered_3pp, plan = evaluate(
-        positions_eff, cash_rebalance, cash_grid, threshold_pp=THRESHOLD_PP,
-    )
+    outcome = rebalance_policy().evaluate(portfolio)
+    total, weights, triggered_3pp, plan = outcome.as_tuple()
+    positions_eff = portfolio.to_records()
     positions = positions_eff
 
     # Persist record

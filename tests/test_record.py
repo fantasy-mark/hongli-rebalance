@@ -31,6 +31,7 @@ from src.domain.grid import grid_position as grid_pos
 from src.domain.ledger import ledger
 from src.domain.portfolio import asset_universe as universe
 from src.domain.portfolio import portfolio, rebalance_policy as policy
+from src.domain.shared.provenance import Provenance
 from src.infrastructure import json_repositories as repos
 from src.presentation import notify_failure as nf
 from src.simulation import equal_weight_backtest as three_pp
@@ -298,7 +299,13 @@ def test_evaluate_with_cash_affects_weights():
     assert not triggered
 
     # 有现金但仍等权: 每个 200, 现金 200, 总值 1000, weight 0.20 vs target 0.25 → 5pp 偏离 → 触发
+    #
+    # ⚠️ `price` 必须跟着一起改 —— Phase 4 起市值是**推出来的**
+    # (`Position.value` = total_shares × price), 记录里的 `value` 不再被
+    # 当作事实源照抄。夹具自相矛盾 (shares 1 × price 100 ≠ value 200) 的
+    # 话, 聚合根本身会拒绝那个市值。
     for p in positions:
+        p["price"] = 200.0
         p["value"] = 200.0
     total2, weights2, triggered2, _plan2 = policy.evaluate(positions, 200.0, 0.0)
     assert total2 == 1000
@@ -3027,6 +3034,146 @@ def test_diagnose_steps_survives_missing_workspace_file():
     steps = nf.diagnose_steps(env=env, workspace=ws)
     assert steps[0]["log"] == ""
     assert nf.build_diagnosis_text(steps, "u")     # 不抛异常即可
+
+
+# ---------------------------------------------------------------------------
+# src/domain/portfolio — Phase 4: 聚合根真的被用起来了
+#
+# Phase 4 之前, `Position` / `PositionLot` / `Provenance` 是**定义了但没人用**
+# 的死代码 —— 应用层一路传 dict, 聚合根躺在 domain/ 里当摆设。现在:
+#   - `AssetUniverse` 是一个**领域对象** (不是一个装着常量的模块)
+#   - `Position` 真的持有 `PositionLot[]`, 模拟份额与真实份额分得开
+#   - `Portfolio` 是聚合根, `to_records()` 是它的输出 (JSON 契约)
+#   - `RebalancePolicy` 是**带状态的服务** (阈值是实例的状态, 不是模块全局)
+# ---------------------------------------------------------------------------
+
+
+def test_asset_universe_is_a_domain_object():
+    """资产宇宙是一个值 —— 可以当参数传, 不是只能伸手去摸的模块全局。"""
+    u = universe.UNIVERSE
+    assert u.codes == list(universe.ETF_DEFS.keys())
+    assert u.names == universe.ASSET_NAMES
+    assert u.name_to_code == universe.NAME_TO_CODE
+    assert u.qdii_codes == universe.QDII_CODES
+    assert len(u) == 4
+    assert "515180" in u, "含 QDII 判定用的 code"
+    assert u.display_name("515180") == "红利ETF易方达"
+    assert u.display_name("不知道") == "不知道", "查不到就退回 code 本身"
+    # 模块级别的名字与单例是**同一份数据** —— 不会各自漂移
+    assert universe.ETF_DEFS is u.defs
+    assert universe.ASSET_NAMES == u.names
+    assert universe.QDII_CODES == u.qdii_codes
+
+
+def test_position_splits_real_and_simulated_lots():
+    """一份持仓由「真实批次 + 模拟批次」组成 —— 来源在模型里, 不在旁挂字段里。"""
+    p = portfolio.Position(
+        code="159937", name="黄金ETF博时", price=8.15,
+        lots=[
+            portfolio.PositionLot(shares=5200.0),
+            portfolio.PositionLot(shares=1125.0,
+                                  provenance=Provenance.SIMULATED_GRID),
+        ],
+    )
+    assert p.real_shares == 5200.0
+    assert p.simulated_shares == 1125.0
+    assert p.merged_shares == 1125.0, "merged_shares 是模拟份额的别名"
+    assert p.total_shares == 6325.0
+    assert p.value == pytest_approx(6325.0 * 8.15)
+    assert p.merged_value == pytest_approx(1125.0 * 8.15)
+    assert not p.merged_only, "有真实份额 → 不是纯模拟"
+    assert p.lots[0].provenance is Provenance.REAL
+    assert p.lots[1].is_simulated
+
+
+def test_portfolio_merges_grid_shares_into_lots():
+    """网格归并的份额变成一个 SIMULATED_GRID 批次 —— 不是第四个旁挂字段。"""
+    pf = portfolio.Portfolio.from_holdings(
+        [{"name": "黄金ETF博时", "code": "159937", "shares": 5200.0,
+          "price": 8.15, "date": "2026-10-27", "value": 42380.0}],
+        merged_by_code={"159937": 1125.0},
+    )
+    assert len(pf.positions) == 1
+    p = pf.positions[0]
+    assert [l.provenance for l in p.lots] == [Provenance.REAL,
+                                              Provenance.SIMULATED_GRID]
+    assert p.real_shares == 5200.0
+    assert p.simulated_shares == 1125.0
+    assert p.total_shares == 6325.0
+
+
+def test_portfolio_record_roundtrip_is_lossless():
+    """Portfolio → records → Portfolio 往返不丢东西 (JSON 契约的形状)。"""
+    pf = portfolio.Portfolio.from_holdings(
+        [{"name": "黄金ETF博时", "code": "159937", "shares": 5200.0,
+          "price": 8.15, "date": "2026-10-27", "value": 42380.0}],
+        merged_by_code={"159937": 1125.0},
+    )
+    records = pf.to_records()
+    again = portfolio.Portfolio.from_records(records)
+    assert again.to_records() == records, "往返必须逐字段相同"
+    assert again.positions[0].simulated_shares == 1125.0
+    assert again.positions[0].real_shares == 5200.0
+
+
+def test_position_value_is_derived_from_lots_not_copied():
+    """市值是**推出来的** (份额 × 价格) —— 记录里的 value 不是事实源。"""
+    rec = {"name": "A", "code": "1", "shares": 100.0, "price": 10.0,
+           "value": 999.0, "date": "x"}     # 故意自相矛盾
+    pf = portfolio.Portfolio.from_records([rec])
+    assert pf.positions[0].value == 1000.0, "市值 = 份额 × 价格"
+    assert pf.total == 1000.0
+
+
+def test_rebalance_policy_threshold_is_instance_state():
+    """阈值是**策略实例**的状态 —— 两套阈值可以并存于一个进程。"""
+    pf = portfolio.Portfolio.from_records([
+        {"name": "A", "code": "1", "shares": 1, "price": 104, "value": 104,
+         "date": "x"},
+        {"name": "B", "code": "2", "shares": 1, "price": 96, "value": 96,
+         "date": "x"},
+    ])
+    loose = policy.RebalancePolicy(threshold_pp=10.0)
+    tight = policy.RebalancePolicy(threshold_pp=1.0)
+    assert not loose.evaluate(pf).triggered, "4pp 偏离 < 10pp 阈值"
+    assert tight.evaluate(pf).triggered, "4pp 偏离 > 1pp 阈值"
+    # 同一个组合, 两套策略给出不同结论 —— 这正是「显式参数」的意义
+    assert loose.evaluate(pf).total == tight.evaluate(pf).total
+
+
+def test_target_weight_policy_is_dynamic():
+    """目标权重 = 1/n, n = 当前篮子的大小 (动态篮子)。"""
+    tw = policy.TargetWeightPolicy()
+    assert tw.target_weight(4) == 0.25
+    assert tw.target_weight(3) == pytest_approx(1 / 3)
+    assert tw.target_weight(0) == 0.0, "空篮子没有目标权重"
+    pf = portfolio.Portfolio.from_records([
+        {"name": "A", "code": "1", "shares": 1, "price": 10, "value": 10},
+        {"name": "B", "code": "2", "shares": 1, "price": 10, "value": 10},
+    ])
+    assert tw.for_portfolio(pf) == 0.5
+
+
+def test_simulated_shares_still_drive_the_weights():
+    """D6: 模拟份额推着真实组合调仓 —— 规则没变, 但现在**看得见**了。"""
+    pf = portfolio.Portfolio.from_records([
+        {"name": "A", "code": "1", "shares": 1000.0, "price": 10.0,
+         "value": 10000.0, "date": "x"},
+        {"name": "B", "code": "2", "shares": 1000.0, "price": 10.0,
+         "value": 10000.0, "date": "x"},
+    ])
+    before = policy.RebalancePolicy().evaluate(pf)
+    assert not before.triggered
+
+    pf2 = portfolio.Portfolio.from_holdings(
+        [{"name": "A", "code": "1", "shares": 1000.0, "price": 10.0},
+         {"name": "B", "code": "2", "shares": 1000.0, "price": 10.0}],
+        merged_by_code={"2": 500.0},
+    )
+    after = policy.RebalancePolicy().evaluate(pf2)
+    assert after.total == 25000.0
+    assert after.weights[1] > before.weights[1], "模拟份额把权重推高了"
+    assert pf2.positions[1].simulated_shares == 500.0
 
 
 def test_main():

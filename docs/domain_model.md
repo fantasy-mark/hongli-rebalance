@@ -8,6 +8,12 @@
 > 可以直接核对。现状与建议在文中严格分开：§2 是"代码里现在是什么"，§3 起是"应该建模成什么"。
 >
 > **日期**：2026-10-25　**代码基线**：`9504817` (feat(ui): 网格建议口径 + 手动提交前置预检)
+>
+> **重构进度**（§11.2 有各阶段的详细记录）：
+> Phase 0 ✅ 立柱 · Phase 1 ✅ 值对象 · Phase 2 ✅ 网格聚合显式化 ·
+> Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
+> Phase 5 ⬜ 事件化 + 应用层瘦身（未开始）。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.6。
 
 ---
 
@@ -309,6 +315,15 @@ advance_one_day` 只滚窗口 + 算建议；`grid.py:668 manual_op` 是唯一实
 | `DailySnapshot` | 一天 | `Position` / `GridSignal` 快照 | `data/history.json`（一条） |
 | `ChartArtifact` | 一张图 | — | `data/grid_chart.png` |
 
+> ✅ **Phase 4 已落地**（2026-10-27）。`Portfolio` 现在是**真的聚合根**：
+> `Position` 持有 `PositionLot[]`，每批份额带自己的 `Provenance`；`Portfolio`
+> 是**唯一**计算市值 / 权重 / `total` 的地方，`data/history.json` 里的持仓
+> 行是它的**输出**（`Portfolio.to_records`），不是反过来。
+>
+> 另有一个**注册表**（不是聚合根，是值）：`AssetUniverse`
+> （`domain/portfolio/asset_universe.py`）——「本项目跟踪哪些资产」的定义，
+> 从 `holdings.json` 里独立出来。详见 §11.1.6。
+
 **`GridPosition` 是唯一一个有真正状态机的聚合**，也是唯一值得花力气做行为建模的：
 
 ```
@@ -343,7 +358,7 @@ advance_one_day` 只滚窗口 + 算建议；`grid.py:668 manual_op` 是唯一实
 | `TriggerDistance` | 带符号距离 | 值对象 | 裸 float，`round(x, 2)`（`grid.py:518`） |
 | `PriceWindow` | 滚动 120 日窗口 | 不可变序列 | 裸 `list[float]` |
 | `LayerSize` | 层额 | 值对象 | 裸 float（`grid.py:54`） |
-| `Provenance` | REAL / SIMULATED_GRID | 枚举 | ⚠ 不存在，靠 `merged_shares` 旁挂 |
+| `Provenance` | REAL / SIMULATED_GRID | 枚举 | ✅ Phase 4 —— `PositionLot.provenance`，`merged_shares` 不再是旁挂字段 |
 
 **收益点**：把 `Money` / `ShareCount` / `Price` 换成 `Decimal` 可以一次性消灭
 "份额和市值不自洽"这一类 bug（`grid.py:632` 注释里记的那个 3.885 份 × 103 =
@@ -390,8 +405,9 @@ class GridSuggestion:
 | `LedgerProjection` | `record.py:229 rebuild_holdings_from_trades` | 纯 | 排序规则 `(date, 原下标)` 是隐含约定 |
 | `TradeApplier` | `record.py:145 apply_trade` | 纯 | 幂等校验 + 提交，好设计 |
 | `ValuationService` | `record.py:295 fetch_positions` | 有 I/O | 属 BC-D，但结果组装在 BC-B |
-| `RebalancePolicy` | `record.py:431 evaluate` | 纯 | ⚠ 依赖模块级 `THRESHOLD_PP` |
-| `RebalancePlanner` | `record.py:452-462`（plan 构造） | 纯 | 混在 `evaluate` 里，应拆 |
+| `RebalancePolicy` | `domain/portfolio/rebalance_policy.py:RebalancePolicy.evaluate` | 纯 | ✅ Phase 4 —— 阈值是**实例状态**（`threshold_pp`），模块级 `evaluate()` 只是兼容包装 |
+| `TargetWeightPolicy` | `domain/portfolio/rebalance_policy.py:TargetWeightPolicy` | 纯 | ✅ Phase 4 —— 等权 `1/n` 独立成类，「动态篮子」由它定义 |
+| `RebalancePlanner` | `domain/portfolio/rebalance_policy.py`（plan 构造） | 纯 | ✅ Phase 4 —— 从 `evaluate` 里搬进 `RebalanceOutcome.plan` |
 | `TriggerPolicy` | `grid.py:395 _triggers` | 纯 | ✅ Phase 2b 提成类 `domain/grid/trigger_policy.py`；**Phase 3 生产 + 回测两条路径都接上** |
 | `GridAdvisor` | `grid.py:501 advisory` | 纯 | ✅ 纯函数，不改 state → Phase 2b 提成类 `domain/grid/advisor.py` |
 | `LayerSizingPolicy` | `grid.py:54 layer_yuan` | 纯 | ✅ Phase 3 提成类 `domain/grid/layer_sizing.py`（参数显式化） |
@@ -516,6 +532,13 @@ DDD 上必须让这条鸿沟**在类型上不可混淆**：
 → 用 `Provenance` 值对象在 `PositionLot` 上标注；
 → 页面/邮件必须分别显示"真实持仓"与"含归并"。
 
+> ✅ **标注已落地**（Phase 4）：`Position` 现在持有 `PositionLot[]`，
+> 每批份额带自己的 `Provenance`（`REAL` / `SIMULATED_GRID`）。`merged_shares`
+> 不再是旁挂在持仓上的字段，而是 `position.simulated_shares` 这个**推出来的
+> 属性** —— 「模拟份额推着真实组合调仓」是模型里读得到的事实，不是四个兄弟
+> 字段拼出来的巧合。**披露**那一半还没做（呈现层仍只写「含归并」），留到
+> Phase 5 的事件化一起做。
+
 #### ③ 引擎建议 vs 用户操作
 
 见 §6.3。`GridSuggestion` 与 `GridOp` 分型。
@@ -553,10 +576,10 @@ total      (归并后)  → 写进快照 + 3pp 判阈
 | I9 | 归并份额**不写** `trades.json` | 靠"没人写"这个事实 | `MergedSharesTransferred` 事件 + 无写权限 |
 | I10 | 引擎**永不**改仓位/层数/盈亏/归并份额 | `grid.py:539` + 单测 | ✅ `GridAdvisor` 返回**不可变** `GridSuggestion`（Phase 2b） |
 | I11 | 网格状态只由固定 6 个 key 构成 | ⚠ 隐含在 `grid.py:599` / `grid.py:702` 的字面量 | ✅ 显式 dataclass + 显式序列化（Phase 2a） |
-| I12 | 目标权重 = 1/持仓数（动态篮子） | `record.py:449` | `TargetWeightPolicy` |
-| I13 | 偏离 > 3pp 才触发，全额快照回正 | `record.py:451` | `RebalancePolicy` |
+| I12 | 目标权重 = 1/持仓数（动态篮子） | `record.py:449` | ✅ `TargetWeightPolicy`（Phase 4） |
+| I13 | 偏离 > 3pp 才触发，全额快照回正 | `record.py:451` | ✅ `RebalancePolicy`（Phase 4）—— 阈值是**实例状态**，不是模块级环境变量 |
 | I14 | 一批网格操作 all-or-nothing | `apply_grid.py` 校验失败即退出 | `GridOpBatch` 的原子性 |
-| I15 | 页面/邮件不得把模拟说成实盘 | ⚠ 靠文案自觉 | ✅ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b）+ `Provenance` + 呈现层强制 |
+| I15 | 页面/邮件不得把模拟说成实盘 | ⚠ 靠文案自觉 | ✅ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b）+ `Provenance` 落在 `PositionLot` 上（Phase 4）+ 呈现层披露 |
 
 ### I11 的具体危害（已发生过）
 
@@ -637,10 +660,13 @@ src/
       trade_side.py             ✅ 8 种 side
       projection.py             ⬜ Phase 1+
     portfolio/
-      portfolio.py              ✅ Position / PositionLot（Provenance 已就位）
-      rebalance_policy.py       ✅ evaluate(threshold_pp 显式参数)
+      portfolio.py              ✅ Phase 4 —— Portfolio(根) / Position / PositionLot
+                                （Provenance 落地，市值/权重由聚合推出来）
+      rebalance_policy.py       ✅ Phase 4 —— RebalancePolicy / RebalanceOutcome /
+                                TargetWeightPolicy（阈值是实例状态）
       valuation.py              ✅ value_positions / value_extra_codes（价格来源注入）
-      asset_universe.py         ✅ ETF_DEFS / ASSET_NAMES / NAME_TO_CODE / QDII_CODES
+      asset_universe.py         ✅ Phase 4 —— AssetUniverse（注册表）/ UNIVERSE
+                                + ETF_DEFS / ASSET_NAMES / NAME_TO_CODE / QDII_CODES
     grid/
       grid_position.py          ✅ 网格聚合的领域半（stdlib-only！）
       grid_op.py                ✅ Phase 2b —— GridOp / ExecutedOp / SimulatedOp
@@ -1024,6 +1050,173 @@ class LayerSizingPolicy:
 最后那个测试是这一阶段的**防回归钉子**：光比对行为不够，行为一致但逻辑
 重新分叉（比如有人为了「优化」把内联判断抄回去）也该被拦住。
 
+#### 11.1.6 Phase 4 落地情况（2026-10-27）
+
+Phase 4 有**两个半**目标：组合聚合显式化、来源标注、UI 口径债。前两个在
+领域层，第三个在 `app.js`。**没有拆成两次提交** —— 因为 UI 的修法取决于
+领域层定下来的「引擎的清单从哪来」，拆开反而要做两遍。
+
+##### (a) `Portfolio` 聚合根 —— 市值不再是被抄的字段
+
+Phase 4 之前，`Portfolio` / `Position` / `PositionLot` 三个 dataclass
+**定义了但从没人用** —— 应用层一路传的是 position **dict**，市值 (`value`)
+是**照抄**记录里的数，份额和市值可以自相矛盾而不报任何错。
+
+现在方向反过来了：**dict 是聚合的输出**。
+
+```python
+@dataclass
+class Position:
+    code: str
+    name: str
+    price: float = 0.0
+    lots: list[PositionLot] = field(default_factory=list)   # ← 份额在这里
+    date: str = ""
+    premium: Optional[dict] = None
+
+    @property
+    def real_shares(self) -> float: ...      # 账本的数，**不取整**
+    @property
+    def simulated_shares(self) -> float: ... # 网格归并的数
+    @property
+    def total_shares(self) -> float: ...     # ShareCount(real + simulated)
+    @property
+    def value(self) -> float: ...            # Money(total_shares × price)
+    @property
+    def merged_only(self) -> bool: ...
+```
+
+三条要点：
+
+1. **市值是推出来的**。`value = total_shares × price`，不再照抄。
+   记录里如果出现「份额 1 股、价 100、市值 200」这种自相矛盾的行，
+   聚合**拒绝**它（用的是 100），而不是把 200 传下去。
+   ⚠️ 这条改动了 `tests/test_record.py` 里一个 fixture ——
+   `test_evaluate_with_cash_affects_weights` 原来只改 `value` 不改 `price`，
+   现在必须**一起改**，否则测试会红。**测试的意图没变，变的只是夹具要自洽。**
+2. **`real_shares` 不取整**。账本已经取整过了，再取一次会改记录。
+   `simulated_shares` 取整到 2 位（份额就是 2 位小数）。这正是 §11.1.2 的
+   舍入点纪律：**值对象的构造 = 原来那一次 `round()`**。
+3. **`total` 的加法顺序保留** `etf + (cr + cg)`。浮点加法不满足结合律，
+   旧代码算的就是这个顺序 —— 括号不能动。
+
+##### (b) `Provenance` —— 从「旁挂字段」变成「模型里读得到的事实」
+
+旧代码里「这个持仓有多少是模拟的」是四个**兄弟字段**拼出来的：
+`merged_shares` / `total_shares` / `merged_value` / `merged_only`。
+它们各自散落在记录里，谁也不知道它们是**同一个事实**的四个投影。
+
+现在：
+
+```python
+@dataclass(frozen=True)
+class PositionLot:
+    shares: float
+    cost: float = 0.0
+    provenance: Provenance = Provenance.REAL
+```
+
+`Position.simulated_shares` 是**求和出来的**，不是抄来的。
+「模拟份额推着真实组合调仓」现在是模型里读得到的事实，而不是四个字段的巧合。
+
+⚠️ `PositionLot.cost` 目前**恒为 0 = 未记录**（账本投影不带成本基准），
+**不是**「白捡的」。这个字段留到账本投影长出成本基准时才有意义。
+
+##### (c) `RebalancePolicy` / `TargetWeightPolicy` —— 阈值从环境变量变成实例状态
+
+```python
+@dataclass(frozen=True)
+class RebalancePolicy:
+    threshold_pp: float = 3.0
+    target: TargetWeightPolicy = field(default_factory=TargetWeightPolicy)
+
+    def evaluate(self, portfolio: Portfolio) -> RebalanceOutcome: ...
+```
+
+「我们现在用的是哪个阈值」现在**看一个对象**就知道，不用去翻模块级环境变量。
+`TargetWeightPolicy` 单独成类，是因为「每个资产该占多少权重」是**一条独立的
+规则** —— 它正是「动态篮子」（3 / 4 / 5 个资产都不用改代码）的定义。
+
+模块级 `evaluate(positions, cash_rebalance, cash_grid, threshold_pp=3.0)`
+保留为**兼容包装**（半壁代码和测试都吃这个形状），它**委托**给类 ——
+实现只有一份。
+
+应用层那边是 `daily_snapshot.rebalance_policy()` —— 一个**函数**，不是模块级
+常量实例。原因很具体：旧的 `evaluate(..., threshold_pp=THRESHOLD_PP)` 是在
+**调用时**读模块全局 `THRESHOLD_PP` 的，绑定时机必须保持一致（有人在
+import 之后改这个全局，行为也得跟着变）。阈值仍然是**实例状态** ——
+想用别的阈值就 `RebalancePolicy(threshold_pp=1.0)`，一个进程里可以并存多套。
+
+##### (d) `AssetUniverse` —— 资产清单从 `holdings.json` 里独立出来
+
+`data/holdings.json` 曾经同时扮演三个角色：交易派生的持仓缓存、持仓的
+兜底来源，以及**事实上的「本项目跟踪哪些资产」清单**。第三个角色既不是持仓
+也不是缓存 —— 它是**注册表**。
+
+```python
+@dataclass(frozen=True)
+class AssetUniverse:
+    defs: Mapping[str, tuple[str, str, str, bool]]   # code → (sina, eastmoney, name, is_qdii)
+
+    @property
+    def names(self) -> list[str]: ...
+    @property
+    def name_to_code(self) -> dict[str, str]: ...
+    @property
+    def qdii_codes(self) -> set[str]: ...
+```
+
+模块级的 `ETF_DEFS` / `ASSET_NAMES` / `NAME_TO_CODE` / `QDII_CODES`
+保留为**同一个单例的别名** —— 既有调用方一行不用改，但它们再也不会各自漂移。
+
+##### (e) UI 口径债 —— `app.js` 里抄的那份清单删掉了
+
+§11.2 给 Phase 4 的收益写着：「引擎换篮子时 UI 不会再跟着说谎（这个 bug
+已经发生过一次 —— 引擎 4 资产 vs `app.js` 3 资产）」。
+
+`app.js` 里原来有一份手抄的：
+
+```js
+const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
+```
+
+现在删掉了，两个用它的地方都改成**从记录/状态里推**：
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| 资金管理「复合网格」资产列 | `GRID_CODES_LIST.filter(被持有的名字)` | `latestRec.grid_signals` 里 `current_value > 0` 的行 |
+| 网格预览「当前复合网格」 | `Object.entries(ETF_CATALOG)` | `Object.entries(currentGridState)` —— `grid_state.json` 的 key |
+| 代码 → 名字的反查 | 无 | 新增 `codeForName(name, latestRec)` |
+
+`ETF_CATALOG` **还留着** —— 它是交易表单下拉框的**候选项**，不是网格的清单。
+这两个东西过去混为一谈了。
+
+> ⚠️ `grid_state.json` 与 `history.json` 的 key 顺序都跟 `ETF_CATALOG` 一致
+> （红利 / 黄金 / 可转债 / 纳指），所以**渲染结果逐字不变** —— 这次改的是
+> 「清单从哪来」，不是「清单长什么样」。
+
+##### (f) 验证
+
+| 检查 | 结果 |
+|---|---|
+| 逐字节回归（确定性流程 dump 前后对比：归并 → 3pp → 网格推进 20 天 × 4 资产 + `advisory` → `build_record`） | **逐字节相同** —— 改动前后 sha256 均为 `75ede44e6…`（`git stash` 前后各跑一次） |
+| `python -X utf8 -m tests.test_record` | **144/144 通过**（新增 8 个 Phase 4 测试） |
+| `node --check app.js` | ✓ 语法通过 |
+| 页面（chrome-devtools，硬刷新） | 无 JS 报错；网格预览输出与改动前逐字相同：`515180 待开仓 \| 159937 待开仓 \| 511380 待开仓 \| 513300 待开仓`；资金管理「复合网格」资产列 = `— 无持仓 —`（4 个资产 `current_value` 全 0，与改动前一致） |
+
+##### (g) 新增测试（8 个）
+
+| 测试 | 断言 |
+|---|---|
+| `test_asset_universe_is_a_domain_object` | `AssetUniverse` 是可传的值；`names` / `name_to_code` / `qdii_codes` 都从 `defs` 推出来 |
+| `test_position_splits_real_and_simulated_lots` | `PositionLot.provenance` 分得开真实 / 模拟份额 |
+| `test_portfolio_merges_grid_shares_into_lots` | 网格归并的份额进的是 `SIMULATED_GRID` 那一批 |
+| `test_portfolio_record_roundtrip_is_lossless` | `to_records()` → `from_records()` 往返不丢东西 |
+| `test_position_value_is_derived_from_lots_not_copied` | **市值是推出来的**，不是照抄记录里的 `value` |
+| `test_rebalance_policy_threshold_is_instance_state` | 阈值是实例状态 —— 两个 policy 可以并存不同阈值 |
+| `test_target_weight_policy_is_dynamic` | `1/n` 随篮子大小变 |
+| `test_simulated_shares_still_drive_the_weights` | 模拟份额**仍然**参与权重（用户 2026-10-24 的明确决定，语义不变） |
+
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
 #### Phase 0 — 立柱（不改行为，1 次提交）
@@ -1068,7 +1261,7 @@ class LayerSizingPolicy:
   `backfill_grid_ops.py`）；模拟器完整输出（cycles + history，4 组场景）
   **逐字节相同**。详见 §11.1.5。
 
-#### Phase 4 — 组合聚合与来源标注（2 次提交）
+#### Phase 4 — 组合聚合与来源标注（2 次提交）✅ 已落地
 
 - `Position` 持有 `PositionLot[]`，带 `Provenance`
 - `RebalancePolicy` 提为独立服务，阈值改为显式参数
@@ -1076,6 +1269,12 @@ class LayerSizingPolicy:
 
 - 收益：§4-BC-B 的边界泄漏显形；引擎换篮子时 UI 不会再跟着说谎
   （这个 bug 已经发生过一次 —— 引擎 4 资产 vs `app.js` 3 资产）
+
+- ✅ **已完成**（2026-10-27）：`Portfolio` 聚合根接上生产路径（市值/权重由它
+  算，记录是它的**输出**）；`Provenance` 落到 `PositionLot` 上；
+  `RebalancePolicy` / `TargetWeightPolicy` 成类；`AssetUniverse` 独立成注册表；
+  `app.js` 里手抄的 `GRID_CODES_LIST` 删除，两个用到的地方改成从
+  `grid_signals` / `currentGridState` 推。详见 §11.1.6。
 
 #### Phase 5 — 事件化 + 应用层瘦身（2~3 次提交）
 
@@ -1105,8 +1304,8 @@ class LayerSizingPolicy:
 | D2 | `ops` 混装执行日志与模拟日志 | `src/domain/grid/grid_position.py:manual_op` 写 `source:"manual"`；`src/simulation/grid_simulator.py:ops_from_cycles` 写 `source:"backtest"` | 容易被误读成"真实成交记录" | Phase 2 拆成 `ExecutedOp` / `SimulatedOp` |
 | D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | 改名为 `GridBudget`，在 `total` 里显式标注其虚拟性 |
 | D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | 把网格那一栏标成"虚拟"或从合计剔除（**本轮不修**，迁移后两者已自动对齐到只剩 `cash_rebalance` 的差额） |
-| D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | `src/infrastructure/json_repositories.py:read_holdings` | 职责混乱 | Phase 4 拆出 `AssetUniverse` |
-| D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:merge_grid_shares_into_positions` + `rebalance_policy.evaluate` | 模拟影响真实 | `Provenance` 标注 + 页面披露（规则本身是用户选的，不改语义） |
+| D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | ✅ **已解决**（Phase 4）—— 资产清单独立成 `AssetUniverse` 注册表（`src/domain/portfolio/asset_universe.py`），`holdings.json` 只剩持仓 | 职责混乱 | ✅ 已解决（§11.1.6） |
+| D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:Portfolio.from_holdings` + `RebalancePolicy.evaluate` | 模拟影响真实 | ⚠️ **半解决**（Phase 4）—— 标注侧已落地：`Provenance` 落在 `PositionLot` 上，`Position.simulated_shares` 是**求和出来的**；**披露侧**（页面/邮件分别显示「真实持仓」与「含归并」）还没做，留到 Phase 5（规则本身是用户选的，不改语义） |
 | D7 | 网格规则两套实现 | ✅ **已解决**（Phase 3）—— `src/domain/grid/trigger_policy.py:TriggerPolicy` 现在是**生产 + 回测**两条路径**唯一**的判定来源 | 改参数会静默分叉 | ✅ 已解决（§11.1.5）—— `run_compound_grid` 调用 `policy.levels(...)`，并有静态测试防止内联算术回流 |
 | D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | `src/application/daily_snapshot.py:THRESHOLD_PP`, `src/domain/grid/grid_position.py:GRID_*` | 无法做多策略并存、测试需改环境 | Phase 5 提为配置对象 |
 | D9 | `evaluate()` 的两段式求值是隐式近似 | `src/application/daily_snapshot.py:main` | 恢复自动行为时会有偏差 | 显式命名为 `LayerSizingBasis` / `SnapshotBasis` |
@@ -1124,8 +1323,9 @@ class LayerSizingPolicy:
 - [x] 「出场只卖成本额」在哪里保证？→ `cost_only_exit` 唯一实现（Phase 2a ✅）
 - [x] 「什么算触发只有一份规则」在哪里保证？→ `TriggerPolicy.levels` 是生产路径与回测路径**唯一**的判定来源（Phase 3 ✅）；`test_simulator_has_no_inline_trigger_arithmetic` 静态挡住内联算术回流
 - [ ] 「归并份额不写 trades.json」在哪里保证？→ `MergedSharesTransferred` 事件，账本上下文无写权限
-- [x] 「模拟不是实盘」在哪里保证？→ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b ✅）；`Provenance` 待 Phase 4/5
-- [ ] 「目标权重 = 1/n」在哪里保证？→ `TargetWeightPolicy`，且 UI 从 `Portfolio` 推导而非硬编码
+- [x] 「模拟不是实盘」在哪里保证？→ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b ✅）；`Provenance` 落在 `PositionLot` 上、`Position.simulated_shares` 是求和出来的（Phase 4 ✅）；**呈现层的披露**待 Phase 5
+- [x] 「目标权重 = 1/n」在哪里保证？→ `TargetWeightPolicy`（Phase 4 ✅）—— 类里只有这一处实现；UI 从 `Portfolio` / 记录推导而非硬编码（Phase 4 ✅，`app.js` 里手抄的清单已删）
+- [x] 「持仓市值不会被抄错」在哪里保证？→ `Position.value` 是 `total_shares × price` **推出来的**，`Position.to_record()` 是它的输出（Phase 4 ✅）；`test_position_value_is_derived_from_lots_not_copied` 钉住这条
 - [x] 「状态形状固定」在哪里保证？→ `GridPosition` dataclass，mapper 显式（Phase 2a ✅）
 - [x] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型（`SimulatedOp` vs `ExecutedOp`）、不同仓储权限（Phase 2b + Phase 3 ✅）；`GridSimulator` 只能产出 `SimulatedOp`，`merge_backtest_ops` 只能写 `source="backtest"` 的行 |
 
