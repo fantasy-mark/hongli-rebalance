@@ -1,4 +1,5 @@
-"""数值值对象 —— Money / ShareCount / Price / Weight / DeviationPP / LayerSize。
+"""数值值对象 —— Money / GridBudget / ShareCount / Price / Weight /
+DeviationPP / LayerSize。
 
 `docs/domain_model.md` §6.2 建议用 `Decimal` 实现。**本模块刻意不用
 `Decimal`**, 理由有两条, 都不是偏好问题:
@@ -139,8 +140,34 @@ class LayerSize(_RoundedFloat):
     UNIT = "¥"
 
 
+class GridBudget(_RoundedFloat):
+    """网格那一池的**虚拟预算** —— 是金额, 但**不是你的钱**。
+
+    替掉: `ledger.apply_trade` 里网格那一池的取整 (原来是 `Money`),
+    `Portfolio.grid_budget` / `LedgerProjection.grid_budget`。
+
+    ⚠️ **为什么它要单独一个类型**: `cash_grid` 这个名字看不出它是虚拟的,
+    于是它被当成现金混进 `Portfolio.total` —— 而 `total` 是 3pp 判阈与
+    层额定尺的基数。现在「这是虚拟预算」是**类型上的事实**, 不是注释里
+    的一句话 (D3)。
+
+    ⚠️ 它**确实**计入 `total` —— **规则一个字没改**。`total` 是**策略的
+    资本基数**: 两个池子的钱在同一个池子里算。虚拟不等于该被藏起来, 只
+    等于**必须被标出来** —— 标出来是呈现层的活 (D4)。
+
+    ⚠️ 存盘用的 JSON 键**仍然叫 `cash_grid`** —— `data/holdings.json` 与
+    `data/history.json` 是用户直接看 diff 的 committed artifacts, 改键名
+    等于改历史。领域里叫 `grid_budget`, JSON 里叫 `cash_grid`, 映射只在
+    `json_repositories` 一处。
+    """
+
+    DP = 2
+    UNIT = "¥"
+
+
 __all__ = [
     "Money",
+    "GridBudget",
     "ShareCount",
     "Price",
     "Weight",

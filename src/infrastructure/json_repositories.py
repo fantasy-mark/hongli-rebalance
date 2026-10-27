@@ -45,7 +45,12 @@ def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float, flo
         {
             "_schema": "v2",
             "cash_rebalance": <number>,    # real money for ETF buy/sell
-            "cash_grid": <number>,         # virtual money for grid accounting
+            "cash_grid": <number>,         # VIRTUAL budget for grid accounting
+                                           # (domain name: grid_budget /
+                                           #  GridBudget -- D3. The JSON key stays
+                                           #  `cash_grid` because this file is a
+                                           #  committed artifact the user reads
+                                           #  diffs of.)
             "positions": [
                 {"name": "...", "code": "xxxxxx", "shares": <number>},
                 ...
@@ -53,11 +58,12 @@ def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float, flo
         }
 
     Backwards-compat: if only legacy `cash` exists, treat as cash_rebalance
-    with cash_grid=0 (one-time bootstrap for old backups).  If json is
+    with grid_budget=0 (one-time bootstrap for old backups).  If json is
     missing entirely, falls back to legacy xlsx (5-row layout) which has
     a single cash field; same treatment.
 
-    Returns (positions, cash_rebalance, cash_grid).
+    Returns (positions, cash_rebalance, grid_budget) -- the third one is
+    the grid's **virtual** budget (D3).
     """
     if json_path is None:
         json_path = HOLDINGS
@@ -77,11 +83,11 @@ def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float, flo
     # Two-pool schema
     if "cash_rebalance" in doc or "cash_grid" in doc:
         cash_rebalance = float(doc.get("cash_rebalance", 0) or 0)
-        cash_grid = float(doc.get("cash_grid", 0) or 0)
+        grid_budget = float(doc.get("cash_grid", 0) or 0)
     else:
         # Legacy single-pool bootstrap
         cash_rebalance = float(doc.get("cash", 0) or 0)
-        cash_grid = 0.0
+        grid_budget = 0.0
     holdings: list[dict] = []
     for p in doc.get("positions", []):
         if not isinstance(p, dict): continue
@@ -93,7 +99,7 @@ def read_holdings(json_path: Path | None = None) -> Tuple[list[dict], float, flo
         except (ValueError, TypeError):
             continue
         holdings.append({"name": name, "code": code, "shares": shares})
-    return holdings, cash_rebalance, cash_grid
+    return holdings, cash_rebalance, grid_budget
 
 
 def _read_holdings_legacy_xlsx(xlsx_path: Path) -> Tuple[list[dict], float]:

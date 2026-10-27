@@ -27,7 +27,7 @@ from ..events.domain_events import (
     EventStream,
     TradeRecorded,
 )
-from ..shared.money import Money, ShareCount
+from ..shared.money import GridBudget, Money, ShareCount
 from .trade_side import TradeSide
 
 #: 现金类 side → (from_pool, to_pool)。成交类 (buy/sell) 不在这里 ——
@@ -45,15 +45,18 @@ _CASH_ROUTING: dict[str, tuple[str, str]] = {
 def apply_trade(state: dict, trade: dict,
                 events: Optional[EventStream] = None) -> None:
     """Mutate `state` in place: state = {"cash_rebalance": float,
-    "cash_grid": float, "positions": {code: shares}}.
+    "grid_budget": float, "positions": {code: shares}}.
+
+    ⚠️ `grid_budget` 是网格那一池的**虚拟预算** (D3) —— 领域里它有自己的
+    类型 (`GridBudget`), 存盘用的 JSON 键仍然叫 `cash_grid`。
 
     Side routing:
         deposit_rebalance  → +amount to cash_rebalance
-        deposit_grid       → +amount to cash_grid
+        deposit_grid       → +amount to grid_budget
         withdraw_rebalance → -amount from cash_rebalance
-        withdraw_grid      → -amount from cash_grid
-        transfer_to_grid   → -amount from cash_rebalance, +amount to cash_grid
-        transfer_to_rebalance → +amount to cash_rebalance, -amount from cash_grid
+        withdraw_grid      → -amount from grid_budget
+        transfer_to_grid   → -amount from cash_rebalance, +amount to grid_budget
+        transfer_to_rebalance → +amount to cash_rebalance, -amount from grid_budget
         buy                → -amount from cash_rebalance, +shares to positions
         sell               → +amount to cash_rebalance, -shares from positions
 
@@ -61,8 +64,9 @@ def apply_trade(state: dict, trade: dict,
     negative pool, no oversell), then commits. On failure the original
     `state` is left untouched and ValueError is raised.
 
-    Rounds cash to 2 dp after each trade (`Money` — 现金永远是 2 位小数,
-    这条规则只写一遍, 不再散落成裸 `round(x, 2)`)。
+    Rounds cash to 2 dp after each trade (`Money` for the real pool,
+    `GridBudget` for the virtual one — 金额永远是 2 位小数, 这条规则只写
+    一遍, 不再散落成裸 `round(x, 2)`)。
 
     Args:
         state:  就地修改的状态
@@ -70,28 +74,35 @@ def apply_trade(state: dict, trade: dict,
         events: 可选的事件收集器 —— 成交发 `TradeRecorded`, 现金划转发
                 `CashTransferred`。`None` = 不发事件 (老调用方不受影响)。
     """
+    # ⚠️ **严格读**: 旧键 `cash_grid` (D3 之前) 出现就直接报错 —— 静默忽略它
+    # 等于「网格那一池的钱凭空消失」, 而那正是这个键存在的全部意义。
+    if "cash_grid" in state:
+        raise ValueError(
+            "ledger state uses the legacy key 'cash_grid'; the grid pool is "
+            "now 'grid_budget' (D3) — the old key would be silently ignored "
+            "and that pool's money would vanish")
     side = trade["side"]
     # Compute new state in a scratch copy; commit only if validation passes.
     new_state: dict = {
         "cash_rebalance": state.get("cash_rebalance", 0.0),
-        "cash_grid":      state.get("cash_grid", 0.0),
+        "grid_budget":    state.get("grid_budget", 0.0),
         "positions": dict(state.get("positions", {})),
     }
     if side == "deposit_rebalance":
         new_state["cash_rebalance"] += float(trade["amount"])
     elif side == "deposit_grid":
-        new_state["cash_grid"] += float(trade["amount"])
+        new_state["grid_budget"] += float(trade["amount"])
     elif side == "withdraw_rebalance":
         new_state["cash_rebalance"] -= float(trade["amount"])
     elif side == "withdraw_grid":
-        new_state["cash_grid"] -= float(trade["amount"])
+        new_state["grid_budget"] -= float(trade["amount"])
     elif side == "transfer_to_grid":
         amt = float(trade["amount"])
         new_state["cash_rebalance"] -= amt
-        new_state["cash_grid"] += amt
+        new_state["grid_budget"] += amt
     elif side == "transfer_to_rebalance":
         amt = float(trade["amount"])
-        new_state["cash_grid"] -= amt
+        new_state["grid_budget"] -= amt
         new_state["cash_rebalance"] += amt
     elif side == "buy":
         code = str(trade["code"])
@@ -114,15 +125,15 @@ def apply_trade(state: dict, trade: dict,
     else:
         raise ValueError(f"unknown side: {side!r}")
     new_state["cash_rebalance"] = Money(new_state["cash_rebalance"])
-    new_state["cash_grid"] = Money(new_state["cash_grid"])
+    new_state["grid_budget"] = GridBudget(new_state["grid_budget"])
     # Defense: any pool going negative is a programming error
-    if new_state["cash_rebalance"] < 0 or new_state["cash_grid"] < 0:
+    if new_state["cash_rebalance"] < 0 or new_state["grid_budget"] < 0:
         raise ValueError(
             f"cash would go negative: rebalance={new_state['cash_rebalance']:.2f}, "
-            f"grid={new_state['cash_grid']:.2f} (after {side})")
+            f"grid={new_state['grid_budget']:.2f} (after {side})")
     # All validations passed — commit
     state["cash_rebalance"] = new_state["cash_rebalance"]
-    state["cash_grid"] = new_state["cash_grid"]
+    state["grid_budget"] = new_state["grid_budget"]
     for c in list(new_state["positions"].keys()):
         v = ShareCount(new_state["positions"][c])
         if v <= 0:

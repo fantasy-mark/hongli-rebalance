@@ -6,7 +6,9 @@ book, and two move ETF shares.
 
 The two cash pools are:
   - `cash_rebalance` — **real** money, used for ETF buys/sells
-  - `cash_grid`      — **virtual** budget slot for grid accounting
+  - `grid_budget`    — **virtual** budget slot for grid accounting (D3:
+                      领域里叫 `grid_budget` / `GridBudget`; 存盘用的 JSON 键
+                      仍然叫 `cash_grid` —— 见 `json_repositories`)
 """
 from __future__ import annotations
 

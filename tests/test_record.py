@@ -59,9 +59,9 @@ def test_read_holdings_with_现金_label():
             ["可转债ETF博时", "511380", 13000],
         ])
         repos.HOLDINGS = xlsx
-        h, cash_rebalance, cash_grid = repos.read_holdings()
+        h, cash_rebalance, grid_budget = repos.read_holdings()
         assert cash_rebalance == 50000.0, f"cash_rebalance={cash_rebalance}"
-        assert cash_grid == 0.0, f"cash_grid={cash_grid}"
+        assert grid_budget == 0.0, f"grid_budget={grid_budget}"
         assert len(h) == 3
         codes = sorted(x["code"] for x in h)
         assert codes == ["159937", "511380", "515180"]
@@ -74,9 +74,9 @@ def test_read_holdings_accepts_legacy_资产_label():
             ["黄金ETF博时", "159937", 5000],
         ])
         repos.HOLDINGS = xlsx
-        h, cash_rebalance, cash_grid = repos.read_holdings()
+        h, cash_rebalance, grid_budget = repos.read_holdings()
         assert cash_rebalance == 123456.0
-        assert cash_grid == 0.0
+        assert grid_budget == 0.0
         assert len(h) == 1 and h[0]["code"] == "159937"
 
 
@@ -92,9 +92,9 @@ def test_read_holdings_skips_invalid_rows():
             ["可转债ETF博时", "511380", 500],
         ])
         repos.HOLDINGS = xlsx
-        h, cash_rebalance, cash_grid = repos.read_holdings()
+        h, cash_rebalance, grid_budget = repos.read_holdings()
         assert cash_rebalance == 0.0
-        assert cash_grid == 0.0
+        assert grid_budget == 0.0
         assert len(h) == 2
         assert sorted(x["code"] for x in h) == ["159937", "511380"]
 
@@ -104,9 +104,9 @@ def test_read_holdings_no_label_defaults_to_zero():
         xlsx = Path(td) / "h.xlsx"
         _write_holdings(xlsx, "", 0.0, [["A", "159937", 100]])
         repos.HOLDINGS = xlsx
-        h, cash_rebalance, cash_grid = repos.read_holdings()
+        h, cash_rebalance, grid_budget = repos.read_holdings()
         assert cash_rebalance == 0.0
-        assert cash_grid == 0.0
+        assert grid_budget == 0.0
         assert len(h) == 1
 
 
@@ -148,7 +148,7 @@ def test_evaluate_2asset_dynamic_target_w():
     # build_record also produces dynamic target_w
     r = snapshot.build_record(
         today="2026-10-14", positions=positions,
-        cash_rebalance=0.0, cash_grid=0.0,
+        cash_rebalance=0.0, grid_budget=0.0,
         total=200, weights=weights, triggered_3pp=False, plan=[],
         grid_signals=[], grid_state={},
     )
@@ -171,7 +171,7 @@ def test_evaluate_5asset_dynamic_target_w():
     assert len(plan) == 0  # equal weight → no plan unless triggered
     r = snapshot.build_record(
         today="2026-10-14", positions=positions,
-        cash_rebalance=0.0, cash_grid=0.0,
+        cash_rebalance=0.0, grid_budget=0.0,
         total=500, weights=weights, triggered_3pp=False, plan=[],
         grid_signals=[], grid_state={},
     )
@@ -220,9 +220,9 @@ def test_read_holdings_n_agnostic():
             xlsx = Path(td) / "h.xlsx"
             _write_holdings(xlsx, "现金", 1000.0, rows)
             repos.HOLDINGS = xlsx
-            h, cash_rebalance, cash_grid = repos.read_holdings()
+            h, cash_rebalance, grid_budget = repos.read_holdings()
             assert cash_rebalance == 1000.0
-            assert cash_grid == 0.0
+            assert grid_budget == 0.0
             assert len(h) == n, f"N={n} got {len(h)} positions: {h}"
 
 
@@ -247,10 +247,10 @@ def test_read_holdings_json_schema():
             ],
         }, ensure_ascii=False), encoding="utf-8")
         repos.HOLDINGS = p
-        h, cash_rebalance, cash_grid = repos.read_holdings()
+        h, cash_rebalance, grid_budget = repos.read_holdings()
         # Legacy single-cash file migrates: 1234.5 → cash_rebalance, grid=0
         assert cash_rebalance == 1234.5
-        assert cash_grid == 0.0
+        assert grid_budget == 0.0
         assert len(h) == 2, h
         assert h[0]["code"] == "515180"
         assert h[0]["shares"] == 100
@@ -264,10 +264,10 @@ def test_read_holdings_json_missing_returns_empty():
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "nope.json"
         repos.HOLDINGS = p
-        h, cash_rebalance, cash_grid = repos.read_holdings()
+        h, cash_rebalance, grid_budget = repos.read_holdings()
         assert h == []
         assert cash_rebalance == 0.0
-        assert cash_grid == 0.0
+        assert grid_budget == 0.0
 
 
 def test_read_holdings_xlsx_fallback_when_json_missing():
@@ -288,9 +288,9 @@ def test_read_holdings_xlsx_fallback_when_json_missing():
         ws.cell(row=5, column=3, value=1000)
         wb.save(xlsx)
         repos.HOLDINGS = p
-        h, cash_rebalance, cash_grid = repos.read_holdings()
+        h, cash_rebalance, grid_budget = repos.read_holdings()
         assert cash_rebalance == 999.0
-        assert cash_grid == 0.0
+        assert grid_budget == 0.0
         assert len(h) == 1 and h[0]["code"] == "515180" and h[0]["shares"] == 1000
 
 
@@ -336,7 +336,7 @@ def test_build_record_shape():
     ]
     r = snapshot.build_record(
         today="2026-10-11", positions=positions,
-        cash_rebalance=5.0, cash_grid=0.0,
+        cash_rebalance=5.0, grid_budget=0.0,
         total=526221.4, weights=[0.3267, 0.3368, 0.3365],
         triggered_3pp=False, plan=[],
         grid_signals=[], grid_state={},
@@ -1619,7 +1619,7 @@ def test_load_trades_unreadable_returns_empty():
 
 
 def test_apply_trade_buy_increments_shares_decrements_cash():
-    state = {"cash_rebalance": 10000.0, "cash_grid": 0.0, "positions": {}}
+    state = {"cash_rebalance": 10000.0, "grid_budget": 0.0, "positions": {}}
     ledger.apply_trade(state, {
         "side": "buy", "code": "515180", "shares": 1000, "price": 1.40, "fee": 0.0,
     })
@@ -1628,7 +1628,7 @@ def test_apply_trade_buy_increments_shares_decrements_cash():
 
 
 def test_apply_trade_sell_rejects_oversell_raises():
-    state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {"515180": 100.0}}
+    state = {"cash_rebalance": 0.0, "grid_budget": 0.0, "positions": {"515180": 100.0}}
     raised = False
     try:
         ledger.apply_trade(state, {
@@ -1643,18 +1643,18 @@ def test_apply_trade_sell_rejects_oversell_raises():
 def test_project_ledger_deposit_only_yields_initial_state():
     """One deposit_rebalance → cash_rebalance = amount, positions empty."""
     trades = [{"side": "deposit_rebalance", "date": "2026-10-12", "amount": 175900.60}]
-    positions, cash_rebalance, cash_grid = ledger_projection.project_ledger(
+    positions, cash_rebalance, grid_budget = ledger_projection.project_ledger(
         trades, as_of_date="2026-10-12",
     )
     assert cash_rebalance == 175900.60
-    assert cash_grid == 0.0
+    assert grid_budget == 0.0
     assert positions == []
 
 
 def test_project_ledger_chains_buy_sell_deposit_withdraw():
     """Replay: deposit_rebalance 10000, buy 1000@10, sell 200@12, withdraw_rebalance 500.
     Expected: cash_rebalance = 10000 - 10000 + 2400 - 500 = 1900
-              cash_grid = 0
+              grid_budget = 0
               515180 shares = 800
     """
     trades = [
@@ -1665,11 +1665,11 @@ def test_project_ledger_chains_buy_sell_deposit_withdraw():
          "shares": 200, "price": 12.0, "fee": 0.0},
         {"side": "withdraw_rebalance","date": "2026-10-15", "amount": 500.0},
     ]
-    positions, cash_rebalance, cash_grid = ledger_projection.project_ledger(
+    positions, cash_rebalance, grid_budget = ledger_projection.project_ledger(
         trades, as_of_date="2026-10-15",
     )
     assert cash_rebalance == round(10000 - 10000 + 2400 - 500, 2) == 1900.0
-    assert cash_grid == 0.0
+    assert grid_budget == 0.0
     assert len(positions) == 1
     assert positions[0]["code"] == "515180"
     assert positions[0]["shares"] == 800.0
@@ -1694,25 +1694,25 @@ def test_project_ledger_as_of_date_inclusive():
 # -----------------------------------------------------------------------------
 
 def test_apply_trade_deposit_rebalance_credits_rebalance_only():
-    state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
+    state = {"cash_rebalance": 0.0, "grid_budget": 0.0, "positions": {}}
     ledger.apply_trade(state, {
         "side": "deposit_rebalance", "amount": 5000.0,
     })
     assert state["cash_rebalance"] == 5000.0
-    assert state["cash_grid"] == 0.0
+    assert state["grid_budget"] == 0.0
 
 
 def test_apply_trade_deposit_grid_credits_grid_only():
-    state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
+    state = {"cash_rebalance": 0.0, "grid_budget": 0.0, "positions": {}}
     ledger.apply_trade(state, {
         "side": "deposit_grid", "amount": 8000.0,
     })
     assert state["cash_rebalance"] == 0.0
-    assert state["cash_grid"] == 8000.0
+    assert state["grid_budget"] == 8000.0
 
 
 def test_apply_trade_withdraw_grid_rejects_insufficient():
-    state = {"cash_rebalance": 0.0, "cash_grid": 100.0, "positions": {}}
+    state = {"cash_rebalance": 0.0, "grid_budget": 100.0, "positions": {}}
     raised = False
     try:
         ledger.apply_trade(state, {
@@ -1723,22 +1723,22 @@ def test_apply_trade_withdraw_grid_rejects_insufficient():
         assert "cash would go negative" in str(ex)
     assert raised, "withdraw_grid exceeding balance should raise"
     # State must not be mutated on failure
-    assert state["cash_grid"] == 100.0
+    assert state["grid_budget"] == 100.0
 
 
 def test_apply_trade_transfer_to_grid_deducts_rebalance_adds_grid():
-    state = {"cash_rebalance": 5000.0, "cash_grid": 1000.0, "positions": {}}
+    state = {"cash_rebalance": 5000.0, "grid_budget": 1000.0, "positions": {}}
     ledger.apply_trade(state, {
         "side": "transfer_to_grid", "amount": 2000.0,
     })
     assert state["cash_rebalance"] == 3000.0
-    assert state["cash_grid"] == 3000.0
+    assert state["grid_budget"] == 3000.0
     # Total preserved
-    assert state["cash_rebalance"] + state["cash_grid"] == 6000.0
+    assert state["cash_rebalance"] + state["grid_budget"] == 6000.0
 
 
 def test_apply_trade_transfer_to_grid_rejects_insufficient_rebalance():
-    state = {"cash_rebalance": 100.0, "cash_grid": 5000.0, "positions": {}}
+    state = {"cash_rebalance": 100.0, "grid_budget": 5000.0, "positions": {}}
     raised = False
     try:
         ledger.apply_trade(state, {
@@ -1750,22 +1750,22 @@ def test_apply_trade_transfer_to_grid_rejects_insufficient_rebalance():
     assert raised, "transfer_to_grid exceeding rebalance pool should raise"
     # No partial credit — atomic
     assert state["cash_rebalance"] == 100.0
-    assert state["cash_grid"] == 5000.0
+    assert state["grid_budget"] == 5000.0
 
 
 def test_apply_trade_transfer_to_rebalance_deducts_grid_adds_rebalance():
-    state = {"cash_rebalance": 0.0, "cash_grid": 5000.0, "positions": {}}
+    state = {"cash_rebalance": 0.0, "grid_budget": 5000.0, "positions": {}}
     ledger.apply_trade(state, {
         "side": "transfer_to_rebalance", "amount": 1500.0,
     })
     assert state["cash_rebalance"] == 1500.0
-    assert state["cash_grid"] == 3500.0
+    assert state["grid_budget"] == 3500.0
 
 
 def test_apply_trade_transfer_sides_dont_change_positions():
     """transfer_* only moves cash between pools; positions stay identical."""
     state = {
-        "cash_rebalance": 2000.0, "cash_grid": 1000.0,
+        "cash_rebalance": 2000.0, "grid_budget": 1000.0,
         "positions": {"515180": 5000.0},
     }
     positions_before = dict(state["positions"])
@@ -1788,13 +1788,13 @@ def test_project_ledger_six_new_cash_sides():
         {"side": "transfer_to_rebalance", "date": "2026-10-16", "amount": 400.0},
         {"side": "withdraw_rebalance",    "date": "2026-10-17", "amount": 100.0},
     ]
-    positions, cash_rebalance, cash_grid = ledger_projection.project_ledger(
+    positions, cash_rebalance, grid_budget = ledger_projection.project_ledger(
         trades, as_of_date="2026-10-17",
     )
     # rebalance: +10000 -2000(transfer out) +400(transfer in) -100(withdraw) = 8300
     # grid:     +3000 +2000(transfer in) -500(withdraw) -400(transfer out) = 4100
     assert cash_rebalance == 8300.0, f"got {cash_rebalance}"
-    assert cash_grid == 4100.0, f"got {cash_grid}"
+    assert grid_budget == 4100.0, f"got {grid_budget}"
     assert positions == []
 
 
@@ -1882,7 +1882,7 @@ def test_apply_holdings_rejects_transfer_exceeding_source_pool():
         td = Path(td)
         mod.TRADES   = td / "trades.json"
         mod.HOLDINGS = td / "holdings.json"
-        # pre-seed: cash_grid=100 via deposit_grid, then try to transfer 1000
+        # pre-seed: grid_budget=100 via deposit_grid, then try to transfer 1000
         # from rebalance=0 to grid → fail
         payload = json.dumps({
             "schema": "trades-v1",
@@ -2242,7 +2242,7 @@ def test_build_record_strips_ops_from_grid_state_snapshot():
                         "cum_realized": 0.0, "ops": []},
     }
     rec = snapshot.build_record(
-        today="2026-10-21", positions=[], cash_rebalance=0.0, cash_grid=0.0,
+        today="2026-10-21", positions=[], cash_rebalance=0.0, grid_budget=0.0,
         total=0.0, weights=[], triggered_3pp=False, plan=[],
         grid_signals=[], grid_state=grid_state)
 
@@ -3407,7 +3407,7 @@ def test_ledger_emits_nothing_without_a_stream():
 
 def test_ledger_cannot_record_simulated_shares():
     """I9: 账本上下文里**没有**能写模拟份额的入口。"""
-    state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
+    state = {"cash_rebalance": 0.0, "grid_budget": 0.0, "positions": {}}
     for bad in ("merge", "merged_shares", "grid_merge"):
         try:
             ledger.apply_trade(state, {"side": bad, "code": "515180",
@@ -3811,7 +3811,7 @@ def test_write_path_and_daily_path_replay_the_ledger_identically():
         trades, name_lookup=names)
     batch = trade_app.apply_batch(trades, [], name_lookup=names)
     assert batch.cash_rebalance == exp_cr
-    assert batch.cash_grid == exp_cg
+    assert batch.grid_budget == exp_cg
     assert [(p["code"], p["shares"]) for p in batch.positions] == \
            [(p["code"], p["shares"]) for p in exp_pos]
 
@@ -3829,14 +3829,14 @@ def test_the_ledger_projection_is_a_named_value():
     ])
     assert isinstance(proj, ledger_projection.LedgerProjection)
     assert proj.cash_rebalance == 8500.0, proj.cash_rebalance
-    assert proj.cash_grid == 0.0
+    assert proj.grid_budget == 0.0
     assert [(p["code"], p["shares"]) for p in proj.positions] == [
         ("515180", 1000.0)], proj.positions
     # 既有调用方一行不用改 —— NamedTuple 照样能解包。
-    positions, cash_rebalance, cash_grid = proj
+    positions, cash_rebalance, grid_budget = proj
     assert positions == proj.positions
     assert cash_rebalance == proj.cash_rebalance
-    assert cash_grid == proj.cash_grid
+    assert grid_budget == proj.grid_budget
 
 
 def test_the_write_side_and_the_read_side_live_in_different_modules():
@@ -4059,6 +4059,75 @@ def test_the_chart_falls_back_to_the_full_registry_when_holdings_are_unreadable(
             json_repositories.HOLDINGS = old
 
     assert len(assets) == len(ETF_DEFS), assets
+
+
+# -----------------------------------------------------------------------------
+# D3 —— `cash_grid` 改 `GridBudget`: 虚拟预算在**类型上**就是虚拟的
+# -----------------------------------------------------------------------------
+
+def test_the_grid_pool_is_a_type_not_just_a_name():
+    """D3: 「这一池是虚拟的」是类型上的事实, 不是注释里的一句话。"""
+    from src.domain.shared.money import GridBudget
+    from src.domain.portfolio.portfolio import Portfolio
+
+    # 领域里它有自己的类型
+    assert issubclass(GridBudget, float)
+    pf = Portfolio.from_records([], cash_rebalance=0.0, grid_budget=1234.5)
+    assert isinstance(pf.grid_budget, GridBudget), type(pf.grid_budget)
+    assert pf.grid_budget == 1234.5
+
+    # 直接构造也成立 —— 类型不变量由 `__post_init__` 保证
+    pf2 = Portfolio(grid_budget=99.0)
+    assert isinstance(pf2.grid_budget, GridBudget), type(pf2.grid_budget)
+
+
+def test_the_virtual_budget_still_counts_towards_the_total():
+    """D3 **只改名字与标注**, 不改规则 —— 虚拟预算仍然计入 `total`。"""
+    from src.domain.portfolio.portfolio import Portfolio
+
+    records = [{"name": "黄金ETF博时", "code": "159937", "shares": 100.0,
+                "price": 10.0, "value": 1000.0}]
+    pf = Portfolio.from_records(records, cash_rebalance=100.0, grid_budget=500.0)
+    # 1000 (持仓) + 100 (真实现金) + 500 (虚拟预算)
+    assert pf.total == 1600.0, pf.total
+    # 加法顺序仍然是 `etf + (cr + gb)` —— 浮点不结合, 老代码怎么算就怎么算
+    assert pf.total == 1000.0 + (100.0 + 500.0)
+
+
+def test_the_ledger_rejects_the_legacy_grid_cash_key():
+    """旧键 `cash_grid` 出现在状态里 → 直接报错, 绝不静默吞掉那一池的钱。"""
+    state = {"cash_rebalance": 0.0, "cash_grid": 1000.0, "positions": {}}
+    raised = False
+    try:
+        ledger.apply_trade(state, {"side": "deposit_grid", "amount": 10.0})
+    except ValueError as ex:
+        raised = True
+        assert "grid_budget" in str(ex), str(ex)
+    assert raised, "旧键 cash_grid 必须报错, 不能被静默忽略"
+
+
+def test_the_json_key_stays_cash_grid_but_the_domain_name_is_grid_budget():
+    """D3: 领域改名, **JSON 键不改** —— committed artifact 不能改键名。"""
+    from src.domain.ledger.projection import LedgerProjection
+    from src.domain.portfolio.portfolio import Portfolio
+
+    # 记录里的键还是老名字
+    r = snapshot.build_record(
+        today="2026-10-27", positions=[],
+        cash_rebalance=0.0, grid_budget=42.0,
+        total=42.0, weights=[], triggered_3pp=False, plan=[],
+        grid_signals=[], grid_state={},
+    )
+    assert r["cash_grid"] == 42.0, r
+    assert "grid_budget" not in r, r
+
+    # 投影与组合那边是新名字
+    proj = ledger_projection.project_ledger(
+        [{"side": "deposit_grid", "date": "2026-10-27", "amount": 42.0}])
+    assert isinstance(proj, LedgerProjection)
+    assert proj.grid_budget == 42.0, proj
+    assert not hasattr(proj, "cash_grid"), "旧的领域名不该还留着"
+    assert Portfolio.from_records([], grid_budget=42.0).grid_budget == 42.0
 
 
 def test_main():

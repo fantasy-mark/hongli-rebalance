@@ -70,7 +70,7 @@ class TradeBatch:
         merged:        existing + new (带 id) —— 写进 trades.json 的内容
         new_trades:    只是这一批新加的 (写进 echo)
         positions:     重放出来的持仓 —— 写进 holdings.json
-        cash_rebalance / cash_grid: 两个现金池
+        cash_rebalance / grid_budget: 两个池子 (后者是**虚拟预算**, D3)
         events:        这一批发出的领域事件 (Phase 5b)
     """
 
@@ -78,7 +78,7 @@ class TradeBatch:
     new_trades: list[dict] = field(default_factory=list)
     positions: list[dict] = field(default_factory=list)
     cash_rebalance: float = 0.0
-    cash_grid: float = 0.0
+    grid_budget: float = 0.0
     events: EventStream = field(default_factory=EventStream)
 
 
@@ -228,7 +228,7 @@ def apply_batch(cleaned: list[dict], existing: list[dict], *,
     merged = list(existing) + list(cleaned)
     stream = events if events is not None else EventStream()
     try:
-        positions, cash_rebalance, cash_grid = project_ledger(
+        positions, cash_rebalance, grid_budget = project_ledger(
             merged, name_lookup=name_lookup, events=stream)
     except ValueError as ex:
         raise TradeError(str(ex)) from ex
@@ -241,7 +241,7 @@ def apply_batch(cleaned: list[dict], existing: list[dict], *,
     ]
     return TradeBatch(merged=merged, new_trades=list(cleaned),
                       positions=records,
-                      cash_rebalance=cash_rebalance, cash_grid=cash_grid,
+                      cash_rebalance=cash_rebalance, grid_budget=grid_budget,
                       events=stream)
 
 
@@ -261,17 +261,22 @@ def trades_document(merged: list[dict]) -> dict:
 
 
 def holdings_document(positions: list[dict], cash_rebalance: float,
-                      cash_grid: float) -> dict:
-    """`data/holdings.json` 的内容 —— 账本的**派生缓存** (双池)。"""
+                      grid_budget: float) -> dict:
+    """`data/holdings.json` 的内容 —— 账本的**派生缓存** (双池)。
+
+    ⚠️ JSON 键**仍然叫 `cash_grid`** —— 这个文件是用户直接看 diff 的
+    committed artifact, 改键名等于改历史。领域里它叫 `grid_budget` /
+    `GridBudget` (D3); 映射只在这里一处。
+    """
     return {
         "_schema": "v2",
         "_comment": ("REBUILT from data/trades.json. 双池: "
                      "cash_rebalance (真实现金, ETF买卖用) + "
-                     "cash_grid (虚拟, 网格记账用). 编辑持仓请用页面"
+                     "cash_grid (虚拟预算, 网格记账用). 编辑持仓请用页面"
                      "交易表单 (会同时更新 trades.json); 直接改这个文件"
                      "会被下一次 apply-holdings 覆盖."),
         "cash_rebalance": cash_rebalance,
-        "cash_grid": cash_grid,
+        "cash_grid": grid_budget,
         "positions": positions,
     }
 
@@ -302,7 +307,7 @@ def apply_trades(payload: Mapping[str, Any], trades_path: Path,
     write_json(trades_path, trades_document(batch.merged), trailing_newline=True)
     write_json(holdings_path,
                holdings_document(batch.positions, batch.cash_rebalance,
-                                 batch.cash_grid),
+                                 batch.grid_budget),
                trailing_newline=True)
     return batch
 

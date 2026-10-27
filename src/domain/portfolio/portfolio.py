@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
-from ..shared.money import Money, Price, ShareCount
+from ..shared.money import GridBudget, Money, Price, ShareCount
 from ..shared.provenance import Provenance
 
 
@@ -180,13 +180,22 @@ class Portfolio:
 
     positions: list[Position] = field(default_factory=list)
     cash_rebalance: float = 0.0
-    cash_grid: float = 0.0
+    #: 网格那一池的**虚拟预算** (D3) —— 类型本身就是「这不是真钱」的标记。
+    grid_budget: GridBudget = GridBudget(0.0)
+
+    def __post_init__(self) -> None:
+        """把 `grid_budget` 收成 `GridBudget` —— 类型不变量由代码保证。
+
+        ⚠️ 这里**不再**取整: 取整点只有一个 —— 账本写侧 (`ledger.apply_trade`)
+        落库前那次 `Money`/`GridBudget`。在这里再舍一次就是**偷偷改数字**。
+        """
+        self.grid_budget = GridBudget(self.grid_budget)
 
     # -- construction -----------------------------------------------------
     @classmethod
     def from_records(cls, records: Sequence[Mapping[str, Any]], *,
                      cash_rebalance: float = 0.0,
-                     cash_grid: float = 0.0) -> "Portfolio":
+                     grid_budget: float = 0.0) -> "Portfolio":
         """Build a portfolio from position **records** (the JSON shape).
 
         Inverse of `to_records`. A record may or may not carry
@@ -209,14 +218,14 @@ class Portfolio:
             ))
         return cls(positions=positions,
                    cash_rebalance=cash_rebalance,
-                   cash_grid=cash_grid)
+                   grid_budget=grid_budget)
 
     @classmethod
     def from_holdings(cls, holdings: Sequence[Mapping[str, Any]], *,
                       merged_by_code: Optional[Mapping[str, float]] = None,
                       extra_prices: Optional[Mapping[str, float]] = None,
                       cash_rebalance: float = 0.0,
-                      cash_grid: float = 0.0) -> "Portfolio":
+                      grid_budget: float = 0.0) -> "Portfolio":
         """Build a portfolio from ledger holdings + the grid's merged shares.
 
         `merged_by_code` — code → shares the grid handed over (simulated).
@@ -262,7 +271,7 @@ class Portfolio:
             ))
         return cls(positions=positions,
                    cash_rebalance=cash_rebalance,
-                   cash_grid=cash_grid)
+                   grid_budget=grid_budget)
 
     # -- valuation --------------------------------------------------------
     @property
@@ -289,13 +298,19 @@ class Portfolio:
 
     @property
     def total(self) -> float:
-        """`etf_value + cash_rebalance + cash_grid`.
+        """`etf_value + cash_rebalance + grid_budget`.
 
-        ⚠️ The addition order is `etf + (cr + cg)` — float addition isn't
+        ⚠️ `grid_budget` 是**虚拟预算** (`GridBudget` 类型) —— 但它**确实**
+        计入 `total`: `total` 是**策略的资本基数** (3pp 判阈与层额定尺都用
+        它), 两个池子的钱在同一个池子里算。**规则一个字没改** —— 虚拟不等于
+        该被藏起来, 只等于**必须被标出来** (D3: 领域侧标类型, D4: 呈现侧标
+        「虚拟」)。
+
+        ⚠️ The addition order is `etf + (cr + gb)` — float addition isn't
         associative, and the old code computed exactly that. Keep the
         parentheses as they are.
         """
-        cash_total = self.cash_rebalance + self.cash_grid
+        cash_total = self.cash_rebalance + self.grid_budget
         return self.etf_value + cash_total
 
     def to_records(self) -> list[dict]:

@@ -212,7 +212,7 @@ def write_github_output(date_str: str, total: float, triggered: bool) -> None:
 
 
 def build_record(today: str, positions: list[dict],
-                 cash_rebalance: float, cash_grid: float,
+                 cash_rebalance: float, grid_budget: float,
                  total: float, weights: list[float],
                  triggered_3pp: bool, plan: list[dict],
                  grid_signals: list[dict], grid_state: dict,
@@ -241,8 +241,10 @@ def build_record(today: str, positions: list[dict],
         "total": Money(total),
         "etf_value": Money(etf_total),
         "cash_rebalance": Money(cash_rebalance),
-        "cash_grid": Money(cash_grid),
-        "cash_total": Money(cash_rebalance + cash_grid),
+        # ⚠️ JSON 键仍然叫 `cash_grid` (committed artifact, 不改键名);
+        #    领域里它是**虚拟预算** `grid_budget` (D3)。
+        "cash_grid": Money(grid_budget),
+        "cash_total": Money(cash_rebalance + grid_budget),
         "positions": positions,
         # ⚠️ `Weight` 只在**展示边界**构造 —— `evaluate` 内部算触发判定用的
         # 必须是未取整的权重: 取整到 4 位会移动触发边界, 让「差 0.0001pp
@@ -295,7 +297,9 @@ class SnapshotRun:
     # -- 中间结果 --
     positions: list[dict] = field(default_factory=list)
     cash_rebalance: float = 0.0
-    cash_grid: float = 0.0
+    #: 网格那一池的**虚拟预算** (D3) —— 领域里叫 grid_budget;
+    #: 写进记录时 JSON 键仍是 `cash_grid`。
+    grid_budget: float = 0.0
     qdii_top: list[dict] = field(default_factory=list)
     portfolio: Portfolio = field(default_factory=Portfolio)
     merged_by_code: dict[str, float] = field(default_factory=dict)
@@ -322,7 +326,7 @@ def load_universe(run: SnapshotRun) -> None:
     ⚠️ holdings.json 里的 shares 是**陈旧的** —— 这里只取**代码清单**;
     份额与现金的真相在账本 (trades.json) 里。
     """
-    raw_holdings, _legacy_cash_rebalance, _legacy_cash_grid = read_holdings()
+    raw_holdings, _legacy_cash_rebalance, _legacy_grid_budget = read_holdings()
     run.raw_holdings = list(raw_holdings)
     run.grid_state = load_grid_state()
 
@@ -333,12 +337,12 @@ def replay_trade_ledger(run: SnapshotRun) -> None:
     账本是**份额与现金的唯一真相** (data/holdings.json 只是派生缓存)。
     """
     trades = load_trades()
-    positions, cash_rebalance, cash_grid = project_ledger(
+    positions, cash_rebalance, grid_budget = project_ledger(
         trades, as_of_date=run.today, events=run.events,
     )
     run.positions = positions
     run.cash_rebalance = cash_rebalance
-    run.cash_grid = cash_grid
+    run.grid_budget = grid_budget
 
     # 防御性兜底: 账本还空着 (scripts/init_trades_ledger.py 还没跑过)。
     # 没有这一步, 新用户第一次跑会直接退出 —— 那时还没有任何持仓。
@@ -398,7 +402,7 @@ def absorb_merged_shares(run: SnapshotRun, grid_state: dict) -> None:
     run.extra_prices = extra_prices
     run.portfolio = Portfolio.from_holdings(
         run.positions, merged_by_code=merged, extra_prices=extra_prices,
-        cash_rebalance=run.cash_rebalance, cash_grid=run.cash_grid,
+        cash_rebalance=run.cash_rebalance, grid_budget=run.grid_budget,
     )
 
 
@@ -471,7 +475,7 @@ def persist_snapshot(run: SnapshotRun) -> None:
     """
     record = build_record(
         today=run.today, positions=run.positions,
-        cash_rebalance=run.cash_rebalance, cash_grid=run.cash_grid,
+        cash_rebalance=run.cash_rebalance, grid_budget=run.grid_budget,
         total=run.snapshot_basis.total, weights=run.snapshot_basis.weights,
         triggered_3pp=run.snapshot_basis.triggered,
         plan=run.snapshot_basis.plan,

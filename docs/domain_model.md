@@ -15,8 +15,8 @@
 > Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身
 > —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化 ·
 > Phase 7 ✅ 账本读侧拆成投影 · D6 ✅ 披露侧（真实持仓 / 归并 分栏）·
-> D11 ✅ 图表读实际持仓。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.11。
+> D11 ✅ 图表读实际持仓 · D3 ✅ 虚拟预算改 `GridBudget`。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.12。
 
 ---
 
@@ -1757,6 +1757,59 @@ fallback 逻辑**不动** —— 文件读不到时仍然退回全量品种（�
 | `test_the_chart_draws_the_holdings_the_user_actually_has` | ✓ —— 只画用户持有的那一个品种 |
 | `test_the_chart_falls_back_to_the_full_registry_when_holdings_are_unreadable` | ✓ —— 兜底路径仍在 |
 
+#### 11.1.12 D3 落地情况（2026-10-28）
+
+§12 里最像「改名」的一条 —— 但它要解决的是**类型说不清**的问题。
+
+##### (a) 原来错在哪
+
+`cash_grid` 是**虚拟预算**（网格那一池的钱，不是用户的真金白银），但：
+
+- 名字里看不出虚拟 —— `cash_grid` 和 `cash_rebalance` 长得一模一样；
+- 于是它被当成现金混进 `Portfolio.total` —— 而 `total` 是 **3pp 判阈**与
+  **层额定尺**的基数。
+
+规则本身**一个字没改**：虚拟预算仍然计入 `total`（`total` 是**策略的资本
+基数** —— 两个池子的钱在同一个池子里算）。改的是「它是什么」这件事**由谁
+来说**。
+
+##### (b) 改法：给它一个自己的类型
+
+`src/domain/shared/money.py:GridBudget`（float 子类，DP=2 —— 替掉账本写侧
+那次 `Money`，**取整点没动，数字逐位相同**）。
+
+| 地方 | 改前 | 改后 |
+|---|---|---|
+| `Portfolio` | `cash_grid: float` | `grid_budget: GridBudget` |
+| `LedgerProjection` | `cash_grid: float` | `grid_budget: float` |
+| `rebalance_policy.evaluate(...)` | `cash_grid=` | `grid_budget=` |
+| 账本写侧的状态键 | `"cash_grid"` | `"grid_budget"` |
+
+`Portfolio.__post_init__` 把它收成 `GridBudget` —— **类型不变量由代码保证**，
+不靠调用方自觉。
+
+##### (c) ⚠️ JSON 键**不改**
+
+`data/holdings.json` 与 `data/history.json` 里的键**仍然叫 `cash_grid`** ——
+那两个文件是用户直接看 diff 的 committed artifacts，改键名等于改历史。
+
+于是**领域叫 `grid_budget`、JSON 叫 `cash_grid`**；映射只在
+`json_repositories`（读）与 `apply_trade.holdings_document`（写）两处。
+
+##### (d) 一道保险：旧键直接报错
+
+`ledger.apply_trade` 遇到状态里还有 `cash_grid` 就**抛错** —— 静默忽略它
+等于「网格那一池的钱凭空消失」，而那正是这个键存在的全部意义。
+
+##### (e) 验证
+
+| 检查 | 结果 |
+|---|---|
+| `python -X utf8 -m tests.test_record` | **198/198 通过**（新增 4 个） |
+| 数字有没有变 | 没有 —— `GridBudget` 的 DP=2 与原来的 `Money` 一样，取整点也没动 |
+| `test_the_virtual_budget_still_counts_towards_the_total` | ✓ —— 规则没改：1600 = 1000 + 100 + 500 |
+| `test_the_ledger_rejects_the_legacy_grid_cash_key` | ✓ —— 旧键报错，钱不会凭空消失 |
+
 ### 11.3 明确**不要**做的
 
 | 不做 | 理由 |
@@ -1775,7 +1828,7 @@ fallback 逻辑**不动** —— 文件读不到时仍然退回全量品种（�
 |---|---|---|---|---|
 | D1 | 同一天重复运行会让 120 日窗口少一天深度 | `apply-grid.yml` 提交后 re-trigger `daily.yml`；窗口尾部有重复值（黄金 `[8.35, 8.29, 8.12, 8.12]`） | 窗口是**唯一**的距开仓依据 | `PriceWindow` 改带日期（`list[(date, price)]`），重复日按日期覆盖而非追加 |
 | D2 | `ops` 混装执行日志与模拟日志 | `src/domain/grid/grid_position.py:manual_op` 写 `source:"manual"`；`src/simulation/grid_simulator.py:ops_from_cycles` 写 `source:"backtest"` | 容易被误读成"真实成交记录" | Phase 2 拆成 `ExecutedOp` / `SimulatedOp` |
-| D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | 改名为 `GridBudget`，在 `total` 里显式标注其虚拟性 |
+| D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | ✅ **已解决**（领域侧，详见 §11.1.12）—— 改名 `GridBudget` / `grid_budget`（`src/domain/shared/money.py`），`Portfolio.__post_init__` 保证类型；**规则不变**，虚拟预算仍然计入 `total` |
 | D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | 把网格那一栏标成"虚拟"或从合计剔除（**本轮不修**，迁移后两者已自动对齐到只剩 `cash_rebalance` 的差额） |
 | D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | ✅ **已解决**（Phase 4）—— 资产清单独立成 `AssetUniverse` 注册表（`src/domain/portfolio/asset_universe.py`），`holdings.json` 只剩持仓 | 职责混乱 | ✅ 已解决（§11.1.6） |
 | D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:Portfolio.from_holdings` + `RebalancePolicy.evaluate` | 模拟影响真实 | ✅ **已解决**（Phase 4 标注 + Phase 5d 披露）—— 标注侧：`Provenance` 落在 `PositionLot` 上，`Position.simulated_shares` 是**求和出来的**；披露侧：页面/邮件/日志都把「**真实持仓**」与「**归并**」分成两栏显示，口径写在各自脚注里（详见 §11.1.10）。**规则本身不改** —— 归并仍计入权重，那是用户 2026-10-25 拍板的 |
@@ -1807,6 +1860,7 @@ fallback 逻辑**不动** —— 文件读不到时仍然退回全量品种（�
 - [x] 「写路径的规则只有一份」在哪里保证？→ `src/application/apply_grid_op.py` / `apply_trade.py`（Phase 5c-2 ✅）—— op 词表 = `TriggerLevel` 的投影、side 词表 = `TradeSide` 的投影；两个脚本是**薄壳**（`test_the_write_path_scripts_are_thin_shims` 钉住脚本里没有校验/重放/发 id 的实现）
 - [x] 「写路径与读路径同一把尺子」在哪里保证？→ 写路径重放调用**领域层**的 `src/domain/ledger/projection.py:project_ledger`（Phase 5c-2 ✅，Phase 7 搬家）—— 与每日快照 `daily_snapshot.replay_trade_ledger` 同一份实现；`test_write_path_and_daily_path_replay_the_ledger_identically` 钉住「两条路重放出的持仓与现金相同」
 - [x] 「图表画的是不是用户实际持仓」在哪里保证？→ `_load_chart_assets()` 解包 `read_holdings()` 的**三个**返回值（D11 ✅）—— 以前解包成两个抛 `ValueError`，被 `except Exception` 吞掉后静默退回全量 `ETF_DEFS`；`test_the_chart_draws_the_holdings_the_user_actually_has` 钉住
+- [x] 「哪一池是虚拟的」在哪里保证？→ `GridBudget` 类型（D3 ✅）—— 领域里已经没有 `cash_grid` 这个名字了（`Portfolio.grid_budget` / `LedgerProjection.grid_budget`）；类型由 `Portfolio.__post_init__` 保证；**JSON 键仍是 `cash_grid`**（committed artifact 不改键名），映射只在读/写两处；账本写侧遇到旧键直接报错
 - [x] 「坏掉的账本不会被当成空账本」在哪里保证？→ 写路径走 `json_repositories.read_trades()` / `read_grid_state()`（Phase 5c-2 ✅）—— **严格读**：文件坏了就抛错（整批不写盘）；每日快照仍走宽松的 `load_trades()`（跑砸了只是今天的记录没出来，宁可少一天也别静默清空持仓）
 
 ---

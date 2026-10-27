@@ -24,19 +24,19 @@ class LedgerProjection(NamedTuple):
     """账本在某一刻的投影。
 
     ⚠️ 是 `NamedTuple` 而不是普通 dataclass —— 现有的调用方都是
-    `positions, cash_rebalance, cash_grid = project_ledger(...)` 那样解包的。
+    `positions, cash_rebalance, grid_budget = project_ledger(...)` 那样解包的。
     把它变成**有名字**的东西不该逼着调用方改形状 (那只是一次改名,
     不是一次建模); 想用具名属性的人写 `proj.positions` 就行。
 
     Attributes:
         positions:      持仓 [{name, code, shares}] —— 只含份额 > 0 的
-        cash_rebalance: 再平衡现金池
-        cash_grid:      复合网格现金池
+        cash_rebalance: 再平衡现金池 (真钱)
+        grid_budget:    复合网格的**虚拟预算** (D3) —— 不是真钱
     """
 
     positions: list[dict]
     cash_rebalance: float
-    cash_grid: float
+    grid_budget: float
 
 
 def project_ledger(
@@ -62,7 +62,7 @@ def project_ledger(
         # (BC-D); 只有真的没给名字表时才去问它。
         from ..portfolio.asset_universe import ETF_DEFS
         name_lookup = {code: v[2] for code, v in ETF_DEFS.items()}
-    state: dict = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
+    state: dict = {"cash_rebalance": 0.0, "grid_budget": 0.0, "positions": {}}
     seen_codes: list[str] = []
 
     # Sort by (date, original_index) so same-day trades play in append order.
@@ -87,7 +87,7 @@ def project_ledger(
     return LedgerProjection(
         positions=positions,
         cash_rebalance=state["cash_rebalance"],
-        cash_grid=state["cash_grid"],
+        grid_budget=state["grid_budget"],
     )
 
 

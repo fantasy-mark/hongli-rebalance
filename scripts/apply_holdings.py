@@ -28,7 +28,7 @@ Validation rules (owned by `src/application/apply_trade.py`):
   - per-trade field rules per `data/trades.json` schema (see README)
   - date is ISO yyyy-mm-dd, not in the future (today + 1 day tolerated)
   - sell never exceeds current held shares
-  - cash_rebalance + cash_grid both ≥ 0 after replay (no negative balance)
+  - cash_rebalance + grid_budget both ≥ 0 after replay (no negative balance)
   - all buy/sell codes are in ALLOWED_CODES whitelist
   - id is auto-assigned server-side as `<date>-<side>-<seq>` (zero-padded)
 
@@ -95,7 +95,7 @@ def _echo(batch: TradeBatch) -> None:
     print(f"OK wrote {rel_t}: {len(batch.merged)} trades "
           f"(+{len(batch.new_trades)} new)")
     print(f"OK wrote {rel_h}: cash_rebalance=CNY {batch.cash_rebalance:.2f}, "
-          f"cash_grid=CNY {batch.cash_grid:.2f}, {len(batch.positions)} positions")
+          f"cash_grid=CNY {batch.grid_budget:.2f}, {len(batch.positions)} positions")
     for p in batch.positions:
         print(f"  - {p['name']:<14} ({p['code']}) {p['shares']:>12,}")
     # Show the new trades that were just appended

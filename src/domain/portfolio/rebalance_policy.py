@@ -2,7 +2,9 @@
 
 Pure domain logic, no I/O, no globals:
 
-  - `total`    = Σ position value + cash_rebalance + cash_grid
+  - `total`    = Σ position value + cash_rebalance + grid_budget
+                 (grid_budget 是**虚拟预算** —— D3; 规则没变, 只是
+                  类型上标出来了)
   - `target_w` = 1 / len(positions)  ← **dynamic basket** (3 / 4 / 5 assets
                  all work without touching the code)
   - `triggered`= ∃ asset : |w − target_w| × 100 > threshold_pp
@@ -139,7 +141,7 @@ def _deviating_asset(portfolio: Portfolio, weights: Sequence[float],
     return best_name
 
 
-def evaluate(positions: list[dict], cash_rebalance: float, cash_grid: float,
+def evaluate(positions: list[dict], cash_rebalance: float, grid_budget: float,
               threshold_pp: float = 3.0,
               ) -> tuple[float, list[float], bool, list[dict]]:
     """Return (total, weights, triggered, plan). plan is empty when not triggered.
@@ -150,7 +152,7 @@ def evaluate(positions: list[dict], cash_rebalance: float, cash_grid: float,
     """
     portfolio = Portfolio.from_records(positions,
                                        cash_rebalance=cash_rebalance,
-                                       cash_grid=cash_grid)
+                                       grid_budget=grid_budget)
     return RebalancePolicy(threshold_pp=threshold_pp).evaluate(
         portfolio).as_tuple()
 
