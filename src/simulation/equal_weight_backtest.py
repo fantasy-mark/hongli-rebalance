@@ -28,13 +28,16 @@ Outputs:
 """
 from __future__ import annotations
 
-import os
-
 import pandas as pd
+
+from ..domain.portfolio.rebalance_policy import RebalancePolicy
 
 CASH = 200_000.0
 TARGET_W = 1.0 / 3
-THRESHOLD_PP = float(os.environ.get("THRESHOLD_PP", "3.0"))
+#: 默认阈值 —— 与生产路径共用**同一个**领域常量 (Phase 5)。
+#: 以前这里是本模块自己读环境变量; 现在环境变量的覆盖点收敛到应用层
+#: (`AppConfig.from_env`), 回测想要别的阈值就**显式传参**。
+THRESHOLD_PP = RebalancePolicy().threshold_pp
 
 # Registry of all 4 ETFs the project tracks (3 rebalance + 1 grid-only QDII).
 # Not used by `run_backtest` itself (it takes whatever columns the caller
@@ -61,7 +64,8 @@ def _sharpe(series: pd.Series) -> float:
 
 
 def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
-                 target_w: float | None = None) -> dict:
+                 target_w: float | None = None,
+                 threshold_pp: float = THRESHOLD_PP) -> dict:
     """Full backtest of the equal-weight rebalance strategy on the given price DataFrame.
 
     Args:
@@ -70,6 +74,7 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
         target_w: target weight per asset. Default = 1/len(prices.columns).
                   Pass an explicit value to override (e.g. 0.333 for 3-asset
                   strict equal-weight, 0.4 for a tilted 2-of-5 backtest, etc.).
+        threshold_pp: 偏离多少个百分点才触发回正。默认 3。
 
     Returns:
         Dict with series, rebalances, final, cagr, max_dd, sharpe, n_rebalances.
@@ -100,7 +105,7 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
                 if dev > max_dev:
                     max_dev = dev
                     max_asset = n
-                if dev > THRESHOLD_PP:
+                if dev > threshold_pp:
                     triggered = True
 
         if triggered:

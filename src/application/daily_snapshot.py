@@ -27,6 +27,8 @@ import traceback
 import pandas as pd
 
 from ..domain.grid import grid_position as grid_mod
+from ..domain.grid.config import GridConfig
+from ..domain.grid.layer_sizing import LayerSizingPolicy
 from ..domain.ledger.ledger import rebuild_holdings_from_trades
 from ..domain.portfolio.asset_universe import ASSET_NAMES, ETF_DEFS, QDII_CODES
 from ..domain.portfolio.portfolio import (
@@ -63,11 +65,16 @@ from ..infrastructure.quote_providers import (
     fetch_qdii_premium,
     latest_for_code,
 )
+from .config import AppConfig
 
-# 3pp threshold — explicit here, passed down to the policy.
-# (The env var is the legacy way to override it; the domain no longer
-#  reads the environment itself.)
-THRESHOLD_PP = float(os.environ.get("THRESHOLD_PP", "3.0"))
+#: 运行配置 —— 环境变量在这里读**一次** (Phase 5), 之后一路当**值**传。
+#: 领域层 (`domain/grid/config.py`) 只有纯数据 + 一个 `from_env` 工厂。
+APP_CONFIG = AppConfig.from_env()
+
+# 3pp threshold — 从配置对象取, 不再由本模块自己读环境变量。
+# (兼容别名: 旧的模块级名字还在, 既有 import 不断 —— 但它的**本体**
+#  已经是 `AppConfig.threshold_pp` 这个显式的配置字段。)
+THRESHOLD_PP = APP_CONFIG.threshold_pp
 
 #: 目标权重规则 (等权 1/n) —— 页面显示的「目标 ±x%」也是它算的。
 TARGET_WEIGHT_POLICY = TargetWeightPolicy()
@@ -92,13 +99,19 @@ def rebalance_policy() -> RebalancePolicy:
 # -----------------------------------------------------------------------------
 
 def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
-                      pool_value: float, recent_min: float) -> tuple[dict, list[dict]]:
+                      pool_value: float, recent_min: float,
+                      config: GridConfig | None = None) -> tuple[dict, list[dict]]:
     """Advance grid state for all assets, returning (new_state, signals).
 
     ⚠️ 引擎**不再自动交易** —— 这里只是滚动 120 日窗口 + 算出「建议」。
     `signal` 是**建议提交哪种 op** (open/add/tp), 不是"已成交"。
+
+    Args:
+        config: 网格规则 —— `None` = 用应用层的默认配置 (`APP_CONFIG.grid`)。
+                显式传进来就能跑另一套参数, 一个进程里两套并存。
     """
-    layer = grid_mod.layer_yuan(pool_value, recent_min)
+    cfg = config or APP_CONFIG.grid
+    layer = LayerSizingPolicy.from_config(cfg).layer_yuan(pool_value, recent_min)
     new_state: dict = {}
     signals: list[dict] = []
     for name in ASSET_NAMES:
@@ -108,9 +121,13 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
             new_state[name] = asset_state
             continue
         # 建议基于**追加今天之前**的状态算 —— 今天的低价不能自己当门槛
-        adv = grid_mod.advisory(asset_state, float(price), layer)
+        adv = grid_mod.advisory(asset_state, float(price), layer,
+                                step_pct=cfg.step_pct, tp_pct=cfg.tp_pct,
+                                tp_basis=cfg.tp_basis)
         new_asset_state, signal = grid_mod.advance_one_day(
             asset_state, today, float(price), layer,
+            lookback=cfg.lookback, step_pct=cfg.step_pct,
+            tp_pct=cfg.tp_pct, tp_basis=cfg.tp_basis,
         )
         new_state[name] = new_asset_state
         snap = grid_mod.asset_snapshot(new_asset_state, float(price))
@@ -376,7 +393,7 @@ def main() -> None:
             [r["date"] for r in history if "total" in r] + [today]
         ),
     ).sort_index()
-    window = grid_mod.GRID_FLOATING_WINDOW + 1
+    window = APP_CONFIG.grid.floating_window + 1
     recent_min = float(pool.tail(window).min()) if len(pool) else 0.0
 
     # Advance grid
@@ -394,6 +411,7 @@ def main() -> None:
     grid_prices = {n: lows_by_name.get(n, prices_by_name.get(n)) for n in ASSET_NAMES}
     new_state, grid_signals = advance_all_grids(
         state, today, grid_prices, total_pre, recent_min,
+        config=APP_CONFIG.grid,
     )
     # Annotate signals with the (intraday) low that drove the decision so
     # the daily record shows the actual trigger price, not the close.
@@ -448,7 +466,7 @@ def main() -> None:
         merged_tag = (f"  (含归并 {p['merged_shares']:,.0f}份)"
                       if p.get("merged_shares") else "")
         print(f"    {p['name']:<14} {w:>6.2%}  Δ={delta:+.2f}pp{flag}{merged_tag}")
-    print(f"  grid layer: ¥{grid_mod.layer_yuan(total, recent_min):,.0f} "
+    print(f"  grid layer: ¥{LayerSizingPolicy.from_config(APP_CONFIG.grid).layer_yuan(total, recent_min):,.0f} "
           f"(pool ¥{total:,.0f}, recent_min ¥{recent_min:,.0f})")
     for s in grid_signals:
         # ⚠️ 引擎只给建议, 不会自动下单 —— tag 是"建议提交哪种 op"

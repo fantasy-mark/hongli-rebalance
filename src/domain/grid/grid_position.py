@@ -69,6 +69,7 @@ from typing import Optional
 
 from ..shared.money import Money, Price, ShareCount
 from .advisor import GridAdvisor, GridSuggestion
+from .config import DEFAULT_GRID_CONFIG
 from .exit_policy import ExitAtCost, cost_only_exit
 from .grid_op import ExecutedOp, GridOp, OpKind, OpSource
 from .layer_sizing import (
@@ -87,10 +88,10 @@ from .trigger_policy import (
 )
 
 # 网格参数 (env-overridable for parameter sweeps)
-# ⚠️ 触发参数 (`GRID_STEP_PCT` / `GRID_TP_PCT` / `GRID_TP_BASIS`) 的**本体**
-# 在 `trigger_policy.py`; 层额参数 (`GRID_BASE_YUAN` / `GRID_FLOATING_*`) 的
-# 本体在 `layer_sizing.py` —— 这里只是 re-export, 既有 import 不断。
-GRID_LOOKBACK: int = 120
+# ⚠️ 全部七个参数的**本体**在 `config.py` 的 `GridConfig` —— 整个代码库
+# 只在那里读一次环境变量; 这里 (以及 `trigger_policy.py` /
+# `layer_sizing.py`) 只是 re-export, 既有 import 不断。
+GRID_LOOKBACK: int = DEFAULT_GRID_CONFIG.lookback
 # "avg_cost"   — exit when price >= avg_cost * (1 + tp_pct/100)             [v2]
 # "first_buy"  — exit when price >= first_buy_price * (1 + tp_pct/100)       [v3]
 

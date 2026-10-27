@@ -26,8 +26,12 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd
 
+from src.application import config as app_config
 from src.application import daily_snapshot as snapshot
+from src.domain.grid import config as grid_config
 from src.domain.grid import grid_position as grid_pos
+from src.domain.grid import layer_sizing
+from src.domain.grid import trigger_policy as grid_trigger_policy
 from src.domain.ledger import ledger
 from src.domain.portfolio import asset_universe as universe
 from src.domain.portfolio import portfolio, rebalance_policy as policy
@@ -3174,6 +3178,162 @@ def test_simulated_shares_still_drive_the_weights():
     assert after.total == 25000.0
     assert after.weights[1] > before.weights[1], "模拟份额把权重推高了"
     assert pf2.positions[1].simulated_shares == 500.0
+
+
+# -----------------------------------------------------------------------------
+# Phase 5a —— 显式配置对象 (D8)
+# -----------------------------------------------------------------------------
+
+def test_grid_config_from_env_reads_every_parameter():
+    """环境变量 → 配置对象: 七个参数**一个值**传下去。"""
+    env = {
+        "GRID_LOOKBACK": "60",
+        "GRID_STEP_PCT": "2.5",
+        "GRID_TP_PCT": "4.0",
+        "GRID_TP_BASIS": "avg",
+        "GRID_BASE_YUAN": "20000",
+        "GRID_FLOATING_FRACTION": "0.1",
+        "GRID_FLOATING_WINDOW": "300",
+    }
+    cfg = grid_config.GridConfig.from_env(env)
+    assert cfg.lookback == 60
+    assert cfg.step_pct == 2.5
+    assert cfg.tp_pct == 4.0
+    assert cfg.tp_basis == "avg"
+    assert cfg.base_yuan == 20000.0
+    assert cfg.floating_fraction == 0.1
+    assert cfg.floating_window == 300
+
+
+def test_grid_config_defaults_match_the_legacy_hardcoded_values():
+    """默认值 = 以前硬编码的那七个 —— 行为**不变**。"""
+    cfg = grid_config.GridConfig()
+    assert (cfg.lookback, cfg.step_pct, cfg.tp_pct) == (120, 3.0, 3.0)
+    assert cfg.tp_basis == "first_buy"
+    assert (cfg.base_yuan, cfg.floating_fraction, cfg.floating_window) == (
+        10000.0, 0.05, 756)
+
+
+def test_module_level_aliases_still_point_at_the_config():
+    """既有 import 不断 —— 但别名现在是**配置对象的投影**, 不是各自读环境变量。"""
+    cfg = grid_config.DEFAULT_GRID_CONFIG
+    assert grid_pos.GRID_LOOKBACK == cfg.lookback
+    assert grid_trigger_policy.GRID_STEP_PCT == cfg.step_pct
+    assert grid_trigger_policy.GRID_TP_PCT == cfg.tp_pct
+    assert grid_trigger_policy.GRID_TP_BASIS == cfg.tp_basis
+    assert layer_sizing.GRID_BASE_YUAN == cfg.base_yuan
+    assert layer_sizing.GRID_FLOATING_FRACTION == cfg.floating_fraction
+    assert layer_sizing.GRID_FLOATING_WINDOW == cfg.floating_window
+
+
+def test_trigger_policy_from_config_carries_the_parameters():
+    cfg = grid_config.GridConfig(step_pct=1.5, tp_pct=2.0, tp_basis="avg")
+    pol = grid_trigger_policy.TriggerPolicy.from_config(cfg)
+    assert pol.step_pct == 1.5
+    assert pol.tp_pct == 2.0
+    assert pol.tp_basis == "avg"
+
+
+def test_layer_sizing_policy_from_config_carries_the_parameters():
+    cfg = grid_config.GridConfig(base_yuan=20000.0, floating_fraction=0.1)
+    sizing = layer_sizing.LayerSizingPolicy.from_config(cfg)
+    assert sizing.base_yuan == 20000.0
+    assert sizing.floating_fraction == 0.1
+    assert sizing.layer_yuan(100_000.0, 50_000.0) == 20000.0 + 50000.0 * 0.1
+
+
+def test_app_config_from_env_reads_the_threshold():
+    cfg = app_config.AppConfig.from_env({"THRESHOLD_PP": "5.5"})
+    assert cfg.threshold_pp == 5.5
+    # 网格参数没给 → 走默认值
+    assert cfg.grid == grid_config.GridConfig()
+
+
+def test_app_config_is_frozen():
+    """配置是**值** —— 不许就地改。"""
+    cfg = app_config.AppConfig.from_env({})
+    try:
+        cfg.threshold_pp = 9.0
+    except Exception:
+        return
+    raise AssertionError("AppConfig 必须是 frozen —— 配置不该被就地改")
+
+
+def test_advance_all_grids_accepts_an_explicit_config():
+    """显式传进去的网格参数真的生效 —— 一个进程里两套并存。"""
+    state = {n: grid_pos.fresh_asset_state() for n in universe.ASSET_NAMES}
+    for asset in state.values():
+        asset["last_prices"] = [1.0, 2.0, 3.0, 4.0]
+    prices = {n: 5.0 for n in universe.ASSET_NAMES}
+    cfg = grid_config.GridConfig(lookback=3, step_pct=3.0, tp_pct=3.0,
+                                  tp_basis="first_buy", base_yuan=20000.0,
+                                  floating_fraction=0.1)
+    new_state, signals = snapshot.advance_all_grids(
+        state, "2026-01-01", prices, 100_000.0, 90_000.0, config=cfg)
+    # layer = 20000 + (100000 - 90000) × 0.1
+    for s in signals:
+        assert s["layer_yuan"] == 21000.0, f"{s['name']} layer={s['layer_yuan']}"
+    # lookback=3 → 窗口只剩 3 根 (默认 120 时会是 5 根)
+    for name, asset in new_state.items():
+        assert len(asset["last_prices"]) == 3, f"{name} 窗口没截到 3"
+
+
+def test_advance_all_grids_default_config_is_the_app_config():
+    """不传 config → 用应用层的默认配置 (行为与重构前一致)。"""
+    state = {n: grid_pos.fresh_asset_state() for n in universe.ASSET_NAMES}
+    prices = {n: 5.0 for n in universe.ASSET_NAMES}
+    _new_state, signals = snapshot.advance_all_grids(
+        state, "2026-01-01", prices, 100_000.0, 90_000.0)
+    expected = 10000.0 + (100_000.0 - 90_000.0) * 0.05
+    for s in signals:
+        assert s["layer_yuan"] == expected
+
+
+def test_backtest_threshold_default_is_the_domain_constant():
+    """回测路径的默认值 = 领域常量 —— 不再是本模块自己读的环境变量。"""
+    assert three_pp.THRESHOLD_PP == policy.RebalancePolicy().threshold_pp
+
+
+def test_backtest_accepts_an_explicit_threshold():
+    """回测想要别的阈值就**显式传参**。"""
+    idx = pd.date_range("2026-01-01", periods=2, freq="D")
+    prices = pd.DataFrame({"A": [10.0, 11.0], "B": [10.0, 9.0]}, index=idx)
+    # 第 0 天全现金 → 偏离 50pp (任何阈值都触发, 建仓)
+    # 第 1 天权重 0.55/0.45 → 偏离 5pp
+    loose = three_pp.run_backtest(prices, initial_cash=1000.0, threshold_pp=6.0)
+    tight = three_pp.run_backtest(prices, initial_cash=1000.0, threshold_pp=3.0)
+    assert loose["n_rebalances"] == 1, "5pp < 6pp → 第 1 天不触发"
+    assert tight["n_rebalances"] == 2, "5pp > 3pp → 第 1 天也触发"
+    # 不传 = 默认 (3.0) → 与显式传 3.0 一致
+    default = three_pp.run_backtest(prices, initial_cash=1000.0)
+    assert default["n_rebalances"] == tight["n_rebalances"]
+
+
+def test_env_reads_are_confined_to_the_config_objects():
+    """D8: 环境变量只在配置对象里读 —— 领域层 / 回测层不再自己读。"""
+    allowed = {"src/domain/grid/config.py"}
+    offenders = []
+    for p in sorted((ROOT / "src").rglob("*.py")):
+        rel = p.relative_to(ROOT).as_posix()
+        if not (rel.startswith("src/domain/") or rel.startswith("src/simulation/")):
+            continue
+        if rel in allowed:
+            continue
+        if "os.environ" in p.read_text(encoding="utf-8"):
+            offenders.append(rel)
+    assert not offenders, f"这些模块还在自己读环境变量: {offenders}"
+
+
+def test_domain_grid_stays_stdlib_only():
+    """`scripts/apply_grid.py` 在**不装** pandas/akshare 的 job 里 import 这条链路。"""
+    heavy = ("pandas", "numpy", "akshare", "requests")
+    bad = []
+    for p in sorted((ROOT / "src" / "domain" / "grid").glob("*.py")):
+        text = p.read_text(encoding="utf-8")
+        for mod in heavy:
+            if f"import {mod}" in text:
+                bad.append(f"{p.name}: {mod}")
+    assert not bad, f"domain/grid 必须 stdlib-only: {bad}"
 
 
 def test_main():

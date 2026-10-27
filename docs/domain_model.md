@@ -12,8 +12,8 @@
 > **重构进度**（§11.2 有各阶段的详细记录）：
 > Phase 0 ✅ 立柱 · Phase 1 ✅ 值对象 · Phase 2 ✅ 网格聚合显式化 ·
 > Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
-> Phase 5 ⬜ 事件化 + 应用层瘦身（未开始）。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.6。
+> Phase 5 🔄 事件化 + 应用层瘦身（5a 配置对象 ✅，5b 事件化 / 5c 应用层瘦身 ⬜）。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.7。
 
 ---
 
@@ -1217,6 +1217,74 @@ const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
 | `test_target_weight_policy_is_dynamic` | `1/n` 随篮子大小变 |
 | `test_simulated_shares_still_drive_the_weights` | 模拟份额**仍然**参与权重（用户 2026-10-24 的明确决定，语义不变） |
 
+#### 11.1.7 Phase 5 落地情况（2026-10-27）
+
+Phase 5 有三件事：显式配置对象、领域事件、应用层瘦身。分三次提交。
+
+##### (a) 5a —— 显式配置对象（D8 收口）
+
+**改前**：参数散在三个地方，各读各的环境变量 ——
+`src/application/daily_snapshot.py:THRESHOLD_PP`、
+`src/domain/grid/trigger_policy.py:GRID_STEP_PCT` 等、
+`src/domain/grid/layer_sizing.py:GRID_BASE_YUAN` 等、
+`src/simulation/equal_weight_backtest.py:THRESHOLD_PP`。
+`grid_position.py` 里还有一份 `GRID_LOOKBACK = 120` 的**硬编码副本**。
+
+**改后**：值**只在一个地方**被写下来。
+
+```
+src/domain/grid/config.py          GridConfig (frozen) — 七个网格参数 + from_env
+src/application/config.py          AppConfig (frozen) — threshold_pp + grid
+```
+
+依赖方向：`config`（叶子）→ `trigger_policy` / `layer_sizing` → `grid_position`。
+`layer_sizing` 是**独立叶子**（不依赖 `trigger_policy`），两条线互不牵扯。
+
+```python
+@dataclass(frozen=True)
+class GridConfig:
+    lookback: int = 120
+    step_pct: float = 3.0
+    tp_pct: float = 3.0
+    tp_basis: str = "first_buy"
+    base_yuan: float = 10000.0
+    floating_fraction: float = 0.05
+    floating_window: int = 756
+```
+
+三条要点：
+
+1. **领域层不读应用的环境变量**。`domain/grid/config.py` 是纯数据 + 一个
+   `from_env` 工厂（读 `os.environ` 的地方**只有这一处**）；转换发生在
+   `application/config.py` —— 环境的知识属于**边缘**。
+2. **旧名字全部保留**，但它们现在是**配置对象的投影**而不是各自读环境变量：
+   `grid_pos.GRID_LOOKBACK`、`grid_trigger_policy.GRID_STEP_PCT`、
+   `layer_sizing.GRID_BASE_YUAN` …… 既有 import 一行不用改。
+3. **策略可以并存**。`TriggerPolicy.from_config(cfg)` /
+   `LayerSizingPolicy.from_config(cfg)` / `advance_all_grids(..., config=cfg)`
+   —— 一个进程里「生产用 3%」与「回测用 2%」各走各的。
+   回测路径同理：`run_backtest(..., threshold_pp=...)`。
+
+`daily_snapshot.rebalance_policy()` **仍然是函数**（不是模块级常量实例）——
+绑定时机必须跟旧代码一致（旧的 `evaluate(..., threshold_pp=THRESHOLD_PP)`
+是在**调用时**读模块全局的）。见 §11.1.6 (c)。
+
+**逐字节回归**：确定性流程（固定价格 → 归并 → 3pp → 网格推进 → `build_record`）
+在 `git stash` 前后各跑一次，记录 sha256 **完全相同**
+（`8cac6576ee367cc4…`，7260 字节）。
+
+> ⚠️ `src/domain/grid/*` 必须保持 **stdlib-only** —— `scripts/apply_grid.py`
+> 在**不装** pandas/akshare 的 GitHub Actions job 里 import 这条链路。
+> `test_domain_grid_stays_stdlib_only` 静态钉住这条。
+
+##### (b) 5b —— 领域事件
+
+（见下）
+
+##### (c) 5c —— 应用层瘦身
+
+（见下）
+
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
 #### Phase 0 — 立柱（不改行为，1 次提交）
@@ -1284,6 +1352,10 @@ const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
 
 - 收益：可测试性大幅提升（可以用事件序列断言，而不是断言 dict 的形状）
 
+- ✅ **5a 已落地**（2026-10-27）：配置对象收口 —— `GridConfig` / `AppConfig`，
+  模块级别名改为投影，`from_config` / `config=` / `threshold_pp=` 让多套策略
+  并存。详见 §11.1.7 (a)。
+
 ### 11.3 明确**不要**做的
 
 | 不做 | 理由 |
@@ -1307,7 +1379,7 @@ const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
 | D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | ✅ **已解决**（Phase 4）—— 资产清单独立成 `AssetUniverse` 注册表（`src/domain/portfolio/asset_universe.py`），`holdings.json` 只剩持仓 | 职责混乱 | ✅ 已解决（§11.1.6） |
 | D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:Portfolio.from_holdings` + `RebalancePolicy.evaluate` | 模拟影响真实 | ⚠️ **半解决**（Phase 4）—— 标注侧已落地：`Provenance` 落在 `PositionLot` 上，`Position.simulated_shares` 是**求和出来的**；**披露侧**（页面/邮件分别显示「真实持仓」与「含归并」）还没做，留到 Phase 5（规则本身是用户选的，不改语义） |
 | D7 | 网格规则两套实现 | ✅ **已解决**（Phase 3）—— `src/domain/grid/trigger_policy.py:TriggerPolicy` 现在是**生产 + 回测**两条路径**唯一**的判定来源 | 改参数会静默分叉 | ✅ 已解决（§11.1.5）—— `run_compound_grid` 调用 `policy.levels(...)`，并有静态测试防止内联算术回流 |
-| D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | `src/application/daily_snapshot.py:THRESHOLD_PP`, `src/domain/grid/grid_position.py:GRID_*` | 无法做多策略并存、测试需改环境 | Phase 5 提为配置对象 |
+| D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | ✅ **已解决**（Phase 5a）—— 参数收进 `src/domain/grid/config.py:GridConfig` 与 `src/application/config.py:AppConfig`；模块级别名保留为**配置对象的投影**；`TriggerPolicy.from_config` / `LayerSizingPolicy.from_config` / `advance_all_grids(config=)` / `run_backtest(threshold_pp=)` 让多套策略在一个进程里并存 | 无法做多策略并存、测试需改环境 | ✅ 已解决（§11.1.7 a）—— `test_env_reads_are_confined_to_the_config_objects` 静态钉住「只有配置对象读环境变量」 |
 | D9 | `evaluate()` 的两段式求值是隐式近似 | `src/application/daily_snapshot.py:main` | 恢复自动行为时会有偏差 | 显式命名为 `LayerSizingBasis` / `SnapshotBasis` |
 | D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | `apply_grid.py` 的 `VALID_OPS` vs `grid_position.py` 的 op 名 | 改一处漏一处 | 提到 `domain/grid` 单一处 |
 | D11 | 图表永远用完整 `ETF_DEFS`，读不到用户实际持仓 | `src/infrastructure/chart_renderer.py:_load_chart_assets()` 里 `holdings, _ = read_holdings()` —— `read_holdings()` 返回 **3** 个值，解包抛 `ValueError`，被 `except Exception` 吞掉后走 fallback 分支 | 换仓/减仓后图表仍画全部 4 个品种 | 改成 `holdings, _cr, _cg = read_holdings()`（Phase 0 **保持原样**，只搬不改行为；修它会改变图表输出） |
@@ -1327,7 +1399,8 @@ const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
 - [x] 「目标权重 = 1/n」在哪里保证？→ `TargetWeightPolicy`（Phase 4 ✅）—— 类里只有这一处实现；UI 从 `Portfolio` / 记录推导而非硬编码（Phase 4 ✅，`app.js` 里手抄的清单已删）
 - [x] 「持仓市值不会被抄错」在哪里保证？→ `Position.value` 是 `total_shares × price` **推出来的**，`Position.to_record()` 是它的输出（Phase 4 ✅）；`test_position_value_is_derived_from_lots_not_copied` 钉住这条
 - [x] 「状态形状固定」在哪里保证？→ `GridPosition` dataclass，mapper 显式（Phase 2a ✅）
-- [x] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型（`SimulatedOp` vs `ExecutedOp`）、不同仓储权限（Phase 2b + Phase 3 ✅）；`GridSimulator` 只能产出 `SimulatedOp`，`merge_backtest_ops` 只能写 `source="backtest"` 的行 |
+- [x] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型（`SimulatedOp` vs `ExecutedOp`）、不同仓储权限（Phase 2b + Phase 3 ✅）；`GridSimulator` 只能产出 `SimulatedOp`，`merge_backtest_ops` 只能写 `source="backtest"` 的行
+- [x] 「规则参数只有一份」在哪里保证？→ `GridConfig` / `AppConfig`（Phase 5a ✅）—— 环境变量**只**在配置对象里读一次；模块级别名（`GRID_STEP_PCT` 等）是配置对象的**投影**；`TriggerPolicy.from_config` / `LayerSizingPolicy.from_config` / `advance_all_grids(config=)` / `run_backtest(threshold_pp=)` 让多套策略并存；`test_env_reads_are_confined_to_the_config_objects` 静态钉住「领域层与回测层不再自己读环境变量」
 
 ---
 

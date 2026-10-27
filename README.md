@@ -137,11 +137,19 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
   - 浮盈 0 时买底仓 ¥10k; 浮盈 ¥10 万时买 ¥15k; 浮盈 ¥50 万时买 ¥35k
 - **状态持久化**: `data/grid_state.json` —— 每天 commit 后跨 Action run 保留
 - **环境变量覆盖** (供参数扫描):
+  - `GRID_LOOKBACK` (默认 120)
+  - `GRID_STEP_PCT` (默认 3.0) — 加仓步长
+  - `GRID_TP_PCT` (默认 3.0) — 回本出场步长
+  - `GRID_TP_BASIS` (默认 `first_buy`; 可改回 `avg_cost` 切回 v2 行为)
   - `GRID_BASE_YUAN` (默认 10000)
   - `GRID_FLOATING_FRACTION` (默认 0.05)
   - `GRID_FLOATING_WINDOW` (默认 756)
-  - `GRID_TP_BASIS` (默认 `first_buy`; 可改回 `avg_cost` 切回 v2 行为)
-  - `THRESHOLD_PP` (默认 3.0) — 同时影响 3pp 和网格的 ±3% 步长
+  - `THRESHOLD_PP` (默认 3.0) — 再平衡触发阈值
+
+  > 这些变量**只在配置对象里读一次** (`src/domain/grid/config.py:GridConfig`
+  > 与 `src/application/config.py:AppConfig`)，之后一路当**值**传下去。
+  > 代码里想用另一套参数就显式传 (`advance_all_grids(..., config=…)` /
+  > `run_backtest(..., threshold_pp=…)`) —— 一个进程里可以并存多套策略。
 
 > ⚠️ **口径警告**：图表与 `scripts/compare_*.py` 都是**策略重放**
 > (固定 ¥10,000/层、按**收盘价**成交), 与实盘 (浮动层额、**K 线最低价**、

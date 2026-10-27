@@ -27,16 +27,20 @@
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from enum import Enum
 
+from .config import DEFAULT_GRID_CONFIG, GridConfig
+
 # 触发参数 (env-overridable for parameter sweeps)
-GRID_STEP_PCT: float = 3.0
-GRID_TP_PCT: float = 3.0
+#
+# ⚠️ 值的**本体**在 `config.py` 的 `GridConfig` —— 整个代码库只在那里读
+# 环境变量一次, 这里只是它的别名 (既有 import 不断)。
+GRID_STEP_PCT: float = DEFAULT_GRID_CONFIG.step_pct
+GRID_TP_PCT: float = DEFAULT_GRID_CONFIG.tp_pct
 # "avg_cost"   — exit when price >= avg_cost * (1 + tp_pct/100)             [v2]
 # "first_buy"  — exit when price >= first_buy_price * (1 + tp_pct/100)       [v3]
-GRID_TP_BASIS: str = os.environ.get("GRID_TP_BASIS", "first_buy")
+GRID_TP_BASIS: str = DEFAULT_GRID_CONFIG.tp_basis
 
 
 class TriggerLevel(str, Enum):
@@ -119,6 +123,17 @@ class TriggerPolicy:
     step_pct: float = GRID_STEP_PCT
     tp_pct: float = GRID_TP_PCT
     tp_basis: str = GRID_TP_BASIS
+
+    @classmethod
+    def from_config(cls, config: GridConfig) -> "TriggerPolicy":
+        """从 `GridConfig` 构造 —— 「这套策略用哪组参数」当值传。
+
+        这就是 D8 要的东西: 一套进程里可以并存多套触发规则
+        (「生产用 3%」与「回测用 2%」各走各的), 不再只能改环境变量。
+        """
+        return cls(step_pct=config.step_pct,
+                   tp_pct=config.tp_pct,
+                   tp_basis=config.tp_basis)
 
     def levels(self, *, in_cycle: bool, entries: list[dict],
                window: list[float], price: float) -> TriggerLevels:
@@ -222,5 +237,6 @@ class TriggerPolicy:
 
 __all__ = [
     "GRID_STEP_PCT", "GRID_TP_BASIS", "GRID_TP_PCT",
+    "GridConfig",
     "TriggerDistance", "TriggerLevel", "TriggerLevels", "TriggerPolicy",
 ]

@@ -22,18 +22,21 @@
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
+from .config import DEFAULT_GRID_CONFIG, GridConfig
+
+# ⚠️ 值的**本体**在 `config.py` 的 `GridConfig` —— 整个代码库只在那里读
+# 环境变量一次, 这里只是它的别名 (既有 import 不断)。
+
 #: 每层的固定底数 (¥)
-GRID_BASE_YUAN: float = float(os.environ.get("GRID_BASE_YUAN", "10000"))
+GRID_BASE_YUAN: float = DEFAULT_GRID_CONFIG.base_yuan
 
 #: 浮动部分的比例 —— 池子超出最近最低的部分, 按这个比例加码
-GRID_FLOATING_FRACTION: float = float(os.environ.get("GRID_FLOATING_FRACTION",
-                                                      "0.05"))
+GRID_FLOATING_FRACTION: float = DEFAULT_GRID_CONFIG.floating_fraction
 
 #: 「最近最低」的回看窗口 (交易日)
-GRID_FLOATING_WINDOW: int = int(os.environ.get("GRID_FLOATING_WINDOW", "756"))
+GRID_FLOATING_WINDOW: int = DEFAULT_GRID_CONFIG.floating_window
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,12 @@ class LayerSizingPolicy:
 
     base_yuan: float = GRID_BASE_YUAN
     floating_fraction: float = GRID_FLOATING_FRACTION
+
+    @classmethod
+    def from_config(cls, config: GridConfig) -> "LayerSizingPolicy":
+        """从 `GridConfig` 构造 —— 「这套策略用哪组参数」当值传。"""
+        return cls(base_yuan=config.base_yuan,
+                   floating_fraction=config.floating_fraction)
 
     def layer_yuan(self, pool_value: float, recent_min: float) -> float:
         """今日的单层买入金额 (¥)。**纯函数**。
@@ -78,5 +87,5 @@ def layer_yuan(pool_value: float, recent_min: float) -> float:
 
 __all__ = [
     "GRID_BASE_YUAN", "GRID_FLOATING_FRACTION", "GRID_FLOATING_WINDOW",
-    "LayerSizingPolicy", "layer_yuan",
+    "GridConfig", "LayerSizingPolicy", "layer_yuan",
 ]
