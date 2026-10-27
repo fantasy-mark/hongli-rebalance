@@ -1,6 +1,7 @@
 """回测: 网格出场时「只卖出成本金额」(现行规则) vs「全部卖出」(旧规则)。
 
-现行规则 (src/simulation/grid_simulator.py run_compound_grid + split_take_profit): 出场时只卖
+现行规则 (src/simulation/grid_simulator.py run_compound_grid + src/domain/grid/exit_policy.py
+cost_only_exit): 出场时只卖
 `total_invested / price` 份, 恰好取回本金 -> 已实现盈亏恒为 0; 剩余
 `total_shares - total_invested/price` 份**归并到再平衡的持仓**
 (merged_shares), 此后按组合的规则参与权重计算 —— 网格实质上变成了

@@ -318,7 +318,7 @@ def render_chart(history: list[dict], out_path: Path = OUT_PNG) -> Path:
     # 资金占用 = 网格**在周期内**的层 (`current_value`)。止盈时本金全额收回,
     # 所以占用会回落 —— 这正是"只卖成本金额"规则的直接后果。
     # 归并到再平衡的那批份额**不再算网格的占用**: 它们已经离开网格的账,
-    # 变成再平衡组合的持仓 (见 src/domain/grid/grid_position.py:split_take_profit 的说明)。
+    # 变成再平衡组合的持仓 (见 src/domain/grid/exit_policy.py:cost_only_exit 的说明)。
     grid_capital_by_asset = {n: grid_histories[n]["current_value"]
                              for n in ASSET_NAMES}
     grid_capital_total = sum(grid_capital_by_asset[n] for n in ASSET_NAMES)

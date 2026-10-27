@@ -2321,7 +2321,7 @@ def test_merged_shares_survive_subsequent_daily_runs():
 # ---------------------------------------------------------------------------
 # src/domain/portfolio — 网格归并份额并入再平衡组合
 #
-# 规则 (src/domain/grid/grid_position.py:split_take_profit): 出场只卖出"回本所需"那部分, 余量
+# 规则 (src/domain/grid/exit_policy.py:cost_only_exit): 出场只卖出"回本所需"那部分, 余量
 # 归并到再平衡的持仓。归并份额从这一刻起是**组合**的资产: 必须计入市值、
 # 权重和总市值, 否则组合的真实敞口被低估。
 #
@@ -2448,6 +2448,114 @@ def _nf_fixture(files: dict, env: dict):
     for name, body in files.items():
         Path(tmp, name).write_text(body, encoding="utf-8")
     return tmp, env
+
+
+# ---------------------------------------------------------------------------
+# src/domain/grid/grid_position — GridPosition 聚合根 + 显式 mapper
+#
+# 背景 (不变量 I11): 以前 `advance_one_day` 与 `manual_op` 各自用一份
+# 6 key 字面量重建状态, 任何新增字段都会在**下一次每日运行时被静默丢弃**
+# (2026-10-23 的 free_shares → merged_shares 改名就是这么丢过一次)。
+# 现在形状由 GridPosition + mapper 唯一定义, 忘了迁移会**立刻报错**。
+# ---------------------------------------------------------------------------
+
+def test_grid_position_mapper_writes_exactly_the_declared_fields():
+    """mapper 产出的 key 集合必须 == dataclass 的字段集合。
+
+    给 GridPosition 加了字段却忘了写 to_state() —— 这条测试会红,
+    to_state() 自己也会在第一次写状态时抛错 (双保险)。
+    """
+    from dataclasses import fields as dc_fields
+    declared = {f.name for f in dc_fields(grid_pos.GridPosition)}
+    produced = set(grid_pos.fresh_asset_state())
+    assert produced == declared, (
+        f"mapper 与 dataclass 不同步: 产出 {sorted(produced)}, "
+        f"声明 {sorted(declared)}")
+
+
+def test_grid_position_mapper_roundtrip_is_lossless():
+    state = {
+        "in_cycle": True,
+        "entries": [{"date": "2026-10-20", "price": 1.3, "shares": 1000.0}],
+        "last_prices": [1.35, 1.32, 1.3],
+        "cum_realized": 0.0,
+        "ops": [{"date": "2026-10-20", "op": "open", "source": "manual",
+                 "price": 1.3, "shares": 1000.0, "note": "x"}],
+        "merged_shares": 12.34,
+    }
+    pos = grid_pos.GridPosition.from_state(state)
+    assert pos.to_state() == state, "往返必须逐字段相同"
+
+
+def test_grid_position_mapper_rejects_unknown_keys():
+    """多出来的 key 不再被静默丢弃 —— 直接报错, 免得丢掉之后没人知道。"""
+    state = dict(grid_pos.fresh_asset_state())
+    state["free_shares"] = 99.0        # 老字段名 (2026-10-23 之前)
+    try:
+        grid_pos.GridPosition.from_state(state)
+    except ValueError as ex:
+        assert "free_shares" in str(ex)
+    else:
+        raise AssertionError("未知 key 必须报错, 不能静默忽略")
+
+
+def test_grid_position_mapper_accepts_legacy_min_key():
+    """历史别名 last_120d_min 折进 last_prices 队列, 且不再被输出。"""
+    state = {"in_cycle": False, "entries": [], "cum_realized": 0.0,
+             "ops": [], "merged_shares": 0.0, "last_120d_min": 8.205}
+    pos = grid_pos.GridPosition.from_state(state)
+    assert pos.last_prices == [8.205]
+    assert "last_120d_min" not in pos.to_state()
+
+
+def test_grid_state_json_format_stays_six_keys():
+    """data/grid_state.json 的格式**不能变** —— mapper 负责读写。"""
+    path = ROOT / "data" / "grid_state.json"
+    if not path.exists():
+        return
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    expected = {"in_cycle", "entries", "last_prices", "cum_realized",
+                "ops", "merged_shares"}
+    for name, asset in doc.items():
+        assert set(asset) == expected, (
+            f"{name} 的 key 集合变了: {sorted(asset)}")
+
+
+def test_cost_only_exit_matches_legacy_dict_shape():
+    """新策略 (ExitAtCost) 与旧别名 (dict) 的数字必须逐位相同。"""
+    from src.domain.grid.exit_policy import cost_only_exit
+    for args in ((2030.0, 199910.0, 103.0),      # 正常回本
+                 (2030.0, 199910.0, 90.0),       # 亏本出场
+                 (0.0, 0.0, 100.0)):             # 空仓
+        legacy = grid_pos.split_take_profit(*args)
+        new = cost_only_exit(*args).to_dict()
+        assert legacy == new, f"{args}: {legacy} != {new}"
+
+
+def test_cost_only_exit_keeps_full_precision():
+    """出场是**比例** —— 中间量不许取整, 否则「买入-卖出==归并」会破。"""
+    from src.domain.grid.exit_policy import cost_only_exit
+    r = cost_only_exit(2030.0, 199910.0, 103.0)
+    assert r.merged_shares == 2030.0 - 199910.0 / 103.0
+    assert r.shares_sold == 199910.0 / 103.0
+    # 归并份额不能是"取整到 2 位"的版本
+    assert r.merged_shares != round(r.merged_shares, 2)
+
+
+def test_manual_op_preserves_merged_identity_bit_exact():
+    """买入 − 卖出 == 归并, 逐位成立 (全精度, 不取整)。"""
+    st = grid_pos.fresh_asset_state()
+    st = grid_pos.manual_op(st, op="open", today="2026-10-20", price=1.30,
+                             shares=1000.0)
+    st = grid_pos.manual_op(st, op="add", today="2026-10-21", price=1.26,
+                             shares=1030.0)
+    st = grid_pos.manual_op(st, op="tp", today="2026-10-22", price=1.36,
+                             shares=0.0)
+    op = st["ops"][-1]
+    bought = 1000.0 + 1030.0
+    assert op["shares_to_merge"] == bought - op["shares"], (
+        "归并份额必须精确等于 买入 − 卖出")
+    assert st["merged_shares"] == op["shares_to_merge"]
 
 
 # ---------------------------------------------------------------------------

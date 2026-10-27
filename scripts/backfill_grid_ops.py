@@ -20,8 +20,8 @@ THESE OPS ARE SIMULATED (source="backtest"), NOT LIVE:
     trigger watches K-line LOWS (see scripts/backfill_grid_window.py).
 So the share counts will NOT match what the live grid would actually place.
 
-EXIT RULE: exits use the "sell cost only" rule (src/domain/grid/grid_position.py:
-split_take_profit) — the replay sells just enough shares to recover the
+EXIT RULE: exits use the "sell cost only" rule (src/domain/grid/exit_policy.py:
+cost_only_exit) — the replay sells just enough shares to recover the
 principal and merges the remainder into the rebalance portfolio
 (`merged_shares`). So every tp row here has pnl == 0 and a non-zero
 `shares_to_merge`; the grid's entire gain lives in the merged shares'

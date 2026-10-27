@@ -185,14 +185,18 @@ class PositionLot:
 | 加仓触发 | 价格 ≤ 最近一笔买入价 × 97% | 同上 |
 | 回本触发 | 价格 ≥ **第一笔**买入价 × 103% | 同上（`GRID_TP_BASIS="first_buy"`） |
 | 层额 | `¥10,000 + max(池值 − 757日最小池值, 0) × 5%` | `grid.py:54 layer_yuan` |
-| 出场 | 只卖 `本金 / 价格` 份（恰好回本），余量归并 | `grid.py:85 split_take_profit` |
+| 出场 | 只卖 `本金 / 价格` 份（恰好回本），余量归并 | `grid/exit_policy.py cost_only_exit` |
 | 周期结构 | N 笔买入 + 1 笔回本出场 | 用户决策 2026-10-25 |
 
-**⚠ 术语债（必须处理）**：代码里叫 `take_profit` / `GRID_TP_PCT` / `split_take_profit`，
-但业务语义是**"只卖成本额、恰好回本"**——浮盈一分都不兑现。这跟"止盈"是**相反**的。
-重构时应统一改名为 `ExitAtCost` / `EXIT_AT_COST_PCT` / `cost_only_exit`，
-否则新人和未来的自己会一直误读。`app.js` / `notify.py` 里已经用的是
-「建议回本」，只有 Python 侧还是老名字。
+**⚠ 术语债（必须处理）✅ 规则本体已处理（2026-10-27）**：代码里原来叫
+`take_profit` / `split_take_profit`，但业务语义是**"只卖成本额、恰好回本"**——
+浮盈一分都不兑现。这跟"止盈"是**相反**的。
+现已改名为 `ExitAtCost` / `cost_only_exit`（见 §11.1.3），否则新人和未来的自己
+会一直误读。`app.js` / `notify.py` 里已经用的是「建议回本」。
+
+> `GRID_TP_PCT` **故意没改名**：它是「回本**触发**阈值」（高于首笔买入价 3%），
+> 属于**触发规则**而不是出场规则 —— Phase 3 的 `TriggerPolicy` 会接管它，
+> 届时再随该上下文一起命名。
 
 **⚠ 建议 ≠ 成交**：2026-10-25 起引擎降级为**只建议不下单**（`grid.py:539
 advance_one_day` 只滚窗口 + 算建议；`grid.py:668 manual_op` 是唯一实盘入口）。
@@ -384,7 +388,7 @@ class GridSuggestion:
 | `TriggerPolicy` | `grid.py:395 _triggers` | 纯 | ✅ 已经是单一事实源 |
 | `GridAdvisor` | `grid.py:501 advisory` | 纯 | ✅ 纯函数，不改 state |
 | `LayerSizingPolicy` | `grid.py:54 layer_yuan` | 纯 | 依赖模块级常量 |
-| `CostOnlyExitPolicy` | `grid.py:85 split_take_profit` | 纯 | ✅ 三处复用，唯一实现 |
+| `CostOnlyExitPolicy` | `grid/exit_policy.py cost_only_exit` | 纯 | ✅ 三处复用，唯一实现 |
 | `GridSimulator` | `grid.py:116 run_compound_grid` | 纯（有 I/O 取价） | ⚠ 自带一套触发逻辑 |
 | `EqualWeightBacktester` | `three_pp.py:63 run_backtest` | 纯 | 通用，可直接被 DDD 包一层 |
 | `DailyDigestBuilder` | `notify.py:122/335/520` | 纯 | 呈现层 |
@@ -396,7 +400,7 @@ class GridSuggestion:
 | 开仓 | `price < min(last_prices)` | `price < past.min()`（同） |
 | 加仓 | `price ≤ entries[-1].price × 97%` | `price ≤ last_price × 97%`（同） |
 | 回本 | `price ≥ entries[0].price × 103%` | `price ≥ tp_target`（同） |
-| 出场 | `split_take_profit` | `split_take_profit`（✅ 已复用） |
+| 出场 | `cost_only_exit` | `cost_only_exit`（✅ 已复用） |
 | **驱动价** | **K 线最低价**（`record.py:768`） | **收盘价** |
 | **层额** | `layer_yuan()` 浮动 | 固定 `GRID_BASE_YUAN` ¥10,000 |
 | **起点** | 引擎上线以来 | 2020-11-05 全历史 |
@@ -629,7 +633,7 @@ src/
       grid_position.py          ✅ 网格聚合的领域半（stdlib-only！）
       grid_op.py                ⬜ Phase 2
       trigger_policy.py         ⬜ Phase 3
-      exit_policy.py            ⬜ Phase 2
+      exit_policy.py            ✅ Phase 2 —— ExitAtCost / cost_only_exit
       advisor.py                ⬜ Phase 2
       layer_sizing.py           ⬜ Phase 3
     events/
@@ -696,18 +700,121 @@ Phase 1 分两次提交落地：
 | 地方 | 为什么不包 |
 |---|---|
 | `rebalance_policy.evaluate` 内部算触发判定的权重 | 取整到 4 位会**移动触发边界** —— 让「差 0.0001pp 不触发」变成「触发」。`Weight` 只在写进 `history.json` 时构造 |
-| `split_take_profit` 的中间量（卖出份额 / 归并份额 / 盈亏） | 它们是**比例**。四舍五入会破坏「买入 − 卖出 == 归并」这个恒等式，也会让 `cum_realized` 的数字变 |
+| `cost_only_exit` 的中间量（卖出份额 / 归并份额 / 盈亏） | 它们是**比例**。四舍五入会破坏「买入 − 卖出 == 归并」这个恒等式，也会让 `cum_realized` 的数字变 |
 | `layer_yuan()` 返回的层额 | 层额要除以价格算份额，提前取整会改掉份额。`LayerSize` 只在**输出边界**构造 |
 
 **逐位验证**：改动前后跑同一段**确定性**（不联网，价格写死）流程 ——
 账本重放 → 估值 → 归并 → 3pp → 网格推进 → `build_record` → `advisory` →
-`asset_snapshot` → `split_take_profit` —— 输出的 JSON **逐字节相同**。
+`asset_snapshot` → `cost_only_exit` —— 输出的 JSON **逐字节相同**。
 107 个测试全绿。
 
 **⚠️ 尚未替换的裸 float**（有意为之，Phase 2+ 再处理）：
 `asset_snapshot` 的 `return_pct`（收益率 %，不是百分点偏离）、
 `quote_providers` 的 `premium_pct`、`build_record` 的 `target_w`
 （`1/n` 不取整，页面按它算目标市值）、`rebalance_policy.target_weight`。
+
+#### 11.1.3 Phase 2 落地情况（2026-10-27）
+
+Phase 2 分两次提交落地，**这一节记的是 2a（聚合 + mapper + 改名）**：
+
+| 提交 | 内容 |
+|---|---|
+| 本次（2a） | `src/domain/grid/exit_policy.py` + `GridPosition` 聚合根 + 显式 mapper |
+| 2b（未做） | `src/domain/grid/grid_op.py`（`GridOp` / `ExecutedOp` / `SimulatedOp`）、`src/domain/grid/advisor.py`（`GridSuggestion`） |
+
+##### (a) 出场规则独立成模块 + 改名
+
+`src/domain/grid/exit_policy.py`（stdlib-only）：
+
+```python
+@dataclass(frozen=True)
+class ExitAtCost:          # 一次「只卖成本额」出场的**结果**
+    shares_sold: float
+    proceeds: float
+    merged_shares: float
+    pnl: float
+
+def cost_only_exit(total_shares, total_invested, price) -> ExitAtCost: ...
+```
+
+- 术语债（§4-BC-C 那条）**结清**：规则本体现在叫 `cost_only_exit`，
+  返回值叫 `ExitAtCost`。
+- `split_take_profit` 保留为**兼容别名**（返回旧版的 dict 形状），
+  `grid_position.py` / `scripts/apply_grid.py` 的既有 import 不断。
+- ⚠️ **中间量保持全精度**，不套 `ShareCount` / `Money` —— 理由同 §11.1.2：
+  它们是**比例**，取整会破坏「买入 − 卖出 == 归并」这个恒等式。
+  值对象用在**输出边界**，不是用在这条链路上。
+
+##### (b) `GridPosition` 聚合根 + 严格 mapper
+
+`src/domain/grid/grid_position.py` 里原来的 6 key 字面量：
+
+```python
+new_state = {
+    "in_cycle": in_cycle, "entries": entries, "last_prices": last_prices,
+    "cum_realized": cum_realized, "ops": ops, "merged_shares": merged_shares,
+}
+```
+
+现在换成 dataclass + 显式 mapper：
+
+```python
+@dataclass
+class GridPosition:
+    in_cycle: bool = False
+    entries: list[dict] = field(default_factory=list)
+    last_prices: list[float] = field(default_factory=list)
+    cum_realized: float = 0.0
+    ops: list[dict] = field(default_factory=list)
+    merged_shares: float = 0.0
+
+    def to_state(self) -> dict: ...      # 写盘
+    @classmethod
+    def from_state(cls, state) -> "GridPosition": ...   # 读盘
+```
+
+**这解决的是 I11（§10）**。此前的危害是**具体的、已经发生过**的：
+`advance_one_day` 和 `manual_op` 各自用**自己的** 6 key 字面量重建 state，
+新增一个字段时谁都没改到 → 那个字段**被静默丢弃**。2026-10-23
+`free_shares` 改名为 `merged_shares` 就踩过一次。
+
+现在两头都堵死：
+
+| 方向 | 守卫 |
+|---|---|
+| **写**（`to_state`） | 产出的 key 集合 vs dataclass 声明的字段集合，**不等就抛错** —— 少写一个 key 立刻炸，不会等到线上 |
+| **读**（`from_state`） | 出现**未知 key** 就抛错（`last_120d_min` 是唯一豁免的 legacy 键）—— 旧 state 读不进来立刻炸 |
+
+**`data/grid_state.json` 的 JSON 格式完全不变**：每个资产还是那 6 个 key，
+值形状也没动。mapper 负责读写，**外面看不见它**。
+
+##### (c) 验证
+
+| 检查 | 结果 |
+|---|---|
+| 逐字节回归（确定性流程 dump 前后对比） | **逐字节相同** |
+| `python -X utf8 -m tests.test_record` | **115/115 通过**（新增 8 个 mapper / 出场策略测试） |
+| `scripts/apply_grid.py` 真实 payload 冒烟 | rc=0，state 正确 |
+| `import src.domain.grid.grid_position` 拉起 pandas / akshare？ | **没有**（stdlib-only 约束仍成立） |
+
+##### (d) 一处**有意**的行为差异
+
+`from_state` 会用 legacy 的 `last_120d_min` 兜底给**所有** mutator 填
+`last_prices`；改动前只有 `advance_one_day` 这么做，`manual_op` 不做。
+
+实际是 no-op：线上 `data/grid_state.json` 里**没有** `last_120d_min`，
+而 `scripts/apply_grid.py` 在调 `manual_op` **之前**本来就自己补了这一步。
+两条路径的最终 state 一致。
+
+##### (e) Phase 2b 待做
+
+- `grid_op.py`：`GridOp`（基类）/ `ExecutedOp`（`source="manual"`）/
+  `SimulatedOp`（`source="backtest"`）—— 把「建议 ≠ 成交」写成类型（§6.3）。
+- `advisor.py`：`GridSuggestion` —— 把 `advisory()` 现在返回的裸 dict 变成
+  具名值对象，`signal: str` 变成 `level: TriggerLevel | None`。
+
+> ⚠️ 本文档 §4 / §7 里的 `grid.py:NNN` 行号引用指的是 **Phase 0 之前**的文件布局；
+> 该文件现在是 `src/domain/grid/grid_position.py`。
 
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
@@ -729,12 +836,12 @@ Phase 1 分两次提交落地：
 - 风险：影响面最大的一步。**每替换一个值对象就跑一次全量测试**
 - 收益：一旦完成，§10 里所有"round 到 2 位小数"的手工代码都可以删掉
 
-#### Phase 2 — 网格聚合显式化（2 次提交）
+#### Phase 2 — 网格聚合显式化（2 次提交）✅ 进行中（2a 已落地）
 
-- 把 6 key 字面量换成 `GridPosition` dataclass + 显式 mapper
-- `take_profit` 系列改名 `ExitAtCost` / `cost_only_exit`
-- `GridSuggestion` 与 `GridOp` 分型
-- 保留 `data/grid_state.json` 的 **JSON 格式不变**（mapper 负责读写）
+- 把 6 key 字面量换成 `GridPosition` dataclass + 显式 mapper ✅ **2a**
+- `take_profit` 系列改名 `ExitAtCost` / `cost_only_exit` ✅ **2a**
+- `GridSuggestion` 与 `GridOp` 分型 ⬜ **2b**
+- 保留 `data/grid_state.json` 的 **JSON 格式不变**（mapper 负责读写） ✅ **2a**
 
 - 收益：I11 的静默丢数据风险消失；"引擎不下单"由类型保证
 

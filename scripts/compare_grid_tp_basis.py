@@ -4,7 +4,7 @@ Output: a side-by-side table of CAGR / Sharpe / max DD / n_trades / win-rate /
 avg hold-days / total realized P&L.
 
 WARNING (2026-10-23 起): 网格出场规则已改为「只卖成本金额」(见
-src/domain/grid/grid_position.py:split_take_profit) —— 正常出场时已实现盈亏恒为 0, 浮盈转成
+src/domain/grid/exit_policy.py:cost_only_exit) —— 正常出场时已实现盈亏恒为 0, 浮盈转成
 永久持有的零成本份额。所以本脚本的 realized P&L / win-rate 会恒为 0,
 输出不再代表网格的真实收益。要看真实收益用
 scripts/compare_grid_exit_mode.py。

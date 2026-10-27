@@ -51,9 +51,11 @@ GRID_STATE = ROOT / "data" / "grid_state.json"
 # workflow 不需要装 pandas/akshare。
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from src.domain.grid.exit_policy import ExitAtCost, cost_only_exit  # noqa: E402,F401
 from src.domain.grid.grid_position import manual_op, split_take_profit  # noqa: E402,F401
 from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402
-# split_take_profit 是 re-export (兼容既有 import), 规则本体在 src/domain/grid/grid_position.py。
+# cost_only_exit / ExitAtCost 是出场规则的**本体** (src/domain/grid/exit_policy.py);
+# split_take_profit 是兼容别名 (返回旧版的 dict 形状), 保留是为了既有 import 不断。
 # AssetCode / TradingDate 是**代码格式与日期格式的唯一实现** (以前这里跟
 # apply_holdings.py 各带一份正则, 改一处漏一处)。
 
@@ -91,7 +93,7 @@ def inline_manual_op(state: dict, op: str, today: str,
     Thin wrapper over `src.domain.grid.grid_position.manual_op` — **单一实现**, 不再复制规则。
     保留 (state, pnl_delta) 的返回形状, 兼容既有调用方与测试。
 
-    For `tp` the "sell cost only" rule applies (see split_take_profit):
+    For `tp` the "sell cost only" rule applies (see cost_only_exit):
     pnl_delta is 0 on a normal above-cost exit, because only the principal
     is sold and the remainder is merged into the rebalance portfolio
     (`merged_shares`). It is negative only if the user exits BELOW cost,

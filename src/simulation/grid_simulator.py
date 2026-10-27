@@ -25,13 +25,13 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from ..domain.grid.exit_policy import cost_only_exit
 from ..domain.grid.grid_position import (
     GRID_BASE_YUAN,
     GRID_LOOKBACK,
     GRID_STEP_PCT,
     GRID_TP_BASIS,
     GRID_TP_PCT,
-    split_take_profit,
 )
 from ..domain.shared.money import Price, ShareCount
 
@@ -95,21 +95,21 @@ def run_compound_grid(
             else:
                 tp_target = avg_cost * (1 + tp_pct / 100)
             if price >= tp_target:
-                split = split_take_profit(total_shares, total_invested, float(price))
-                merged_shares += split["merged_shares"]
-                cum_realized += split["pnl"]
+                split = cost_only_exit(total_shares, total_invested, float(price))
+                merged_shares += split.merged_shares
+                cum_realized += split.pnl
                 cycles.append({
                     "entries": entries,
                     "exit_date": date,
                     "exit_price": float(price),
                     "num_buys": len(entries),
                     "avg_cost": avg_cost,
-                    # 卖出的是"回本所需"那部分, 不是全部持仓 —— 见 split_take_profit
-                    "total_shares": split["shares_sold"],
-                    "shares_transferred": split["merged_shares"],
+                    # 卖出的是"回本所需"那部分, 不是全部持仓 —— 见 cost_only_exit
+                    "total_shares": split.shares_sold,
+                    "shares_transferred": split.merged_shares,
                     "total_invested": total_invested,
-                    "exit_value": split["proceeds"],
-                    "pnl": split["pnl"],
+                    "exit_value": split.proceeds,
+                    "pnl": split.pnl,
                     "return_pct": 0.0,
                 })
                 in_cycle = False

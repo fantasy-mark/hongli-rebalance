@@ -19,7 +19,7 @@ Rules (per asset, independent) — the **suggestion** the engine reports:
     shares, recovering exactly the principal) and the leftover
     `total_shares - total_invested/price` shares are **merged into the
     rebalance portfolio** (`merged_shares`) — they leave the grid's book
-    and become ordinary portfolio holdings — see `split_take_profit`.
+    and become ordinary portfolio holdings — see `cost_only_exit`.
     So realized P&L per cycle is 0 by construction, and all return comes
     from the merged shares' appreciation.
 
@@ -46,13 +46,29 @@ monolithic `src/grid.py`. The *simulation* half (`run_compound_grid`,
 level) — `scripts/apply_grid.py` imports it inside a GitHub Actions job
 that does not install those dependencies. pandas is a *local* import inside
 `run_compound_grid`, which now lives in the simulation layer.
+
+---
+
+**Phase 2 note (2026-10-27)**: 状态形状从「散落的 6 key 字面量」收成
+`GridPosition` 聚合根 + 显式 mapper (见 `to_state` / `from_state`)。
+这消掉了不变量 **I11** 的静默丢数据风险: 以前 `advance_one_day` 与
+`manual_op` 各自用一份 6 key 字面量重建状态, 任何新增字段都会在**下一次
+每日运行时被静默丢弃** (2026-10-23 的 `free_shares` → `merged_shares`
+改名就是这么丢过一次)。现在:
+  - 输出侧: `to_state` 校验产出的 key 集合 == dataclass 的字段集合,
+    **新增字段忘了写 mapper 会立刻抛错**;
+  - 输入侧: `from_state` 拒绝未知 key, 不再默默忽略。
+
+`data/grid_state.json` 的 **JSON 格式不变** —— mapper 负责读写。
 """
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field, fields
 from typing import Optional
 
 from ..shared.money import DeviationPP, LayerSize, Money, Price, ShareCount
+from .exit_policy import ExitAtCost, cost_only_exit
 
 # 网格参数 (env-overridable for parameter sweeps)
 GRID_BASE_YUAN: float = float(os.environ.get("GRID_BASE_YUAN", "10000"))
@@ -100,74 +116,146 @@ def layer_yuan(pool_value: float, recent_min: float) -> float:
 #
 # 归并份额是**模拟口径**: 网格本身是虚拟策略, 所以归并进组合的份额也是模拟
 # 的, 不写进 data/trades.json (那里只记录真实成交)。
+#
+# ⚠️ 规则本体在 `exit_policy.py` (`CostOnlyExitPolicy` / `cost_only_exit`)。
+# 这里保留 `split_take_profit` 作为**兼容别名** —— 旧的 import 路径还能用,
+# 但它返回的是旧版的 dict 形状; 新代码请用 `cost_only_exit` (返回
+# `ExitAtCost` 数据类)。
 
 def split_take_profit(total_shares: float, total_invested: float,
                       price: float) -> dict:
-    """按"只卖成本金额"规则拆分一次止盈。
+    """⚠️ 兼容别名 —— 规则本体见 `exit_policy.cost_only_exit`。
 
-    Returns {shares_sold, proceeds, merged_shares, pnl}:
-      shares_sold  实际卖出的份额 (= 本金 / 价格, 取回全部本金)
-      merged_shares 归并到再平衡持仓的份额 (网格不再持有)
-      pnl          已实现盈亏; 正常路径恒为 0, 亏本出场时为负
-
-    当 `price` 低于持仓均价时要卖的份额会超过持仓, 归并出"负的份额"没有
-    意义, 此时退化为全部卖出并认亏。引擎**不再自动止盈**, 所以这个分支只能
-    由**手动** tp 触发 —— 用户在低于成本处出场时会真的认亏。
+    返回旧版的 dict 形状 {shares_sold, proceeds, merged_shares, pnl}。
+    新代码请直接用 `cost_only_exit(...)` → `ExitAtCost`。
     """
-    if not price > 0:
-        raise ValueError(f"price must be > 0, got {price}")
-    if total_shares <= 0:
-        return {"shares_sold": 0.0, "proceeds": 0.0, "merged_shares": 0.0, "pnl": 0.0}
-    want = total_invested / price
-    if want >= total_shares:
-        # 亏本出场 (只有手动路径可能): 卖光并认亏
-        proceeds = total_shares * price
-        return {"shares_sold": total_shares, "proceeds": proceeds,
-                "merged_shares": 0.0, "pnl": proceeds - total_invested}
-    return {"shares_sold": want, "proceeds": total_invested,
-            "merged_shares": total_shares - want, "pnl": 0.0}
+    return cost_only_exit(total_shares, total_invested, price).to_dict()
 
 
 # -----------------------------------------------------------------------------
-# Per-asset state container (JSON-serializable, used by record.py)
+# 聚合根: GridPosition —— 一个资产一份网格状态
 # -----------------------------------------------------------------------------
+# ⚠️ **JSON 格式不变**: `data/grid_state.json` 里每个资产仍然是**同样那 6 个
+# key**, 一字不差。变化的是「谁定义这 6 个 key」—— 从散落在两个 mutator
+# 里的字面量, 收成这一个 dataclass + 一对显式 mapper。
+
+#: 状态里允许出现的 key —— **唯一**的事实源。
+#: `to_state` 会校验产出的 key 集合与它一致, `from_state` 会拒绝它之外的
+#: key (唯一的例外是下面那个历史别名)。
+_STATE_KEYS: frozenset[str] = frozenset({
+    "in_cycle", "entries", "last_prices", "cum_realized", "ops", "merged_shares",
+})
+
+#: 历史别名: 极老的 state 用单个 `last_120d_min` 记窗口最低价, 没有
+#: `last_prices` 队列。读的时候折进 `last_prices`, 写的时候不再输出 ——
+#: 与 Phase 0 之前的行为一致 (以前也是被 6 key 字面量丢掉的)。
+_LEGACY_KEYS: frozenset[str] = frozenset({"last_120d_min"})
+
+
+@dataclass
+class GridPosition:
+    """网格聚合根 —— 一个资产的状态。
+
+    字段就是 `data/grid_state.json` 里那 6 个 key, 一一对应:
+
+      in_cycle      是否处于一个进行中的周期
+      entries       周期内的买入层 [{date, price, shares}]
+      last_prices   滚动窗口 (最多 GRID_LOOKBACK 根), 「建议开仓」的唯一依据
+      cum_realized  累计已实现盈亏 (正常回本出场恒为 0)
+      ops           只增不改的操作日志 (manual = 实盘, backtest = 模拟)
+      merged_shares 已归并到再平衡组合的份额 (模拟口径)
+
+    **JSON 契约** (改格式 = 破坏线上数据, 改之前先想清楚):
+
+      - `entries` 每行: {date, price, shares}
+      - `ops` 每行: {date, op, source, price, shares, note}, tp 额外带
+        {pnl, num_buys_exited, total_shares_exited, shares_to_merge}
+      - `ops[].source` 只有两个值:
+          "manual"   —— 页面编辑器通过 apply_grid.py 提交的**实盘**操作
+                       (**唯一的实盘来源**)
+          "backtest" —— ops_from_cycles() 对历史价格的**重放**,
+                       即**模拟** (见 scripts/backfill_grid_ops.py)
+        ("auto" 是自动交易时代的遗留值, 迁移脚本
+         scripts/reset_grid_positions.py 已把那些行删掉)
+
+    ⚠️ `last_prices` **不能被迁移清空** —— 它是「建议开仓」的**唯一**依据
+    (条件 = `price < min(window)`, 即 120 日新低)。删了它, 窗口要重新灌满
+    120 天才会恢复。
+
+    状态机 (不变量 I5 / I6) 由 `manual_op` 保证:
+      - 一个资产同时最多一个进行中的周期 (I5);
+      - 一个周期 = N 买 + 1 卖 (I6)。
+
+    ⚠️ `entries` / `ops` 里存的是 **dict**, 不是 dataclass —— 它们的形状
+    是**变长的** (tp 的 op 多几个字段), 而 `data/grid_state.json` 的格式
+    不能变。这两个的显式化留给后续阶段。
+    """
+
+    in_cycle: bool = False
+    entries: list[dict] = field(default_factory=list)
+    last_prices: list[float] = field(default_factory=list)
+    cum_realized: float = 0.0
+    ops: list[dict] = field(default_factory=list)
+    merged_shares: float = 0.0
+
+    # -- mapper: 领域对象 ↔ JSON -------------------------------------------
+    def to_state(self) -> dict:
+        """Serialize to the **exact** JSON shape `data/grid_state.json` uses.
+
+        ⚠️ 这是**唯一**写状态形状的地方。守卫: 产出的 key 集合必须与
+        dataclass 的字段集合**完全一致** —— 给 dataclass 加了字段却忘了
+        在这里写, 会在**第一次写状态时立刻抛错**, 而不是像以前那样
+        在下一次每日运行时被静默丢弃 (不变量 I11)。
+        """
+        state = {
+            "in_cycle": self.in_cycle,
+            "entries": self.entries,
+            "last_prices": self.last_prices,
+            "cum_realized": self.cum_realized,
+            "ops": self.ops,
+            "merged_shares": self.merged_shares,
+        }
+        produced = frozenset(state)
+        declared = frozenset(f.name for f in fields(self))
+        if produced != declared:
+            raise ValueError(
+                f"grid state mapper is out of sync: produced {sorted(produced)}, "
+                f"dataclass declares {sorted(declared)} — a field was added to "
+                f"GridPosition without updating to_state()"
+            )
+        return state
+
+    @classmethod
+    def from_state(cls, state: dict) -> "GridPosition":
+        """Parse a persisted state dict into the aggregate.
+
+        缺 key 用默认值 (向后兼容老文件); **多** key 直接报错 —— 以前
+        多出来的 key 会被 6 key 字面量静默丢弃, 丢掉之后没人知道 (I11)。
+        """
+        unknown = frozenset(state) - _STATE_KEYS - _LEGACY_KEYS
+        if unknown:
+            raise ValueError(
+                f"grid state has unknown keys {sorted(unknown)}; "
+                f"known keys are {sorted(_STATE_KEYS)}"
+            )
+        last_prices = list(state.get("last_prices") or [])
+        if not last_prices and state.get("last_120d_min") is not None:
+            # 历史别名: 单值窗口 → 折成一条队列
+            last_prices = [float(state["last_120d_min"])]
+        return cls(
+            in_cycle=bool(state.get("in_cycle", False)),
+            entries=list(state.get("entries") or []),
+            last_prices=last_prices,
+            cum_realized=float(state.get("cum_realized", 0.0) or 0.0),
+            ops=list(state.get("ops") or []),
+            merged_shares=float(state.get("merged_shares", 0.0) or 0.0),
+        )
+
 
 def fresh_asset_state() -> dict:
     """Empty state for one asset."""
-    return {
-        "in_cycle": False,
-        "entries": [],                # [{date: ISO, price: float, shares: float}]
-        # Rolling window of past closes (length up to GRID_LOOKBACK). The
-        # "建议开仓" condition is `price < min(window)` — i.e. a new 120-day
-        # low. We persist a queue so the rule survives Action restarts and
-        # JSON round-trips. This window is the **only** thing the engine
-        # mutates now, so it must not be wiped by the migration.
-        "last_prices": [],
-        "cum_realized": 0.0,
-        # Append-only log of every executed open/add/tp event.
-        # Schema per op: {date, op, source, price, shares, note, (tp-only:
-        # pnl, num_buys_exited, total_shares_exited, shares_to_merge)}.
-        # The page renders this as the "复合网格 操作记录" table under the
-        # strategy chart. Cleared on tp is `entries`, NOT `ops` — the op log
-        # is the permanent record.
-        #
-        # `source` has two values now that the engine stopped trading:
-        #   "manual"   — page editor via apply_grid.py (**唯一的实盘来源**)
-        #   "backtest" — ops_from_cycles() replay of historical prices, i.e.
-        #                SIMULATED (see scripts/backfill_grid_ops.py)
-        # ("auto" is a legacy value from the auto-trading era; the migration
-        #  scripts/reset_grid_positions.py removes those rows.)
-        "ops": [],
-        # 归并份额 (float, shares). 每次止盈时 `total_shares -
-        # total_invested/price` 归并到这里 —— 这批份额**离开网格的账, 变成
-        # 再平衡持仓的一部分** (模拟口径, 见 split_take_profit 的说明)。
-        # 旧版 state 没有这个 key, 读取一律走 .get("merged_shares", 0.0)
-        # 以保持向后兼容。
-        #
-        # ⚠️ state 是用**字面量 dict** 重建的 (见 advance_one_day /
-        # manual_op), 少写一个 key 就会被静默丢弃而不报错。
-        "merged_shares": 0.0,
-    }
+    return GridPosition().to_state()
+
 
 
 # -----------------------------------------------------------------------------
@@ -198,11 +286,10 @@ def _triggers(state: dict, price: float, step_pct: float, tp_pct: float,
       open_price / add_price / tp_price: float|None
     """
     price = float(price)
-    in_cycle = bool(state.get("in_cycle", False))
-    entries: list[dict] = list(state.get("entries", []))
-    window: list[float] = list(state.get("last_prices", []))
-    if not window and state.get("last_120d_min") is not None:
-        window = [float(state["last_120d_min"])]
+    position = GridPosition.from_state(state)
+    in_cycle = position.in_cycle
+    entries: list[dict] = position.entries
+    window: list[float] = position.last_prices
 
     out: dict = {
         "signal": None,
@@ -353,36 +440,18 @@ def advance_one_day(
         (new_state, suggestion), suggestion ∈ {"open", "add", "tp", None}。
         `suggestion` 是**建议提交哪种 op**, 不是"已成交"。
     """
-    in_cycle = bool(state.get("in_cycle", False))
-    entries: list[dict] = list(state.get("entries", []))
-    legacy_min = state.get("last_120d_min")          # 老 state 的单值兜底
-    last_prices: list[float] = list(state.get("last_prices", []))
-    if not last_prices and legacy_min is not None:
-        last_prices = [float(legacy_min)]
-    cum_realized = float(state.get("cum_realized", 0.0))
-    merged_shares = float(state.get("merged_shares", 0.0))
-    ops: list[dict] = list(state.get("ops", []))     # 只读回写, 永不追加
+    position = GridPosition.from_state(state)
 
     # 建议基于**追加今天之前**的窗口算
-    view = {"in_cycle": in_cycle, "entries": entries,
-            "last_prices": last_prices, "last_120d_min": legacy_min}
-    suggestion = _triggers(view, float(price), step_pct, tp_pct, tp_basis)["signal"]
+    suggestion = _triggers(position.to_state(), float(price),
+                           step_pct, tp_pct, tp_basis)["signal"]
 
     # 唯一的副作用: 滚动窗口
-    last_prices.append(float(price))
-    if len(last_prices) > lookback:
-        last_prices = last_prices[-lookback:]
+    position.last_prices.append(float(price))
+    if len(position.last_prices) > lookback:
+        position.last_prices = position.last_prices[-lookback:]
 
-    # ⚠️ 固定 6 key 字面量 —— 少写一个 key 会被静默丢弃
-    new_state = {
-        "in_cycle": in_cycle,
-        "entries": entries,
-        "last_prices": last_prices,
-        "cum_realized": cum_realized,
-        "ops": ops,
-        "merged_shares": merged_shares,
-    }
-    return new_state, suggestion
+    return position.to_state(), suggestion
 
 
 # -----------------------------------------------------------------------------
@@ -403,11 +472,12 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
     weights). They are reported here only so the caller can fold them into
     the portfolio — `src/domain/portfolio/rebalance_policy.py:evaluate` does exactly that.
     """
-    entries = state.get("entries", [])
-    in_cycle = bool(state.get("in_cycle", False))
+    position = GridPosition.from_state(state)
+    entries = position.entries
+    in_cycle = position.in_cycle
     # 份额先定到 2 位小数, 再由它算市值 —— 这样页面/邮件上"多少份"和
     # "多少钱"是自洽的 (用户拿 3.89 份 × 103 验算能对上 400.67)。
-    merged_shares = ShareCount(float(state.get("merged_shares", 0.0) or 0.0))
+    merged_shares = ShareCount(position.merged_shares)
     merged_value = Money(merged_shares * float(current_price))
     if in_cycle and entries:
         total_shares = sum(e["shares"] for e in entries)
@@ -458,7 +528,7 @@ def manual_op(state: dict, op: str, today: str,
         touched. `entries[-1].price` becomes the new "加仓参考价" for the
         next 建议加仓.
       - tp:   in_cycle must be True. Applies the "sell cost only" rule
-        (split_take_profit): sell back exactly the principal, merge the
+        (cost_only_exit): sell back exactly the principal, merge the
         remainder into the rebalance portfolio, set in_cycle=False,
         clear entries. `last_prices` is NOT touched.
     """
@@ -471,55 +541,46 @@ def manual_op(state: dict, op: str, today: str,
     # cycle's own invested amount), so any value (including 0) is accepted.
     if op in ("open", "add") and not (shares > 0):
         raise ValueError(f"{op} requires shares > 0, got {shares}")
-    in_cycle = bool(state.get("in_cycle", False))
-    if op == "open" and in_cycle:
+    position = GridPosition.from_state(state)
+    if op == "open" and position.in_cycle:
         raise ValueError("open requires no open cycle (use tp to close first)")
-    if op in ("add", "tp") and not in_cycle:
+    if op in ("add", "tp") and not position.in_cycle:
         raise ValueError(f"{op} requires an open cycle")
 
-    new_state = {
-        "in_cycle": in_cycle,
-        "entries": list(state.get("entries", [])),
-        "last_prices": list(state.get("last_prices", [])),
-        "cum_realized": float(state.get("cum_realized", 0.0)),
-        "ops": list(state.get("ops", [])),
-        "merged_shares": float(state.get("merged_shares", 0.0)),
-    }
-
     if op in ("open", "add"):
-        new_state["entries"].append({
+        position.entries.append({
             "date": today, "price": float(price), "shares": float(shares),
         })
-        new_state["in_cycle"] = True
+        position.in_cycle = True
         if op == "open":
-            new_state["last_prices"].append(float(price))
-            if len(new_state["last_prices"]) > GRID_LOOKBACK:
-                new_state["last_prices"] = new_state["last_prices"][-GRID_LOOKBACK:]
-        new_state["ops"].append({
+            position.last_prices.append(float(price))
+            if len(position.last_prices) > GRID_LOOKBACK:
+                position.last_prices = position.last_prices[-GRID_LOOKBACK:]
+        position.ops.append({
             "date": today, "op": op, "source": "manual",
             "price": float(price), "shares": float(shares),
             "note": note,
         })
     else:  # tp
-        entries = new_state["entries"]
+        entries = position.entries
         total_shares = sum(e["shares"] for e in entries)
         total_invested = sum(e["shares"] * e["price"] for e in entries)
-        split = split_take_profit(total_shares, total_invested, float(price))
-        new_state["merged_shares"] += split["merged_shares"]
+        split = cost_only_exit(total_shares, total_invested, float(price))
+        position.merged_shares += split.merged_shares
         # Capture per-event exit stats BEFORE clearing `entries`.
-        new_state["ops"].append({
+        position.ops.append({
             "date": today, "op": "tp", "source": "manual",
-            "price": float(price), "shares": float(split["shares_sold"]),
+            "price": float(price), "shares": float(split.shares_sold),
             "note": note,
-            "pnl": float(split["pnl"]),
+            "pnl": float(split.pnl),
             "num_buys_exited": len(entries),
             # "出场"的全部份额 = 卖出的 + 归并出去的 (== 原持仓)
-            "total_shares_exited": float(split["shares_sold"]
-                                         + split["merged_shares"]),
-            "shares_to_merge": float(split["merged_shares"]),
+            "total_shares_exited": float(split.shares_sold
+                                         + split.merged_shares),
+            "shares_to_merge": float(split.merged_shares),
         })
-        new_state["cum_realized"] += split["pnl"]
-        new_state["entries"] = []
-        new_state["in_cycle"] = False
+        position.cum_realized += split.pnl
+        position.entries = []
+        position.in_cycle = False
 
-    return new_state
+    return position.to_state()
