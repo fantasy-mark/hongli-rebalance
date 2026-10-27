@@ -204,8 +204,72 @@ def save_history(history: list[dict]) -> None:
     )
 
 
+# -----------------------------------------------------------------------------
+# Write path (Phase 5c-2) —— 显式路径 + 严格读
+# -----------------------------------------------------------------------------
+#
+# ⚠️ 上面那些 `load_*` 是**宽松**的: 文件坏了只 WARN, 然后当空账本继续跑。
+# 每日快照可以这样 (跑砸了只是今天的记录没出来), **写路径不行** ——
+# 一个坏掉的 trades.json 被当成空账本, 重放的结果就是「持仓全没了」,
+# 而用户只是提交了一笔新交易。网格状态同理: 静默清空 = 丢掉网格历史。
+#
+# 所以写路径用下面这组:
+#   read_*   严格 —— 坏了就抛错, 绝不静默清空
+#   write_*  显式传路径 —— 脚本的路径是可替换的模块全局 (测试要指到临时目录)
+#
+# ⚠️ 尾随换行的约定按**存量文件**逐字节保持 (改它 = 一行假 diff):
+#   trades.json / holdings.json  带尾随换行
+#   grid_state.json / history.json 不带
+
+
+def read_trades(path: Path) -> list[dict]:
+    """严格读账本 —— 文件坏了**抛错**, 不当空账本。
+
+    写路径专用。每日快照那条路仍然用宽松的 `load_trades()`。
+
+    ⚠️ 这里**不**过滤掉非 dict 的行 —— 账本是只追加的事实源, 悄悄丢掉一行
+    就是静默改历史。坏行让重放去报错 (整批不写盘), 比悄悄吞掉强。
+    """
+    if not path.exists():
+        return []
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as ex:
+        raise ValueError(f"existing trades.json unreadable: {ex}") from ex
+    return list(doc.get("trades", []))
+
+
+def read_grid_state(path: Path) -> dict:
+    """严格读网格状态 —— 文件坏了**抛错** (静默清空 = 丢掉网格历史)。"""
+    if not path.exists():
+        return {}
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as ex:
+        raise ValueError(f"existing grid_state.json unreadable: {ex}") from ex
+    if not isinstance(state, dict):
+        raise ValueError(
+            f"grid_state.json root must be an object, got {type(state).__name__}")
+    return state
+
+
+def write_json(path: Path, doc: object, *, trailing_newline: bool = False) -> None:
+    """原子写 (temp + replace) —— 写失败时**原地那份仍然有效**。
+
+    ⚠️ `trailing_newline` 只是为了跟存量文件逐字节一致 (见上面的约定表) ——
+    两条写盘路径差一个换行, diff 里就是一行噪声。
+    """
+    text = json.dumps(doc, ensure_ascii=False, indent=2, default=str)
+    if trailing_newline:
+        text += "\n"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 __all__ = [
     "ROOT", "HOLDINGS", "TRADES", "HISTORY", "GRID_STATE", "GRID_CHART",
     "read_holdings", "load_trades", "load_grid_state", "save_grid_state",
     "load_history", "save_history",
+    "read_trades", "read_grid_state", "write_json",
 ]

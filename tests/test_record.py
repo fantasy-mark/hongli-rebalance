@@ -27,6 +27,8 @@ if str(ROOT) not in sys.path:
 import pandas as pd
 
 from src.application import config as app_config
+from src.application import apply_grid_op as grid_op_app
+from src.application import apply_trade as trade_app
 from src.application import daily_snapshot as snapshot
 from src.domain.events import domain_events as events
 from src.domain.grid import config as grid_config
@@ -3653,6 +3655,161 @@ def test_judge_rebalance_emits_exactly_one_rebalance_triggered():
     assert run.snapshot_basis.triggered is True
     # 记录里的持仓是组合的输出 (含归并字段)
     assert run.positions[0].get("total_shares") is not None
+
+
+# -----------------------------------------------------------------------------
+# Phase 5c-2 —— 写路径的用例层 (apply_grid_op / apply_trade)
+# -----------------------------------------------------------------------------
+
+def test_write_path_vocabularies_come_from_the_domain():
+    """D10: 词表只有一份 —— op 来自 `TriggerLevel`, side 来自 `TradeSide`。
+
+    以前 `scripts/apply_grid.py` 自己抄了一份 `VALID_OPS = {"open","add","tp"}`,
+    `scripts/apply_holdings.py` 自己抄了一份 8 个 side —— 改一处漏一处。
+    """
+    assert grid_op_app.VALID_OPS == frozenset(
+        lvl.value for lvl in grid_trigger_policy.TriggerLevel)
+    assert trade_app.VALID_SIDES == frozenset(
+        s.value for s in ledger.TradeSide)
+    # 成交两类 / 现金六类 —— 也从领域层投影
+    assert trade_app.ETF_SIDES == frozenset({"buy", "sell"})
+    assert len(trade_app.CASH_SIDES) == 6
+
+
+def test_write_path_modules_stay_stdlib_only():
+    """`scripts/apply_*.py` 在**不装** pandas/akshare 的 job 里跑 ——
+    用例层 (以及它 import 的整条链) 都不能拉起重依赖。"""
+    heavy = ("pandas", "numpy", "akshare", "requests")
+    bad = []
+    for rel in ("src/application/apply_grid_op.py",
+                "src/application/apply_trade.py"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for mod in heavy:
+            if f"import {mod}" in text:
+                bad.append(f"{rel}: {mod}")
+    assert not bad, f"写路径的用例层必须 stdlib-only: {bad}"
+
+
+def test_the_write_path_scripts_are_thin_shims():
+    """规则不在脚本里 —— 脚本只是 CLI 外壳。"""
+    grid = (ROOT / "scripts" / "apply_grid.py").read_text(encoding="utf-8")
+    holdings = (ROOT / "scripts" / "apply_holdings.py").read_text(encoding="utf-8")
+    for name in ("def inline_manual_op", "def _validate_op", "def _coerce_number"):
+        assert name not in grid, f"scripts/apply_grid.py 里还有 {name} —— 规则住在用例层"
+    for name in ("def inline_apply", "def inline_rebuild",
+                 "def _validate_trade", "def _assign_ids"):
+        assert name not in holdings, \
+            f"scripts/apply_holdings.py 里还有 {name} —— 规则住在用例层"
+    assert "src.application.apply_grid_op" in grid
+    assert "src.application.apply_trade" in holdings
+
+
+def test_apply_grid_ops_writes_the_state_and_summarizes():
+    """写路径的 happy path: 状态落盘 + 摘要 + 领域事件。"""
+    import datetime
+    with tempfile.TemporaryDirectory() as td:
+        state_path = Path(td) / "grid_state.json"
+        state_path.write_text(json.dumps({
+            "黄金ETF博时": {"in_cycle": False, "entries": [],
+                           "last_prices": [8.4, 8.3], "cum_realized": 0.0,
+                           "ops": [], "merged_shares": 0.0},
+        }, ensure_ascii=False), encoding="utf-8")
+        payload = {"schema": "grid-ops-v1", "ops": [
+            {"date": "2026-10-20", "code": "159937", "op": "open",
+             "price": 8.12, "shares": 1231.5, "note": "manual open"}]}
+        batch = grid_op_app.apply_grid_ops(
+            payload, state_path, today=datetime.date(2026, 10, 23),
+            allowed_codes={"159937": "黄金ETF博时"})
+        assert len(batch.summary) == 1
+        assert batch.summary[0]["after_in_cycle"] is True
+        assert batch.summary[0]["num_entries_after"] == 1
+        written = json.loads(state_path.read_text(encoding="utf-8"))
+        assert written["黄金ETF博时"]["in_cycle"] is True
+        assert written["黄金ETF博时"]["entries"][0]["price"] == 8.12
+        assert [e.type for e in batch.events] == ["GridCycleOpened"]
+
+
+def test_apply_grid_ops_rejects_the_whole_batch_and_writes_nothing():
+    """整批 all-or-nothing: 一条不合法 → 整批拒绝, 文件**一个字节都不动**。"""
+    import datetime
+    with tempfile.TemporaryDirectory() as td:
+        state_path = Path(td) / "grid_state.json"
+        original = json.dumps({
+            "黄金ETF博时": {"in_cycle": False, "entries": [],
+                           "last_prices": [8.4, 8.3], "cum_realized": 0.0,
+                           "ops": [], "merged_shares": 0.0},
+        }, ensure_ascii=False, indent=2)
+        state_path.write_text(original, encoding="utf-8")
+        payload = {"schema": "grid-ops-v1", "ops": [
+            {"date": "2026-10-20", "code": "159937", "op": "open",
+             "price": 8.12, "shares": 100.0},
+            {"date": "2026-10-20", "code": "159937", "op": "add",
+             "price": -1.0, "shares": 100.0},
+        ]}
+        try:
+            grid_op_app.apply_grid_ops(
+                payload, state_path, today=datetime.date(2026, 10, 23),
+                allowed_codes={"159937": "黄金ETF博时"})
+        except grid_op_app.GridOpError as ex:
+            assert "op 1" in str(ex), f"错误消息要指明是哪一条: {ex}"
+        else:
+            raise AssertionError("批次里有一条不合法 → 整批必须拒绝")
+        assert state_path.read_text(encoding="utf-8") == original
+
+
+def test_apply_trade_rejects_a_ledger_the_daily_snapshot_would_crash_on():
+    """买入日期**早于**入金 → 中途现金为负。
+
+    旧脚本只查整批末尾 → 放行; 然后**每日快照崩掉** (它走领域层重放,
+    逐笔查现金池)。现在写路径与读路径同一把尺子。
+    """
+    import datetime
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        trades_path = td / "trades.json"
+        holdings_path = td / "holdings.json"
+        trades_path.write_text(json.dumps({
+            "_schema": "trades-v1",
+            "trades": [{"side": "deposit_rebalance", "date": "2026-10-12",
+                        "note": "", "amount": 20000.0,
+                        "id": "2026-10-12-deposit_rebalance-001"}],
+        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        payload = {"schema": "trades-v1", "trades": [
+            {"date": "2026-10-11", "side": "buy", "code": "515180",
+             "shares": 1000, "price": 5.0}]}
+        try:
+            trade_app.apply_trades(
+                payload, trades_path, holdings_path,
+                today=datetime.date(2026, 10, 23),
+                allowed_codes={"515180": "红利ETF易方达"},
+                name_lookup={"515180": "红利ETF易方达"})
+        except trade_app.TradeError:
+            pass
+        else:
+            raise AssertionError("中途现金为负的账本必须被拒 —— 它会让每日快照崩")
+        assert not holdings_path.exists()
+        assert len(json.loads(
+            trades_path.read_text(encoding="utf-8"))["trades"]) == 1
+
+
+def test_write_path_and_daily_path_replay_the_ledger_identically():
+    """写路径的重放 == 每日快照的重放 (`src/domain/ledger/ledger.py`)。"""
+    trades = [
+        {"side": "deposit_rebalance", "date": "2026-10-12", "note": "",
+         "amount": 10000.0},
+        {"side": "buy", "date": "2026-10-13", "note": "", "code": "515180",
+         "shares": 1000.0, "price": 1.5, "fee": 0.0},
+        {"side": "sell", "date": "2026-10-14", "note": "", "code": "515180",
+         "shares": 400.0, "price": 1.6, "fee": 0.0},
+    ]
+    names = {"515180": "红利ETF易方达"}
+    exp_pos, exp_cr, exp_cg = ledger.rebuild_holdings_from_trades(
+        trades, name_lookup=names)
+    batch = trade_app.apply_batch(trades, [], name_lookup=names)
+    assert batch.cash_rebalance == exp_cr
+    assert batch.cash_grid == exp_cg
+    assert [(p["code"], p["shares"]) for p in batch.positions] == \
+           [(p["code"], p["shares"]) for p in exp_pos]
 
 
 def test_main():

@@ -13,24 +13,25 @@ payload on argv[1] with shape:
       ]
     }
 
-For each op, the math is run via `src/domain/grid/grid_position.py:manual_op` — the **single**
-implementation of the grid rules, so the workflow doesn't need to install
-pandas/akshare (src/domain/grid/grid_position.py's module level only imports os/typing; pandas
-is a local import inside run_compound_grid). The take-profit rule: a `tp`
-sells only `total_invested / price` shares (recovering exactly the
-principal) and merges the remainder into the rebalance portfolio
-(`merged_shares`), so realized P&L is 0 on a normal exit. State is read from
-data/grid_state.json, mutated in memory, and written back atomically.
+⚠️ This file is now a **thin CLI shell** (Phase 5c-2). The use case lives in
+`src/application/apply_grid_op.py` (validate → apply → persist), and the grid
+rules live in `src/domain/grid/*` — the **single** implementation, so the
+workflow doesn't need to install pandas/akshare (src/domain/grid/grid_position.py's
+module level only imports os/typing; pandas is a local import inside
+run_compound_grid). The take-profit rule: a `tp` sells only
+`total_invested / price` shares (recovering exactly the principal) and merges
+the remainder into the rebalance portfolio (`merged_shares`), so realized P&L
+is 0 on a normal exit.
 
 ⚠️ This is the **only** live path for grid positions — the engine itself
 no longer trades (it only reports suggestions).
 
-Validation rules:
+Validation rules (owned by `src/application/apply_grid_op.py`):
   - schema == "grid-ops-v1"
   - len(ops) <= MAX_OPS
-  - per-op field rules (see _validate_op)
+  - per-op field rules (see validate_op)
   - date is ISO yyyy-mm-dd, not in the future (today + 1 day tolerated)
-  - op must be in {open, add, tp}
+  - op must be in {open, add, tp} (the vocabulary of `TriggerLevel`)
   - code must be in ALLOWED_CODES whitelist
   - price > 0; for open/add: shares > 0; tp: shares is ignored
   - open requires no in_cycle; add/tp require in_cycle=True
@@ -46,19 +47,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 GRID_STATE = ROOT / "data" / "grid_state.json"
 
-# 复用 src/domain/grid/grid_position.py 的唯一实现。src/domain/grid/grid_position.py 模块级只 import os/typing
-# (pandas 是 run_compound_grid 里的局部 import) → 仍然是 stdlib-only,
-# workflow 不需要装 pandas/akshare。
+# 用例层 + 领域层都是 stdlib-only (pandas 是 run_compound_grid 里的局部 import)
+# → workflow 不需要装 pandas/akshare。
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from src.domain.events.domain_events import EventStream  # noqa: E402
+from src.application.apply_grid_op import (  # noqa: E402
+    MAX_OPS,
+    SCHEMA,
+    VALID_OPS,
+    GridOpError,
+    GridOpBatch,
+    apply_grid_ops,
+    inline_manual_op,
+)
+from src.domain.events.domain_events import EventStream  # noqa: E402,F401
 from src.domain.grid.exit_policy import ExitAtCost, cost_only_exit  # noqa: E402,F401
 from src.domain.grid.grid_position import manual_op, split_take_profit  # noqa: E402,F401
-from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402
+from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402,F401
 # cost_only_exit / ExitAtCost 是出场规则的**本体** (src/domain/grid/exit_policy.py);
 # split_take_profit 是兼容别名 (返回旧版的 dict 形状), 保留是为了既有 import 不断。
 # AssetCode / TradingDate 是**代码格式与日期格式的唯一实现** (以前这里跟
 # apply_holdings.py 各带一份正则, 改一处漏一处)。
+# `inline_manual_op` 从用例层转出来 —— 既有调用方与测试从这里 import。
 
 # Mirror scripts/apply_holdings.py — same whitelist as src/domain/portfolio/asset_universe.py:ETF_DEFS.
 ALLOWED_CODES = {
@@ -70,9 +80,6 @@ ALLOWED_CODES = {
 NAME_LOOKUP = ALLOWED_CODES  # code -> Chinese display name (used as state key)
 CODE_TO_NAME = ALLOWED_CODES
 
-MAX_OPS = 20
-VALID_OPS = {"open", "add", "tp"}
-
 
 def fail(msg: str) -> None:
     print(f"ERROR {msg}", file=sys.stderr)
@@ -83,103 +90,37 @@ def fail(msg: str) -> None:
 
 
 # -----------------------------------------------------------------------------
-# Pure-Python mutator (thin wrapper over src/domain/grid/grid_position.py:manual_op)
+# Echo
 # -----------------------------------------------------------------------------
 
-def inline_manual_op(state: dict, op: str, today: str,
-                     price: float, shares: float,
-                     note: str = "", asset: str = "", code: str = "",
-                     events: EventStream | None = None) -> tuple[dict, float]:
-    """Apply a manual grid operation. Returns (new_state, pnl_delta).
-
-    Thin wrapper over `src.domain.grid.grid_position.manual_op` — **单一实现**, 不再复制规则。
-    保留 (state, pnl_delta) 的返回形状, 兼容既有调用方与测试。
-
-    For `tp` the "sell cost only" rule applies (see cost_only_exit):
-    pnl_delta is 0 on a normal above-cost exit, because only the principal
-    is sold and the remainder is merged into the rebalance portfolio
-    (`merged_shares`). It is negative only if the user exits BELOW cost,
-    where we sell out and book the loss. For `open`/`add` it is 0.
-
-    `events` (optional, Phase 5b) — 顺带发出 `GridCycleOpened` /
-    `GridLayerAdded` / `GridCycleClosed` / `MergedSharesTransferred`。
-
-    Raises ValueError on precondition failure.
-    """
-    new_state = manual_op(state, op=op, today=today, price=price,
-                          shares=shares, note=note, asset=asset, code=code,
-                          events=events)
-    pnl_delta = 0.0
-    if op == "tp":
-        pnl_delta = float(new_state["ops"][-1].get("pnl", 0.0))
-    return new_state, pnl_delta
-
-
-# -----------------------------------------------------------------------------
-# Validation
-# -----------------------------------------------------------------------------
-
-def _coerce_number(v, name: str, allow_zero: bool = False) -> float:
+def _echo(batch: GridOpBatch) -> None:
+    """把这一批的结果打印出来 —— 给人看的。"""
     try:
-        n = float(v)
-    except (ValueError, TypeError):
-        fail(f"{name} is not a number: {v!r}")
-    if n < 0 or (not allow_zero and n <= 0):
-        fail(f"{name} must be > 0, got {n}")
-    return n
-
-
-def _validate_op(op: dict, idx: int, today: datetime.date) -> dict:
-    if not isinstance(op, dict):
-        fail(f"op {idx}: not an object")
-    kind = str(op.get("op", "")).strip()
-    if kind not in VALID_OPS:
-        fail(f"op {idx}: op must be one of {sorted(VALID_OPS)}, got {kind!r}")
-    raw_date = str(op.get("date", "")).strip()
-    try:
-        trade_date = TradingDate(raw_date)
+        rel = GRID_STATE.relative_to(ROOT)
     except ValueError:
-        fail(f"op {idx}: date must be YYYY-MM-DD, got {raw_date!r}")
-    if trade_date > today:
-        # Tolerate date == today+1d (timezone buffer)
-        if trade_date > today + datetime.timedelta(days=1):
-            fail(f"op {idx}: date {raw_date} is in the future (today={today})")
-    raw_code = str(op.get("code", "")).strip()
-    try:
-        code = AssetCode(raw_code)
-    except ValueError:
-        fail(f"op {idx}: code must be 6 digits, got {raw_code.split('.')[0]!r}")
-    if code not in ALLOWED_CODES:
-        fail(f"op {idx}: code {code} not in whitelist; allowed: "
-             f"{sorted(ALLOWED_CODES)}")
-    price = _coerce_number(op.get("price"), f"op {idx}.price")
-    note = str(op.get("note", "") or "").strip()
-    out = {"op": kind, "date": trade_date.isoformat(), "code": code,
-           "price": price, "note": note}
-    if kind in ("open", "add"):
-        out["shares"] = _coerce_number(op.get("shares"), f"op {idx}.shares")
-    else:  # tp
-        # tp shares is ignored; accept any value
-        sh_raw = op.get("shares", 0.0)
-        try:
-            out["shares"] = float(sh_raw) if sh_raw not in (None, "") else 0.0
-        except (ValueError, TypeError):
-            fail(f"op {idx}: shares must be a number, got {sh_raw!r}")
-    return out
-
-
-# -----------------------------------------------------------------------------
-# Persistence
-# -----------------------------------------------------------------------------
-
-def _atomic_write(path: Path, doc: dict) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    # 不加尾随换行 —— 与 src/infrastructure/json_repositories.py:save_grid_state 同一口径, 否则两条
-    # 写盘路径会互相制造「只有一行之差」的假 diff。
-    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2,
-                              default=str),
-                   encoding="utf-8")
-    tmp.replace(path)
+        rel = GRID_STATE
+    # ⚠️ "across N asset(s)" 的 N 跟 op 数一样 —— 这是**旧脚本就有的**措辞
+    # (它数的是 summary 行数, 也就是 op 数)。保留原样, 别在重构里改文案。
+    n_ops = len(batch.summary)
+    print(f"OK wrote {rel}: {n_ops} op(s) applied across {n_ops} asset(s)")
+    for s in batch.summary:
+        op_kind = s["op"]
+        if op_kind == "tp":
+            print(f"  - [{s['date']}] {s['op']:<5} {s['code']} {s['name']} @ "
+                  f"CNY {s['price']:.4f}  cum_realized "
+                  f"{s['before_cum_realized']:.2f} -> {s['after_cum_realized']:.2f} "
+                  f"(P&L: CNY {s['pnl_delta']:+.2f})  note={s['note']!r}")
+        else:
+            print(f"  - [{s['date']}] {s['op']:<5} {s['code']} {s['name']} @ "
+                  f"CNY {s['price']:.4f} x {s['shares']:.0f}  "
+                  f"in_cycle={s['after_in_cycle']}  entries={s['num_entries_after']}  "
+                  f"note={s['note']!r}")
+    # 领域事件摘要 (Phase 5b) —— 「这一批操作到底改了什么」。
+    print(f"  events: {batch.events.summary_line()}")
+    for e in batch.events:
+        if e.type == "MergedSharesTransferred":
+            print(f"    ↳ 归并移交 {e.code} {e.shares:,.2f} 份 "
+                  f"(provenance={e.provenance})")
 
 
 # -----------------------------------------------------------------------------
@@ -197,106 +138,17 @@ def main() -> None:
     if not isinstance(payload, dict):
         fail(f"payload must be a JSON object, got {type(payload).__name__}")
 
-    schema = payload.get("schema", "")
-    if schema != "grid-ops-v1":
-        fail(f"schema mismatch: only 'grid-ops-v1' accepted, got {schema!r}")
-
-    raw_ops = payload.get("ops", [])
-    if not isinstance(raw_ops, list):
-        fail(f"ops must be a JSON array, got {type(raw_ops).__name__}")
-    if len(raw_ops) > MAX_OPS:
-        fail(f"too many ops ({len(raw_ops)} > {MAX_OPS})")
-    if not raw_ops:
-        fail("no ops to apply")
-
-    today = datetime.date.today()
-    cleaned: list[dict] = []
-    for i, o in enumerate(raw_ops):
-        cleaned.append(_validate_op(o, i, today))
-
-    # Read existing grid_state.json
-    if GRID_STATE.exists():
-        try:
-            state = json.loads(GRID_STATE.read_text(encoding="utf-8"))
-        except Exception as ex:
-            fail(f"existing grid_state.json unreadable: {ex}")
-    else:
-        state = {}
-    if not isinstance(state, dict):
-        fail(f"grid_state.json root must be an object, got {type(state).__name__}")
-
-    # Apply each op in order, mutating the asset state for its 6-digit code.
-    # Note: multiple ops in one batch for the same asset are applied
-    # sequentially — the second op sees the state left by the first.
-    summary: list[dict] = []
-    events = EventStream()
-    for o in cleaned:
-        name = CODE_TO_NAME[o["code"]]
-        # Fresh asset if missing
-        if name not in state or not isinstance(state[name], dict):
-            state[name] = {
-                "in_cycle": False, "entries": [],
-                "last_prices": [], "cum_realized": 0.0,
-                "ops": [],
-                "merged_shares": 0.0,  # 归并份额, 止盈时并入再平衡持仓
-            }
-        # Compat: legacy last_120d_min → seed last_prices with it
-        if not state[name].get("last_prices") and state[name].get("last_120d_min") is not None:
-            state[name]["last_prices"] = [float(state[name]["last_120d_min"])]
-
-        before_in_cycle = bool(state[name].get("in_cycle", False))
-        before_cum = float(state[name].get("cum_realized", 0.0))
-        before_entries = len(state[name].get("entries", []))
-
-        try:
-            new_asset_state, pnl_delta = inline_manual_op(
-                state[name], op=o["op"], today=o["date"],
-                price=o["price"], shares=o.get("shares", 0.0),
-                note=o["note"], asset=name, code=o["code"], events=events,
-            )
-        except ValueError as ex:
-            fail(f"op {len(summary)} ({o['op']} {o['code']}): {ex}")
-
-        state[name] = new_asset_state
-        summary.append({
-            "code": o["code"], "name": name, "op": o["op"],
-            "date": o["date"], "price": o["price"], "shares": o.get("shares", 0.0),
-            "note": o["note"],
-            "before_in_cycle": before_in_cycle,
-            "after_in_cycle": bool(new_asset_state["in_cycle"]),
-            "before_cum_realized": before_cum,
-            "after_cum_realized": float(new_asset_state["cum_realized"]),
-            "num_entries_after": len(new_asset_state["entries"]),
-            "pnl_delta": pnl_delta,
-        })
-
-    # Persist
-    _atomic_write(GRID_STATE, state)
-
-    # Echo
+    # 用例层: 校验整批 → 读盘 → 应用 → 写盘 (整批 all-or-nothing)
     try:
-        rel = GRID_STATE.relative_to(ROOT)
-    except ValueError:
-        rel = GRID_STATE
-    print(f"OK wrote {rel}: {len(cleaned)} op(s) applied across {len(summary)} asset(s)")
-    for s in summary:
-        op_kind = s["op"]
-        if op_kind == "tp":
-            print(f"  - [{s['date']}] {s['op']:<5} {s['code']} {s['name']} @ "
-                  f"CNY {s['price']:.4f}  cum_realized "
-                  f"{s['before_cum_realized']:.2f} -> {s['after_cum_realized']:.2f} "
-                  f"(P&L: CNY {s['pnl_delta']:+.2f})  note={s['note']!r}")
-        else:
-            print(f"  - [{s['date']}] {s['op']:<5} {s['code']} {s['name']} @ "
-                  f"CNY {s['price']:.4f} x {s['shares']:.0f}  "
-                  f"in_cycle={s['after_in_cycle']}  entries={s['num_entries_after']}  "
-                  f"note={s['note']!r}")
-    # 领域事件摘要 (Phase 5b) —— 「这一批操作到底改了什么」。
-    print(f"  events: {events.summary_line()}")
-    for e in events:
-        if e.type == "MergedSharesTransferred":
-            print(f"    ↳ 归并移交 {e.code} {e.shares:,.2f} 份 "
-                  f"(provenance={e.provenance})")
+        batch = apply_grid_ops(
+            payload, GRID_STATE,
+            today=datetime.date.today(),
+            allowed_codes=ALLOWED_CODES,
+        )
+    except GridOpError as ex:
+        fail(str(ex))
+
+    _echo(batch)
 
 
 if __name__ == "__main__":

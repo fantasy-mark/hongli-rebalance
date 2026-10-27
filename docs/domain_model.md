@@ -12,7 +12,8 @@
 > **重构进度**（§11.2 有各阶段的详细记录）：
 > Phase 0 ✅ 立柱 · Phase 1 ✅ 值对象 · Phase 2 ✅ 网格聚合显式化 ·
 > Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
-> Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身）。
+> Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身
+> —— 5c-1 每日快照 · 5c-2 写路径）。
 > 各阶段的「落地情况」见 §11.1.1 ~ §11.1.7。
 
 ---
@@ -695,13 +696,22 @@ src/
       exit_policy.py            ✅ Phase 2 —— ExitAtCost / cost_only_exit
       advisor.py                ✅ Phase 2b —— GridAdvisor → GridSuggestion
       layer_sizing.py           ✅ Phase 3 —— LayerSizingPolicy
+      config.py                 ✅ Phase 5a —— GridConfig（七个网格参数 + from_env，
+                                领域层读环境变量的**唯一**一处）
     events/
-      domain_events.py          ⬜ Phase 5
+      domain_events.py          ✅ Phase 5b —— 九个领域事件 + EventStream
   application/                 ✅ 用例编排
-    daily_snapshot.py           ✅ ← record.py:main()（Phase 5c: 拆成 12 个具名
+    config.py                   ✅ Phase 5a —— AppConfig（threshold_pp + grid），
+                                环境的知识属于**边缘**
+    daily_snapshot.py           ✅ ← record.py:main()（Phase 5c-1: 拆成 12 个具名
                                 用例 + SnapshotRun 上下文）
+    apply_trade.py              ✅ Phase 5c-2 —— 账本写路径的用例
+                                （校验 → 发 id → 重放 → 写盘）
+    apply_grid_op.py            ✅ Phase 5c-2 —— 复合网格写路径的用例
+                                （校验 → 应用 → 写盘）
   infrastructure/              ✅ 适配器
-    json_repositories.py        ✅ 4 个 JSON 文件的读写（原子写）
+    json_repositories.py        ✅ 4 个 JSON 文件的读写（原子写）+ 写路径的
+                                严格读 (read_trades / read_grid_state)
     quote_providers.py          ✅ sina/eastmoney/tencent/akshare 防腐层
     chart_renderer.py           ✅ ← chart.py
   simulation/                  ✅ BC-E 独立上下文
@@ -1240,7 +1250,8 @@ const GRID_CODES_LIST = ["515180", "159937", "511380", "513300"];
 
 #### 11.1.7 Phase 5 落地情况（2026-10-27）
 
-Phase 5 有三件事：显式配置对象、领域事件、应用层瘦身。分三次提交。
+Phase 5 有三件事：显式配置对象、领域事件、应用层瘦身。分四次提交 ——
+5a 配置对象 / 5b 领域事件 / 5c-1 每日快照瘦身 / 5c-2 写路径瘦身。
 
 ##### (a) 5a —— 显式配置对象（D8 收口）
 
@@ -1336,7 +1347,7 @@ class GridConfig:
 | `python -X utf8 -m tests.test_record` | **168/168 通过**（新增 11 个 Phase 5b 测试） |
 | `src/domain/grid/*` + `src/domain/events/*` 仍 **stdlib-only** | ✓ —— `scripts/apply_grid.py` 在不装 pandas/akshare 的 job 里 import 这条链路 |
 
-##### (c) 5c —— 应用层瘦身
+##### (c) 5c-1 —— 应用层瘦身（每日快照）
 
 **改前**：`daily_snapshot.main()` 是一条 ~180 行的直线流程 —— 12 个步骤串在
 一起，中间穿插着十几个互相传递的局部变量（`positions` / `positions_eff` /
@@ -1385,6 +1396,64 @@ emit_step_outputs        写 $GITHUB_OUTPUT
 | 逐字节回归 | **四项全部逐字节相同** —— 把 `daily_snapshot.main()` 的全部 I/O mock 掉（固定价格 / 固定账本 / 固定网格状态），基线（`git stash`）与重构后各跑一次：stdout `6c5da940…`、stderr `ecc7cb6d…`、写出的 history `1e97beb7…`、写出的 grid_state `a83c6596…` —— sha256 全部一致 |
 | `python -X utf8 -m tests.test_record` | **176/176 通过**（新增 8 个 Phase 5c 测试） |
 | 应用层只剩接线 | ✓ —— `test_main_is_pure_wiring` 静态钉住 `main()` 里没有业务算术 |
+
+##### (d) 5c-2 —— 写路径的用例层
+
+5c-1 把**每日快照**拆成了具名用例。5c-2 处理另外两条写路径 ——
+页面提交的两张表单:
+
+| 路径 | 改前 | 改后 |
+|---|---|---|
+| 网格操作 | `scripts/apply_grid.py`（303 行，自带校验 + 复制品 + 写盘） | `src/application/apply_grid_op.py`（273 行用例）+ 155 行的 CLI 外壳 |
+| 交易账本 | `scripts/apply_holdings.py`（366 行，自带校验 + **重放复制品** + 写盘） | `src/application/apply_trade.py`（315 行用例）+ 144 行的 CLI 外壳 |
+
+**用例的形状**（跟 `daily_snapshot` 一致 —— 一串具名步骤，规则一条都不在脚本里）：
+
+```
+apply_grid_op.py                        apply_trade.py
+  validate_batch   校验整批 payload        validate_batch   校验整批 payload
+  apply_batch      顺序应用这一批          assign_ids       服务端发 id
+  apply_grid_ops   校验→读盘→应用→写盘      apply_batch      重放合并后的账本
+                                         apply_trades      校验→读盘→重放→写两份
+```
+
+**三个真正的去重**：
+
+1. **op 词表**（D10）—— `VALID_OPS` 现在是 `TriggerLevel` 的投影，
+   不再是脚本自己抄的 `{"open","add","tp"}`。
+2. **side 词表** —— `VALID_SIDES` 现在是 `TradeSide`（八个）的投影。
+3. **账本重放** —— `scripts/apply_holdings.py` 里那份 `inline_apply` /
+   `inline_rebuild` **删掉了**。它当年抄的注释说「因为 workflow 不装依赖」——
+   那条理由早就过期了（`src/domain/ledger/*` 是 stdlib-only）。
+   现在写路径与每日快照跑**同一份** `src/domain/ledger/ledger.py`。
+
+**一处口径收紧（有意为之）**：不变量 I1「两个现金池都不得为负」在领域层是
+**逐笔**检查，旧脚本是**整批结束后**才查一次。逐笔更严，挡住的是这种账本：
+
+```
+入金 20000 (10-12)  +  买入 1000×5.0 (10-11)   ← 买入日期早于入金
+```
+
+旧脚本放行（整批末尾现金 +13500 ≥ 0），但**每日快照会崩** —— 它走领域层
+重放，重放到那笔买入时现金是 −5000，直接抛错。现在写路径在提交时就拒掉。
+
+**验证**
+
+| 检查 | 结果 |
+|---|---|
+| 逐字节回归 | **17 个场景里 15 个逐字节相同** —— 基线脚本（`git show HEAD:` 抽出来）与重构后各跑一次，比对**退出码 / stdout / stderr / 写出的每一个文件**的 sha256：网格 9 个场景（happy + 8 种拒绝）全部相同；账本 8 个场景（happy / 卖超 / 坏代码 / 老格式 / 六个现金 side / 坏 side）里 6 个相同 |
+| 两处**有意**的差异 | ① 现金为负的报错文案：旧 `cash_rebalance would go negative after this batch: current=-81500.00` → 新 `cash would go negative: rebalance=-81500.00, grid=0.00 (after buy)`（领域层的原话，多了「哪一笔」）；② 「买入早于入金」的场景：旧**放行**（exit 0）→ 新**拒绝**（exit 1，不写盘）—— 见上面的「口径收紧」 |
+| `python -X utf8 -m tests.test_record` | **183/183 通过**（新增 7 个 Phase 5c-2 测试） |
+| 词表只有一份 | ✓ —— `test_write_path_vocabularies_come_from_the_domain` 钉住 `VALID_OPS == TriggerLevel`、`VALID_SIDES == TradeSide` |
+| 脚本是薄壳 | ✓ —— `test_the_write_path_scripts_are_thin_shims` 钉住脚本里**没有** `inline_apply` / `inline_rebuild` / `_validate_op` / `_validate_trade` / `_assign_ids` |
+| 写路径仍 **stdlib-only** | ✓ —— `test_write_path_modules_stay_stdlib_only`；两个脚本在**不装** pandas/akshare 的 job 里跑 |
+| 写路径与读路径同一把尺子 | ✓ —— `test_write_path_and_daily_path_replay_the_ledger_identically` 钉住「写路径重放出的持仓/现金 == 每日快照重放的」 |
+
+**为什么读盘要「严格」**：`json_repositories.load_trades()` 是**宽松**的 ——
+文件坏了只 WARN，然后当空账本继续跑。每日快照可以这样（跑砸了只是今天的
+记录没出来），**写路径不行**：一个坏掉的 `trades.json` 被当成空账本，重放的
+结果就是「持仓全没了」，而用户只是提交了一笔新交易。所以写路径走新的
+`read_trades()` / `read_grid_state()` —— 坏了就抛错，绝不静默清空。
 
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
@@ -1459,9 +1528,13 @@ emit_step_outputs        写 $GITHUB_OUTPUT
 - ✅ **5b 已落地**（2026-10-27）：九个领域事件 + `EventStream`；
   `MergedSharesTransferred` 成为组合吸收归并份额的**唯一**通路（I9 落地）。
   详见 §11.1.7 (b)。
-- ✅ **5c 已落地**（2026-10-27）：`daily_snapshot.main()` 拆成 12 个具名用例 +
+- ✅ **5c-1 已落地**（2026-10-27）：`daily_snapshot.main()` 拆成 12 个具名用例 +
   `SnapshotRun` 上下文；两个评估基准各有名字（`layer_sizing_basis` /
   `snapshot_basis`，D9 收口）；应用层只剩接线。详见 §11.1.7 (c)。
+- ✅ **5c-2 已落地**（2026-10-27）：两条**写路径**也搬进应用层 ——
+  `apply_grid_op.py` / `apply_trade.py`；两个脚本瘦身成 CLI 外壳；
+  op / side 词表改为领域枚举的投影（D10 收口）；账本重放**只剩一份实现**
+  （写路径与每日快照共用 `src/domain/ledger/ledger.py`）。详见 §11.1.7 (d)。
 
 ### 11.3 明确**不要**做的
 
@@ -1488,7 +1561,7 @@ emit_step_outputs        写 $GITHUB_OUTPUT
 | D7 | 网格规则两套实现 | ✅ **已解决**（Phase 3）—— `src/domain/grid/trigger_policy.py:TriggerPolicy` 现在是**生产 + 回测**两条路径**唯一**的判定来源 | 改参数会静默分叉 | ✅ 已解决（§11.1.5）—— `run_compound_grid` 调用 `policy.levels(...)`，并有静态测试防止内联算术回流 |
 | D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | ✅ **已解决**（Phase 5a）—— 参数收进 `src/domain/grid/config.py:GridConfig` 与 `src/application/config.py:AppConfig`；模块级别名保留为**配置对象的投影**；`TriggerPolicy.from_config` / `LayerSizingPolicy.from_config` / `advance_all_grids(config=)` / `run_backtest(threshold_pp=)` 让多套策略在一个进程里并存 | 无法做多策略并存、测试需改环境 | ✅ 已解决（§11.1.7 a）—— `test_env_reads_are_confined_to_the_config_objects` 静态钉住「只有配置对象读环境变量」 |
 | D9 | `evaluate()` 的两段式求值是隐式近似 | ✅ **已解决**（Phase 5c）—— `SnapshotRun.layer_sizing_basis` / `SnapshotRun.snapshot_basis` 各有名字：层额定尺用前者，记录用后者 | 恢复自动行为时会有偏差 | ✅ 已解决（§11.1.7 c）—— `test_size_grid_layer_uses_the_layer_sizing_basis_total` 钉住「层额用的是层额定尺那个数」 |
-| D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | `apply_grid.py` 的 `VALID_OPS` vs `grid_position.py` 的 op 名 | 改一处漏一处 | 提到 `domain/grid` 单一处 |
+| D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | ✅ **已解决**（Phase 5c-2）—— 写路径的 `VALID_OPS` 现在是 `TriggerLevel` 的**投影**，`VALID_SIDES` 是 `TradeSide` 的投影；两份脚本里手抄的词表删掉了 | 改一处漏一处 | ✅ 已解决（§11.1.7 d）—— `test_write_path_vocabularies_come_from_the_domain` 静态钉住 |
 | D11 | 图表永远用完整 `ETF_DEFS`，读不到用户实际持仓 | `src/infrastructure/chart_renderer.py:_load_chart_assets()` 里 `holdings, _ = read_holdings()` —— `read_holdings()` 返回 **3** 个值，解包抛 `ValueError`，被 `except Exception` 吞掉后走 fallback 分支 | 换仓/减仓后图表仍画全部 4 个品种 | 改成 `holdings, _cr, _cg = read_holdings()`（Phase 0 **保持原样**，只搬不改行为；修它会改变图表输出） |
 
 ---
@@ -1509,7 +1582,10 @@ emit_step_outputs        写 $GITHUB_OUTPUT
 - [x] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型（`SimulatedOp` vs `ExecutedOp`）、不同仓储权限（Phase 2b + Phase 3 ✅）；`GridSimulator` 只能产出 `SimulatedOp`，`merge_backtest_ops` 只能写 `source="backtest"` 的行
 - [x] 「规则参数只有一份」在哪里保证？→ `GridConfig` / `AppConfig`（Phase 5a ✅）—— 环境变量**只**在配置对象里读一次；模块级别名（`GRID_STEP_PCT` 等）是配置对象的**投影**；`TriggerPolicy.from_config` / `LayerSizingPolicy.from_config` / `advance_all_grids(config=)` / `run_backtest(threshold_pp=)` 让多套策略并存；`test_env_reads_are_confined_to_the_config_objects` 静态钉住「领域层与回测层不再自己读环境变量」
 - [x] 「记录里那个 total 是哪一个」在哪里保证？→ `SnapshotRun.snapshot_basis`（Phase 5c ✅）—— 层额定尺那次评估是**另一个**字段 `layer_sizing_basis`；两个名字各答一个问题，`test_size_grid_layer_uses_the_layer_sizing_basis_total` 钉住「层额用的是层额定尺那个数」
-- [x] 「应用层没有业务规则」在哪里保证？→ `daily_snapshot.main()` 只调 12 个具名用例（Phase 5c ✅）—— `test_main_is_pure_wiring` 静态钉住（`abs(` / `round(` / `float(` / `min(` / `max(` 一个都不许出现）；`test_main_runs_the_use_cases_in_order` 钉住用例清单与顺序
+- [x] 「应用层没有业务规则」在哪里保证？→ `daily_snapshot.main()` 只调 12 个具名用例（Phase 5c-1 ✅）—— `test_main_is_pure_wiring` 静态钉住（`abs(` / `round(` / `float(` / `min(` / `max(` 一个都不许出现）；`test_main_runs_the_use_cases_in_order` 钉住用例清单与顺序
+- [x] 「写路径的规则只有一份」在哪里保证？→ `src/application/apply_grid_op.py` / `apply_trade.py`（Phase 5c-2 ✅）—— op 词表 = `TriggerLevel` 的投影、side 词表 = `TradeSide` 的投影；两个脚本是**薄壳**（`test_the_write_path_scripts_are_thin_shims` 钉住脚本里没有校验/重放/发 id 的实现）
+- [x] 「写路径与读路径同一把尺子」在哪里保证？→ 写路径重放调用**领域层**的 `src/domain/ledger/ledger.py:rebuild_holdings_from_trades`（Phase 5c-2 ✅）—— 与每日快照 `daily_snapshot.replay_trade_ledger` 同一份实现；`test_write_path_and_daily_path_replay_the_ledger_identically` 钉住「两条路重放出的持仓与现金相同」
+- [x] 「坏掉的账本不会被当成空账本」在哪里保证？→ 写路径走 `json_repositories.read_trades()` / `read_grid_state()`（Phase 5c-2 ✅）—— **严格读**：文件坏了就抛错（整批不写盘）；每日快照仍走宽松的 `load_trades()`（跑砸了只是今天的记录没出来，宁可少一天也别静默清空持仓）
 
 ---
 

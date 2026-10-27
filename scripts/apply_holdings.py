@@ -14,10 +14,15 @@ payload on argv[1] with shape:
 
 Validates and appends the new trades to `data/trades.json`, then rebuilds
 `data/holdings.json` (schema v2, two cash pools) by replaying the full
-ledger. The script intentionally does NOT import the domain layer (the workflow
-doesn't install its deps); all replay logic is inlined as pure stdlib.
+ledger.
 
-Validation rules:
+⚠️ This file is now a **thin CLI shell** (Phase 5c-2). The use case lives in
+`src/application/apply_trade.py` (validate → assign ids → replay → persist),
+and the ledger rules live in `src/domain/ledger/*` — the **single**
+implementation, shared with the daily snapshot. The workflow doesn't install
+the Python deps, so that whole chain is stdlib-only.
+
+Validation rules (owned by `src/application/apply_trade.py`):
   - schema == "trades-v1"
   - len(trades) ≤ MAX_ROWS
   - per-trade field rules per `data/trades.json` schema (see README)
@@ -34,7 +39,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -42,11 +46,22 @@ ROOT = Path(__file__).resolve().parent.parent
 TRADES = ROOT / "data" / "trades.json"
 HOLDINGS = ROOT / "data" / "holdings.json"
 
-# 代码格式与日期格式的唯一实现 (以前这里跟 apply_grid.py 各带一份正则)。
-# identifiers 模块是 stdlib-only → 这个 job 不装任何依赖也能跑。
+# 用例层 + 领域层都是 stdlib-only → 这个 job 不装任何依赖也能跑。
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402
+from src.application.apply_trade import (  # noqa: E402
+    CASH_SIDES,
+    ETF_SIDES,
+    MAX_ROWS,
+    SCHEMA,
+    VALID_SIDES,
+    TradeBatch,
+    TradeError,
+    apply_trades,
+)
+from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402,F401
+# AssetCode / TradingDate 是**代码格式与日期格式的唯一实现** (以前这里跟
+# apply_grid.py 各带一份正则, 改一处漏一处)。
 
 # Mirror src/domain/portfolio/asset_universe.py:ETF_DEFS — whitelist of tradeable codes.
 # Source of truth for "what's tradeable". We don't import the asset universe
@@ -60,22 +75,6 @@ ALLOWED_CODES = {
 }
 NAME_LOOKUP = ALLOWED_CODES  # 6-digit code → Chinese display name
 
-MAX_ROWS = 20
-# 8 valid trade sides — two cash pools (rebalance=real ETF money, grid=virtual).
-# buy/sell always touch cash_rebalance.  transfer_* are inter-pool moves.
-VALID_SIDES = {
-    "buy", "sell",
-    "deposit_rebalance", "deposit_grid",
-    "withdraw_rebalance", "withdraw_grid",
-    "transfer_to_rebalance", "transfer_to_grid",
-}
-ETF_SIDES = {"buy", "sell"}
-CASH_SIDES = {
-    "deposit_rebalance", "deposit_grid",
-    "withdraw_rebalance", "withdraw_grid",
-    "transfer_to_rebalance", "transfer_to_grid",
-}
-
 
 def fail(msg: str) -> None:
     print(f"ERROR {msg}", file=sys.stderr)
@@ -83,169 +82,32 @@ def fail(msg: str) -> None:
 
 
 # -----------------------------------------------------------------------------
-# Pure-Python replay helpers (intentionally duplicated from
-# src/domain/ledger/ledger.py so this script has no external imports beyond stdlib).
+# Echo
 # -----------------------------------------------------------------------------
 
-def inline_apply(state: dict, t: dict) -> None:
-    """In-place: state = {"cash_rebalance": float, "cash_grid": float,
-    "positions": {code: shares}}."""
-    side = t["side"]
-    if side == "deposit_rebalance":
-        state["cash_rebalance"] += float(t["amount"])
-    elif side == "deposit_grid":
-        state["cash_grid"] += float(t["amount"])
-    elif side == "withdraw_rebalance":
-        state["cash_rebalance"] -= float(t["amount"])
-    elif side == "withdraw_grid":
-        state["cash_grid"] -= float(t["amount"])
-    elif side == "transfer_to_grid":
-        amt = float(t["amount"])
-        state["cash_rebalance"] -= amt
-        state["cash_grid"] += amt
-    elif side == "transfer_to_rebalance":
-        amt = float(t["amount"])
-        state["cash_grid"] -= amt
-        state["cash_rebalance"] += amt
-    elif side == "buy":
-        code = str(t["code"])
-        sh = float(t["shares"])
-        px = float(t["price"])
-        fee = float(t.get("fee", 0.0))
-        state["positions"][code] = state["positions"].get(code, 0.0) + sh
-        state["cash_rebalance"] -= sh * px + fee
-    elif side == "sell":
-        code = str(t["code"])
-        sh = float(t["shares"])
-        px = float(t["price"])
-        fee = float(t.get("fee", 0.0))
-        held = state["positions"].get(code, 0.0)
-        if held < sh - 1e-9:
-            fail(f"oversell {code}: held={held:.4f}, sell={sh:.4f}")
-        state["positions"][code] = held - sh
-        state["cash_rebalance"] += sh * px - fee
-    else:
-        fail(f"unknown side: {side!r}")
-    state["cash_rebalance"] = round(state["cash_rebalance"], 2)
-    state["cash_grid"] = round(state["cash_grid"], 2)
-    for c in list(state["positions"].keys()):
-        v = round(state["positions"][c], 2)
-        if v <= 0:
-            del state["positions"][c]
+def _echo(batch: TradeBatch) -> None:
+    """把这一批的结果打印出来 —— 给人看的。"""
+    try:
+        rel_t = TRADES.relative_to(ROOT)
+        rel_h = HOLDINGS.relative_to(ROOT)
+    except ValueError:
+        rel_t, rel_h = TRADES, HOLDINGS
+    print(f"OK wrote {rel_t}: {len(batch.merged)} trades "
+          f"(+{len(batch.new_trades)} new)")
+    print(f"OK wrote {rel_h}: cash_rebalance=CNY {batch.cash_rebalance:.2f}, "
+          f"cash_grid=CNY {batch.cash_grid:.2f}, {len(batch.positions)} positions")
+    for p in batch.positions:
+        print(f"  - {p['name']:<14} ({p['code']}) {p['shares']:>12,}")
+    # Show the new trades that were just appended
+    print("\nNew trades appended:")
+    for t in batch.new_trades:
+        if t["side"] in ("buy", "sell"):
+            print(f"  - {t['id']}  {t['side']:<7} {t['code']}  "
+                  f"{t['shares']:>10} @ CNY {t['price']:.4f}  "
+                  f"date={t['date']}  note={t.get('note','')}")
         else:
-            state["positions"][c] = v
-
-
-def inline_rebuild(trades: list[dict]) -> tuple[dict, float, float]:
-    """Replay `trades`; return (state, cash_rebalance, cash_grid).
-    state['positions'] is {code: shares}; cash_rebalance + cash_grid are
-    tracked separately for the two-pool model.
-    """
-    state: dict = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
-    indexed = list(enumerate(trades))
-    indexed.sort(key=lambda kv: (kv[1].get("date", ""), kv[0]))
-    for _, t in indexed:
-        inline_apply(state, t)
-    return state, state["cash_rebalance"], state["cash_grid"]
-
-
-# -----------------------------------------------------------------------------
-# Validation
-# -----------------------------------------------------------------------------
-
-def _coerce_number(v, name: str, allow_zero: bool = False) -> float:
-    try:
-        n = float(v)
-    except (ValueError, TypeError):
-        fail(f"{name} is not a number: {v!r}")
-    if n < 0 or (not allow_zero and n <= 0):
-        fail(f"{name} must be > 0, got {n}")
-    return n
-
-
-def _validate_trade(t: dict, idx: int, today: datetime.date) -> dict:
-    if not isinstance(t, dict):
-        fail(f"trade {idx}: not an object")
-    side = str(t.get("side", "")).strip()
-    if side not in VALID_SIDES:
-        fail(f"trade {idx}: side must be one of {sorted(VALID_SIDES)}, got {side!r}")
-    raw_date = str(t.get("date", "")).strip()
-    try:
-        trade_date = TradingDate(raw_date)
-    except ValueError:
-        fail(f"trade {idx}: date must be YYYY-MM-DD, got {raw_date!r}")
-    if trade_date > today:
-        # Tolerate date == today+1d (timezone buffer)
-        if trade_date > today + datetime.timedelta(days=1):
-            fail(f"trade {idx}: date {raw_date} is in the future (today={today})")
-    note = str(t.get("note", "") or "").strip()
-
-    out: dict = {"side": side, "date": trade_date.isoformat(), "note": note}
-    if side in ETF_SIDES:
-        raw_code = str(t.get("code", "")).strip()
-        try:
-            code = AssetCode(raw_code)
-        except ValueError:
-            fail(f"trade {idx}: code must be 6 digits, got {raw_code.split('.')[0]!r}")
-        if code not in ALLOWED_CODES:
-            fail(f"trade {idx}: code {code} not in whitelist; allowed: "
-                 f"{sorted(ALLOWED_CODES)}")
-        out["code"] = code
-        out["shares"] = _coerce_number(t.get("shares"), f"trade {idx}.shares")
-        out["price"] = _coerce_number(t.get("price"), f"trade {idx}.price")
-        fee = t.get("fee", 0.0)
-        if fee is None or fee == "":
-            fee = 0.0
-        out["fee"] = _coerce_number(fee, f"trade {idx}.fee", allow_zero=True)
-    else:  # cash sides (deposit/withdraw/transfer)
-        if "code" in t and str(t.get("code", "")).strip():
-            fail(f"trade {idx}: {side} must not have a code")
-        if "shares" in t and str(t.get("shares", "")).strip():
-            fail(f"trade {idx}: {side} must not have shares")
-        if "price" in t and str(t.get("price", "")).strip():
-            fail(f"trade {idx}: {side} must not have a price")
-        out["amount"] = _coerce_number(t.get("amount"),
-                                       f"trade {idx}.amount")
-    return out
-
-
-def _assign_ids(new_trades: list[dict], existing: list[dict]) -> list[dict]:
-    """Server-side id = <date>-<side>-<seq>; seq counts same-(date, side)
-    entries in existing+already-assigned new trades."""
-    counts: dict[tuple[str, str], int] = {}
-    for t in existing:
-        key = (t.get("date", ""), t.get("side", ""))
-        if key[0] and key[1]:
-            counts[key] = max(counts.get(key, 0),
-                              _parse_seq(t.get("id", "")))
-    for t in new_trades:
-        key = (t["date"], t["side"])
-        counts[key] = counts.get(key, 0) + 1
-        t["id"] = f"{key[0]}-{key[1]}-{counts[key]:03d}"
-    return new_trades
-
-
-def _parse_seq(id_str: str) -> int:
-    """Extract trailing seq number from an existing id like '2026-10-12-buy-002'.
-    Returns 0 if the id is malformed (so the next id is at least 001)."""
-    m = re.search(r"-(\d+)$", id_str)
-    if not m:
-        return 0
-    try:
-        return int(m.group(1))
-    except ValueError:
-        return 0
-
-
-# -----------------------------------------------------------------------------
-# Persistence
-# -----------------------------------------------------------------------------
-
-def _atomic_write(path: Path, doc: dict) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
-    tmp.replace(path)
+            print(f"  - {t['id']}  {t['side']:<21} amount=CNY {t['amount']:>10.2f}  "
+                  f"date={t['date']}  note={t.get('note','')}")
 
 
 # -----------------------------------------------------------------------------
@@ -263,103 +125,19 @@ def main() -> None:
     if not isinstance(payload, dict):
         fail(f"payload must be a JSON object, got {type(payload).__name__}")
 
-    # Reject the legacy {rows, cash} format up front.
-    if "rows" in payload and "trades" not in payload:
-        fail("editor 已升级为交易表单. 请刷新页面 (Ctrl+Shift+R) 重新加载 app.js.")
-
-    schema = payload.get("schema", "")
-    if schema != "trades-v1":
-        fail(f"schema mismatch: only 'trades-v1' accepted, got {schema!r}")
-
-    raw_trades = payload.get("trades", [])
-    if not isinstance(raw_trades, list):
-        fail(f"trades must be a JSON array, got {type(raw_trades).__name__}")
-    if len(raw_trades) > MAX_ROWS:
-        fail(f"too many trades ({len(raw_trades)} > {MAX_ROWS})")
-    if not raw_trades:
-        fail("no trades to apply")
-
-    today = datetime.date.today()
-    cleaned: list[dict] = []
-    for i, t in enumerate(raw_trades):
-        cleaned.append(_validate_trade(t, i, today))
-
-    # Read existing trades (or empty if missing)
-    if TRADES.exists():
-        try:
-            existing_doc = json.loads(TRADES.read_text(encoding="utf-8"))
-            existing: list[dict] = list(existing_doc.get("trades", []))
-        except Exception as ex:
-            fail(f"existing trades.json unreadable: {ex}")
-    else:
-        existing = []
-
-    # Assign server-side ids BEFORE the validation that walks the merged
-    # ledger (oversell check). We need ids to compute per-(date, side) seq.
-    cleaned = _assign_ids(cleaned, existing)
-
-    # Replay merged ledger: oversell check fires inside inline_apply.
-    merged = existing + cleaned
-    state, cash_rebalance, cash_grid = inline_rebuild(merged)
-
-    # Reject negative cash in either pool (per user requirement).
-    if cash_rebalance < 0:
-        fail(f"cash_rebalance would go negative after this batch: "
-             f"current={cash_rebalance:.2f}")
-    if cash_grid < 0:
-        fail(f"cash_grid would go negative after this batch: "
-             f"current={cash_grid:.2f}")
-
-    # Persist trades.json
-    _atomic_write(TRADES, {
-        "_schema": "trades-v1",
-        "_comment": ("Append-only trade ledger. Source of truth for cash "
-                     "and positions[].shares. Do not reorder; corrections "
-                     "are new entries."),
-        "trades": merged,
-    })
-
-    # Persist holdings.json (schema v2 — derived cache)
-    positions: list[dict] = []
-    for code, sh in state["positions"].items():
-        positions.append({
-            "name": NAME_LOOKUP.get(code, code),
-            "code": code,
-            "shares": int(sh) if sh == int(sh) else sh,
-        })
-    _atomic_write(HOLDINGS, {
-        "_schema": "v2",
-        "_comment": ("REBUILT from data/trades.json. 双池: "
-                     "cash_rebalance (真实现金, ETF买卖用) + "
-                     "cash_grid (虚拟, 网格记账用). 编辑持仓请用页面"
-                     "交易表单 (会同时更新 trades.json); 直接改这个文件"
-                     "会被下一次 apply-holdings 覆盖."),
-        "cash_rebalance": cash_rebalance,
-        "cash_grid": cash_grid,
-        "positions": positions,
-    })
-
-    # Echo
+    # 用例层: 校验整批 → 读账本 → 发 id → 重放 → 写两份文件
+    # (整批 all-or-nothing —— 任何一步不过, 两份文件都不动)
     try:
-        rel_t = TRADES.relative_to(ROOT)
-        rel_h = HOLDINGS.relative_to(ROOT)
-    except ValueError:
-        rel_t, rel_h = TRADES, HOLDINGS
-    print(f"OK wrote {rel_t}: {len(merged)} trades (+{len(cleaned)} new)")
-    print(f"OK wrote {rel_h}: cash_rebalance=CNY {cash_rebalance:.2f}, "
-          f"cash_grid=CNY {cash_grid:.2f}, {len(positions)} positions")
-    for p in positions:
-        print(f"  - {p['name']:<14} ({p['code']}) {p['shares']:>12,}")
-    # Show the new trades that were just appended
-    print("\nNew trades appended:")
-    for t in cleaned:
-        if t["side"] in ("buy", "sell"):
-            print(f"  - {t['id']}  {t['side']:<7} {t['code']}  "
-                  f"{t['shares']:>10} @ CNY {t['price']:.4f}  "
-                  f"date={t['date']}  note={t.get('note','')}")
-        else:
-            print(f"  - {t['id']}  {t['side']:<21} amount=CNY {t['amount']:>10.2f}  "
-                  f"date={t['date']}  note={t.get('note','')}")
+        batch = apply_trades(
+            payload, TRADES, HOLDINGS,
+            today=datetime.date.today(),
+            allowed_codes=ALLOWED_CODES,
+            name_lookup=NAME_LOOKUP,
+        )
+    except TradeError as ex:
+        fail(str(ex))
+
+    _echo(batch)
 
 
 if __name__ == "__main__":
