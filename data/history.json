@@ -4838,8 +4838,8 @@
   },
   {
     "date": "2026-10-27",
-    "total": 169874.1,
-    "etf_value": 169709.1,
+    "total": 169049.4,
+    "etf_value": 168884.4,
     "cash_rebalance": 165.0,
     "cash_grid": 0.0,
     "cash_total": 165.0,
@@ -4848,9 +4848,9 @@
         "name": "红利ETF易方达",
         "code": "515180",
         "shares": 32000.0,
-        "price": 1.365,
+        "price": 1.364,
         "date": "2026-10-27",
-        "value": 43680.0,
+        "value": 43648.0,
         "merged_shares": 0.0,
         "total_shares": 32000.0,
         "merged_value": 0.0
@@ -4859,9 +4859,9 @@
         "name": "黄金ETF博时",
         "code": "159937",
         "shares": 5200.0,
-        "price": 8.172,
+        "price": 8.148,
         "date": "2026-10-27",
-        "value": 42494.4,
+        "value": 42369.6,
         "merged_shares": 0.0,
         "total_shares": 5200.0,
         "merged_value": 0.0
@@ -4870,9 +4870,9 @@
         "name": "可转债ETF博时",
         "code": "511380",
         "shares": 3500.0,
-        "price": 12.705,
+        "price": 12.58,
         "date": "2026-10-27",
-        "value": 44467.5,
+        "value": 44030.0,
         "merged_shares": 0.0,
         "total_shares": 3500.0,
         "merged_value": 0.0
@@ -4881,16 +4881,16 @@
         "name": "纳斯达克ETF华夏",
         "code": "513300",
         "shares": 14400.0,
-        "price": 2.713,
+        "price": 2.697,
         "date": "2026-10-27",
-        "value": 39067.2,
+        "value": 38836.8,
         "premium": {
           "code": "513300",
-          "price": 2.713,
+          "price": 2.697,
           "iopv": 2.4033,
           "nav_date": "2026-10-23",
-          "premium_pct": 12.89,
-          "quote_time": "2026-10-27 11:47:24",
+          "premium_pct": 12.22,
+          "quote_time": "2026-10-27 15:47:28",
           "source": "tencent+fund.eastmoney"
         },
         "merged_shares": 0.0,
@@ -4899,10 +4899,10 @@
       }
     ],
     "weights": [
-      0.2571,
-      0.2502,
-      0.2618,
-      0.23
+      0.2582,
+      0.2506,
+      0.2605,
+      0.2297
     ],
     "target_w": 0.25,
     "threshold_pp": 3.0,
@@ -4912,7 +4912,7 @@
       {
         "name": "红利ETF易方达",
         "price": 1.35,
-        "layer_yuan": 10058.43,
+        "layer_yuan": 10017.2,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -4935,8 +4935,8 @@
       },
       {
         "name": "黄金ETF博时",
-        "price": 8.16,
-        "layer_yuan": 10058.43,
+        "price": 8.15,
+        "layer_yuan": 10017.2,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -4946,21 +4946,21 @@
         "return_pct": 0.0,
         "merged_shares": 0.0,
         "merged_value": 0.0,
-        "trigger_pct": 0.62,
+        "trigger_pct": 0.49,
         "trigger_kind": "open",
         "trigger_price": 8.11,
-        "dist_open_pct": 0.62,
+        "dist_open_pct": 0.49,
         "dist_add_pct": null,
         "dist_tp_pct": null,
-        "suggest_price": 8.16,
+        "suggest_price": 8.15,
         "suggest_shares": 0.0,
         "suggest_amount": 0.0,
-        "intraday_low": 8.16
+        "intraday_low": 8.15
       },
       {
         "name": "可转债ETF博时",
-        "price": 12.7,
-        "layer_yuan": 10058.43,
+        "price": 12.58,
+        "layer_yuan": 10017.2,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -4970,21 +4970,21 @@
         "return_pct": 0.0,
         "merged_shares": 0.0,
         "merged_value": 0.0,
-        "trigger_pct": 3.08,
+        "trigger_pct": 2.11,
         "trigger_kind": "open",
         "trigger_price": 12.32,
-        "dist_open_pct": 3.08,
+        "dist_open_pct": 2.11,
         "dist_add_pct": null,
         "dist_tp_pct": null,
-        "suggest_price": 12.7,
+        "suggest_price": 12.58,
         "suggest_shares": 0.0,
         "suggest_amount": 0.0,
-        "intraday_low": 12.7
+        "intraday_low": 12.58
       },
       {
         "name": "纳斯达克ETF华夏",
-        "price": 2.712,
-        "layer_yuan": 10058.43,
+        "price": 2.692,
+        "layer_yuan": 10017.2,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -4994,16 +4994,16 @@
         "return_pct": 0.0,
         "merged_shares": 0.0,
         "merged_value": 0.0,
-        "trigger_pct": 9.53,
+        "trigger_pct": 8.72,
         "trigger_kind": "open",
         "trigger_price": 2.476,
-        "dist_open_pct": 9.53,
+        "dist_open_pct": 8.72,
         "dist_add_pct": null,
         "dist_tp_pct": null,
-        "suggest_price": 2.712,
+        "suggest_price": 2.692,
         "suggest_shares": 0.0,
         "suggest_amount": 0.0,
-        "intraday_low": 2.712
+        "intraday_low": 2.692
       }
     ],
     "grid_state": {
@@ -5011,7 +5011,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          1.35,
           1.331,
           1.321,
           1.333,
@@ -5130,6 +5129,7 @@
           1.32,
           1.33,
           1.33,
+          1.35,
           1.35
         ],
         "cum_realized": 0.0,
@@ -5139,7 +5139,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          9.31,
           9.428,
           9.403,
           9.465,
@@ -5258,7 +5257,8 @@
           8.12,
           8.11,
           8.11,
-          8.16
+          8.16,
+          8.15
         ],
         "cum_realized": 0.0,
         "merged_shares": 0.0
@@ -5267,7 +5267,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          14.241,
           14.089,
           14.095,
           14.118,
@@ -5386,7 +5385,8 @@
           12.32,
           12.6,
           12.6,
-          12.7
+          12.7,
+          12.58
         ],
         "cum_realized": 0.0,
         "merged_shares": 0.0
@@ -5395,7 +5395,6 @@
         "in_cycle": false,
         "entries": [],
         "last_prices": [
-          2.533,
           2.563,
           2.535,
           2.492,
@@ -5514,7 +5513,8 @@
           2.66,
           2.665,
           2.665,
-          2.712
+          2.712,
+          2.692
         ],
         "cum_realized": 0.0,
         "merged_shares": 0.0
