@@ -14,6 +14,7 @@ Run:  python -m tests.test_record
 """
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 import tempfile
@@ -34,6 +35,7 @@ from src.domain.events import domain_events as events
 from src.domain.grid import config as grid_config
 from src.domain.grid import grid_position as grid_pos
 from src.domain.grid import layer_sizing
+from src.domain.grid import state_machine as grid_state_machine
 from src.domain.grid import trigger_policy as grid_trigger_policy
 from src.domain.ledger import ledger
 from src.domain.portfolio import asset_universe as universe
@@ -1361,7 +1363,7 @@ def test_notify_renders_new_signal_vocabulary():
     """新词表 open / add / tp 的徽章 + 「只给建议」字样。
 
     引擎不再自动交易 —— 邮件必须把「建议」和「已成交」区分开, 否则用户会
-    以为 ���已经按建议下单了。
+    以为它已经按建议下单了。
     """
     from src.presentation import digest as notify
     r = _make_record_with_qdii(premium_pct=2.0)
@@ -3810,6 +3812,83 @@ def test_write_path_and_daily_path_replay_the_ledger_identically():
     assert batch.cash_grid == exp_cg
     assert [(p["code"], p["shares"]) for p in batch.positions] == \
            [(p["code"], p["shares"]) for p in exp_pos]
+
+
+# -----------------------------------------------------------------------------
+# 网格状态机的合法边 (Phase 5c-3) —— 「一个周期 N 买 1 卖」的形式化
+# -----------------------------------------------------------------------------
+
+def test_grid_state_machine_has_exactly_three_legal_edges():
+    """Idle→Open (open), Open→Open (add), Open→Idle (tp) —— 没有第四种。"""
+    edges = {(t.from_in_cycle, t.op.value): t
+             for t in grid_state_machine.LEGAL_TRANSITIONS}
+    assert set(edges) == {(False, "open"), (True, "add"), (True, "tp")}, edges
+    assert edges[(False, "open")].to_in_cycle is True
+    assert edges[(True, "add")].to_in_cycle is True
+    assert edges[(True, "tp")].to_in_cycle is False
+
+
+def test_a_cycle_is_n_buys_and_exactly_one_exit():
+    """N 买: add 任意多次。1 卖: tp 只能一次 —— 它把整个周期结束掉。"""
+    state = grid_pos.fresh_asset_state()
+    state = grid_pos.manual_op(state, op="open", today="2026-10-20",
+                               price=1.20, shares=1000)
+    for _ in range(3):
+        state = grid_pos.manual_op(state, op="add", today="2026-10-21",
+                                   price=1.10, shares=500)
+    assert len(state["entries"]) == 4, state["entries"]      # 1 open + 3 add
+    assert state["in_cycle"] is True
+    state = grid_pos.manual_op(state, op="tp", today="2026-10-25",
+                               price=1.30, shares=0)
+    assert state["in_cycle"] is False
+    assert state["entries"] == []
+    try:
+        grid_pos.manual_op(state, op="tp", today="2026-10-26",
+                           price=1.30, shares=0)
+        raise AssertionError("the second tp must be rejected")
+    except ValueError as ex:
+        assert "tp requires an open cycle" in str(ex), ex
+
+
+def test_manual_op_rejects_the_edges_the_state_machine_forbids():
+    """非法边的报错文案来自**那张表** —— 不在调用处另写一份。"""
+    idle = grid_pos.fresh_asset_state()
+    for op, expected in (("add", "add requires an open cycle"),
+                         ("tp", "tp requires an open cycle")):
+        try:
+            grid_pos.manual_op(idle, op=op, today="2026-10-20",
+                               price=1.20, shares=1000)
+            raise AssertionError(f"{op} on an idle asset must be rejected")
+        except ValueError as ex:
+            assert expected in str(ex), ex
+    busy = grid_pos.manual_op(idle, op="open", today="2026-10-20",
+                               price=1.20, shares=1000)
+    try:
+        grid_pos.manual_op(busy, op="open", today="2026-10-21",
+                           price=1.15, shares=1000)
+        raise AssertionError("a second open must be rejected")
+    except ValueError as ex:
+        assert "open requires no open cycle" in str(ex), ex
+    # 表里的 requirement 文案就是抛错的那一条 —— 一字不差。
+    for edge in grid_state_machine.LEGAL_TRANSITIONS:
+        assert edge.requirement in (
+            grid_state_machine._BY_OP[edge.op.value].requirement)
+
+
+def test_the_legal_edges_are_written_only_in_the_state_machine_table():
+    """静态: `manual_op` 查表, 不再内联「哪个状态能做哪个动作」的判断。"""
+    src = inspect.getsource(grid_pos.manual_op)
+    assert "transition(" in src, src
+    assert "position.in_cycle and" not in src, src
+    assert "not position.in_cycle" not in src, src
+
+
+def test_the_state_machine_stays_stdlib_only():
+    """写路径那条链 (apply_grid.py) 不装 pandas/akshare —— 状态机也得是。"""
+    src = (ROOT / "src" / "domain" / "grid" / "state_machine.py").read_text(
+        encoding="utf-8")
+    for banned in ("import pandas", "import numpy", "import akshare"):
+        assert banned not in src, banned
 
 
 def test_main():

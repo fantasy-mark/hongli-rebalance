@@ -13,8 +13,8 @@
 > Phase 0 ✅ 立柱 · Phase 1 ✅ 值对象 · Phase 2 ✅ 网格聚合显式化 ·
 > Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
 > Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身
-> —— 5c-1 每日快照 · 5c-2 写路径）。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.7。
+> —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.8。
 
 ---
 
@@ -696,6 +696,8 @@ src/
       exit_policy.py            ✅ Phase 2 —— ExitAtCost / cost_only_exit
       advisor.py                ✅ Phase 2b —— GridAdvisor → GridSuggestion
       layer_sizing.py           ✅ Phase 3 —— LayerSizingPolicy
+      state_machine.py          ✅ Phase 6 —— 合法边表 (LEGAL_TRANSITIONS)：
+                                「一个周期 N 买 1 卖」的形状
       config.py                 ✅ Phase 5a —— GridConfig（七个网格参数 + from_env，
                                 领域层读环境变量的**唯一**一处）
     events/
@@ -1455,6 +1457,56 @@ apply_grid_op.py                        apply_trade.py
 结果就是「持仓全没了」，而用户只是提交了一笔新交易。所以写路径走新的
 `read_trades()` / `read_grid_state()` —— 坏了就抛错，绝不静默清空。
 
+#### 11.1.8 Phase 6 落地情况（2026-10-27）
+
+Phase 6 是被 §13 的**最后一条**验收项逼出来的：
+
+> 「一个周期 N 买 1 卖」在哪里保证？→ 答不出「`GridPosition` 状态机的合法边」
+> —— 因为合法边当时是 `manual_op` 里两行内联的 `if`。
+
+##### (a) 合法边表 —— `src/domain/grid/state_machine.py`
+
+```
+LEGAL_TRANSITIONS = (
+    GridTransition(op=OPEN, from_in_cycle=False, to_in_cycle=True,
+                   requirement="open requires no open cycle (use tp to close first)"),
+    GridTransition(op=ADD,  from_in_cycle=True,  to_in_cycle=True,
+                   requirement="add requires an open cycle"),
+    GridTransition(op=TP,   from_in_cycle=True,  to_in_cycle=False,
+                   requirement="tp requires an open cycle"),
+)
+```
+
+`manual_op` 现在只做一件事：**查表**。
+
+```python
+edge = transition(position.in_cycle, op)   # 非法边 → 抛错 (文案来自表)
+...
+position.in_cycle = edge.to_in_cycle
+```
+
+词表是 `TriggerLevel` 的投影（不另抄一份），报错文案也**跟着边走** ——
+「为什么这一步不合法」写在表里，不写在调用处。顺带把「未知 op」的消息收进
+`known_op` —— 那句话以前写在 `manual_op` 里，现在只有一处出处。
+
+##### (b) 「N 买 1 卖」现在是**表的形状**，不是一句约定
+
+| 事实 | 由哪条边保证 |
+|---|---|
+| `add` / `tp` 不可能凭空出现 | 两条边都要求 `from_in_cycle=True`；而 `in_cycle` 只有 `open` 会置真 |
+| 一个周期可以买任意多次 | `add` 的边是 Open→Open（自环） |
+| 一个周期**只能**卖一次 | 回到 Idle 的边**只有** `tp` 一条，而 `tp` 把 `entries` 清空、`in_cycle` 归零 |
+
+##### (c) 验证
+
+| 检查 | 结果 |
+|---|---|
+| `python -X utf8 -m tests.test_record` | **188/188 通过**（新增 5 个） |
+| 网格写路径逐字节回归 | ✓ —— 5 个场景（happy / 已在周期内 open / 无周期 add / 无周期 tp / 非法 op）与 HEAD **逐字节相同**（退出码 / stdout / stderr / 写出的 state） |
+| 非法边的报错文案 | ✓ —— 与改前**一字不差**（文案只是从调用处搬到了表里） |
+| 合法边只有一份 | ✓ —— `test_the_legal_edges_are_written_only_in_the_state_machine_table` 静态钉住 `manual_op` 里没有内联的状态判断 |
+| 状态机仍 stdlib-only | ✓ —— `test_the_state_machine_stays_stdlib_only` |
+
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
 #### Phase 0 — 立柱（不改行为，1 次提交）
@@ -1536,6 +1588,15 @@ apply_grid_op.py                        apply_trade.py
   op / side 词表改为领域枚举的投影（D10 收口）；账本重放**只剩一份实现**
   （写路径与每日快照共用 `src/domain/ledger/ledger.py`）。详见 §11.1.7 (d)。
 
+#### Phase 6 — 状态机显式化（1 次提交）✅ 已落地
+
+- 把 `manual_op` 里内联的「哪个状态能做哪个动作」收成一张**合法边表**
+- 「一个周期 N 买 1 卖」从此是**表的形状**，不是注释里的约定
+
+- ✅ **已落地**（2026-10-27）：`src/domain/grid/state_machine.py` ——
+  `LEGAL_TRANSITIONS` + `transition()`；`manual_op` 只查表。
+  详见 §11.1.8。
+
 ### 11.3 明确**不要**做的
 
 | 不做 | 理由 |
@@ -1571,7 +1632,7 @@ apply_grid_op.py                        apply_trade.py
 重构后，下面每一条都应该能被**代码结构**回答，而不是靠注释或文档：
 
 - [x] 「网格引擎不交易」在哪里保证？→ `GridAdvisor` 返回不可变 `GridSuggestion`，类型上无法写 state（Phase 2b ✅）
-- [ ] 「一个周期 N 买 1 卖」在哪里保证？→ `GridPosition` 状态机的合法边
+- [x] 「一个周期 N 买 1 卖」在哪里保证？→ `src/domain/grid/state_machine.py:LEGAL_TRANSITIONS`（Phase 6 ✅）—— `manual_op` 只查那张表；回到 Idle 的**唯一**一条边是 `tp`（它把周期整个结束掉），而 `in_cycle` 只有 `open` 会置真 —— 所以一个周期里 `add` 可以任意多次（N 买）、`tp` 只能一次（1 卖）
 - [x] 「出场只卖成本额」在哪里保证？→ `cost_only_exit` 唯一实现（Phase 2a ✅）
 - [x] 「什么算触发只有一份规则」在哪里保证？→ `TriggerPolicy.levels` 是生产路径与回测路径**唯一**的判定来源（Phase 3 ✅）；`test_simulator_has_no_inline_trigger_arithmetic` 静态挡住内联算术回流
 - [x] 「归并份额不写 trades.json」在哪里保证？→ `MergedSharesTransferred` 事件，账本上下文无写权限（Phase 5b ✅）—— 组合**只**从事件吸收归并份额；八个 `TradeSide` 里没有「归并」这一档，`apply_trade` 遇到未知 side 直接抛错

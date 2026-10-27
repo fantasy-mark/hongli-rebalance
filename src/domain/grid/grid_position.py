@@ -86,6 +86,7 @@ from .layer_sizing import (
     LayerSizingPolicy,
     layer_yuan,
 )
+from .state_machine import known_op, transition
 from .trigger_policy import (
     GRID_STEP_PCT,
     GRID_TP_BASIS,
@@ -188,9 +189,11 @@ class GridPosition:
     (条件 = `price < min(window)`, 即 120 日新低)。删了它, 窗口要重新灌满
     120 天才会恢复。
 
-    状态机 (不变量 I5 / I6) 由 `manual_op` 保证:
+    状态机 (不变量 I5 / I6) 的**合法边**在 `state_machine.py` ——
+    `manual_op` 只查那张表:
       - 一个资产同时最多一个进行中的周期 (I5);
-      - 一个周期 = N 买 + 1 卖 (I6)。
+      - 一个周期 = N 买 + 1 卖 (I6) —— 因为回到 Idle 的**唯一**一条边是
+        `tp`, 而 `tp` 把整个周期结束掉。
 
     ⚠️ `entries` 里存的仍是 **dict** —— 每一层的形状会变 (将来还要带
     「这一层是第几层」), 而 `data/grid_state.json` 的格式不能变。它的
@@ -449,8 +452,7 @@ def manual_op(state: dict, op: str, today: str,
     `asset` 是这个资产的显示名 (网格状态就是按名字建的 key) —— 事件里
     带上它, 收件人才知道「谁变了」。
     """
-    if op not in ("open", "add", "tp"):
-        raise ValueError(f"unknown op: {op!r}")
+    known_op(op)   # 不在词表里就抛错 —— 消息只有这一处出处
     if not (price > 0):
         raise ValueError(f"price must be > 0, got {price}")
     # For "open" and "add", `shares` is the layer share count → must be > 0.
@@ -459,16 +461,15 @@ def manual_op(state: dict, op: str, today: str,
     if op in ("open", "add") and not (shares > 0):
         raise ValueError(f"{op} requires shares > 0, got {shares}")
     position = GridPosition.from_state(state)
-    if op == "open" and position.in_cycle:
-        raise ValueError("open requires no open cycle (use tp to close first)")
-    if op in ("add", "tp") and not position.in_cycle:
-        raise ValueError(f"{op} requires an open cycle")
+    # 合法边查状态机那张表 (src/domain/grid/state_machine.py) ——
+    # 「一个周期 N 买 1 卖」是**表的形状**, 不是散落的 if。
+    edge = transition(position.in_cycle, op)
 
     if op in ("open", "add"):
         position.entries.append({
             "date": today, "price": float(price), "shares": float(shares),
         })
-        position.in_cycle = True
+        position.in_cycle = edge.to_in_cycle
         if op == "open":
             position.last_prices.append(float(price))
             if len(position.last_prices) > GRID_LOOKBACK:
@@ -508,7 +509,7 @@ def manual_op(state: dict, op: str, today: str,
         ))
         position.cum_realized += split.pnl
         position.entries = []
-        position.in_cycle = False
+        position.in_cycle = edge.to_in_cycle
         if events is not None:
             events.record(GridCycleClosed(
                 date=today, asset=asset, code=code,
