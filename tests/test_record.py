@@ -2,7 +2,8 @@
 (pure functions, no network).
 
 Covers:
-  src/domain/ledger/ledger.py           账本重放与现金池
+  src/domain/ledger/ledger.py           账本写侧 (追加一笔 + 校验不变量)
+  src/domain/ledger/projection.py       账本读侧 (重放 → LedgerProjection)
   src/domain/portfolio/*                3pp 评估 / 归并份额 / 估值
   src/domain/grid/grid_position.py      网格引擎 (只给建议)
   src/simulation/grid_simulator.py      回测重放
@@ -38,6 +39,7 @@ from src.domain.grid import layer_sizing
 from src.domain.grid import state_machine as grid_state_machine
 from src.domain.grid import trigger_policy as grid_trigger_policy
 from src.domain.ledger import ledger
+from src.domain.ledger import projection as ledger_projection
 from src.domain.portfolio import asset_universe as universe
 from src.domain.portfolio import portfolio, rebalance_policy as policy
 from src.domain.portfolio import valuation as valuation_mod
@@ -1638,10 +1640,10 @@ def test_apply_trade_sell_rejects_oversell_raises():
     assert raised, "expected ValueError for oversell"
 
 
-def test_rebuild_holdings_from_trades_deposit_only_yields_initial_state():
+def test_project_ledger_deposit_only_yields_initial_state():
     """One deposit_rebalance → cash_rebalance = amount, positions empty."""
     trades = [{"side": "deposit_rebalance", "date": "2026-10-12", "amount": 175900.60}]
-    positions, cash_rebalance, cash_grid = ledger.rebuild_holdings_from_trades(
+    positions, cash_rebalance, cash_grid = ledger_projection.project_ledger(
         trades, as_of_date="2026-10-12",
     )
     assert cash_rebalance == 175900.60
@@ -1649,7 +1651,7 @@ def test_rebuild_holdings_from_trades_deposit_only_yields_initial_state():
     assert positions == []
 
 
-def test_rebuild_holdings_from_trades_chains_buy_sell_deposit_withdraw():
+def test_project_ledger_chains_buy_sell_deposit_withdraw():
     """Replay: deposit_rebalance 10000, buy 1000@10, sell 200@12, withdraw_rebalance 500.
     Expected: cash_rebalance = 10000 - 10000 + 2400 - 500 = 1900
               cash_grid = 0
@@ -1663,7 +1665,7 @@ def test_rebuild_holdings_from_trades_chains_buy_sell_deposit_withdraw():
          "shares": 200, "price": 12.0, "fee": 0.0},
         {"side": "withdraw_rebalance","date": "2026-10-15", "amount": 500.0},
     ]
-    positions, cash_rebalance, cash_grid = ledger.rebuild_holdings_from_trades(
+    positions, cash_rebalance, cash_grid = ledger_projection.project_ledger(
         trades, as_of_date="2026-10-15",
     )
     assert cash_rebalance == round(10000 - 10000 + 2400 - 500, 2) == 1900.0
@@ -1673,13 +1675,13 @@ def test_rebuild_holdings_from_trades_chains_buy_sell_deposit_withdraw():
     assert positions[0]["shares"] == 800.0
 
 
-def test_rebuild_holdings_from_trades_as_of_date_inclusive():
+def test_project_ledger_as_of_date_inclusive():
     """Trades after as_of_date are skipped."""
     trades = [
         {"side": "deposit_rebalance", "date": "2026-10-12", "amount": 1000.0},
         {"side": "deposit_rebalance", "date": "2026-10-15", "amount": 500.0},
     ]
-    _, cash_rebalance, _ = ledger.rebuild_holdings_from_trades(
+    _, cash_rebalance, _ = ledger_projection.project_ledger(
         trades, as_of_date="2026-10-13",
     )
     assert cash_rebalance == 1000.0   # second deposit is after 10-13, skipped
@@ -1776,7 +1778,7 @@ def test_apply_trade_transfer_sides_dont_change_positions():
     assert state["positions"] == positions_before
 
 
-def test_rebuild_holdings_from_trades_six_new_cash_sides():
+def test_project_ledger_six_new_cash_sides():
     """End-to-end replay: one of each cash side, final pool balances correct."""
     trades = [
         {"side": "deposit_rebalance",     "date": "2026-10-12", "amount": 10000.0},
@@ -1786,7 +1788,7 @@ def test_rebuild_holdings_from_trades_six_new_cash_sides():
         {"side": "transfer_to_rebalance", "date": "2026-10-16", "amount": 400.0},
         {"side": "withdraw_rebalance",    "date": "2026-10-17", "amount": 100.0},
     ]
-    positions, cash_rebalance, cash_grid = ledger.rebuild_holdings_from_trades(
+    positions, cash_rebalance, cash_grid = ledger_projection.project_ledger(
         trades, as_of_date="2026-10-17",
     )
     # rebalance: +10000 -2000(transfer out) +400(transfer in) -100(withdraw) = 8300
@@ -3383,7 +3385,7 @@ def test_ledger_emits_trade_and_cash_events():
          "shares": 50.0, "price": 1.6, "fee": 0.0},
     ]
     stream = events.EventStream()
-    ledger.rebuild_holdings_from_trades(trades, events=stream)
+    ledger_projection.project_ledger(trades, events=stream)
     assert [e.type for e in stream] == [
         "CashTransferred", "TradeRecorded", "CashTransferred", "TradeRecorded"]
     dep, xfer = stream.of_type(events.CashTransferred)
@@ -3398,8 +3400,8 @@ def test_ledger_emits_trade_and_cash_events():
 def test_ledger_emits_nothing_without_a_stream():
     """事件是**可选**的 —— 老调用方一行不用改。"""
     trades = [{"date": "2026-10-12", "side": "deposit_rebalance", "amount": 100.0}]
-    a = ledger.rebuild_holdings_from_trades(trades)
-    b = ledger.rebuild_holdings_from_trades(trades, events=None)
+    a = ledger_projection.project_ledger(trades)
+    b = ledger_projection.project_ledger(trades, events=None)
     assert a == b
 
 
@@ -3805,13 +3807,53 @@ def test_write_path_and_daily_path_replay_the_ledger_identically():
          "shares": 400.0, "price": 1.6, "fee": 0.0},
     ]
     names = {"515180": "红利ETF易方达"}
-    exp_pos, exp_cr, exp_cg = ledger.rebuild_holdings_from_trades(
+    exp_pos, exp_cr, exp_cg = ledger_projection.project_ledger(
         trades, name_lookup=names)
     batch = trade_app.apply_batch(trades, [], name_lookup=names)
     assert batch.cash_rebalance == exp_cr
     assert batch.cash_grid == exp_cg
     assert [(p["code"], p["shares"]) for p in batch.positions] == \
            [(p["code"], p["shares"]) for p in exp_pos]
+
+
+# -----------------------------------------------------------------------------
+# 账本读侧 (Phase 7) —— 投影是一个**有名字**的值
+# -----------------------------------------------------------------------------
+
+def test_the_ledger_projection_is_a_named_value():
+    """投影不是到处解包的裸元组 —— 它是 `LedgerProjection`。"""
+    proj = ledger_projection.project_ledger([
+        {"side": "deposit_rebalance", "date": "2026-10-12", "amount": 10000.0},
+        {"side": "buy", "date": "2026-10-13", "code": "515180",
+         "shares": 1000.0, "price": 1.5, "fee": 0.0},
+    ])
+    assert isinstance(proj, ledger_projection.LedgerProjection)
+    assert proj.cash_rebalance == 8500.0, proj.cash_rebalance
+    assert proj.cash_grid == 0.0
+    assert [(p["code"], p["shares"]) for p in proj.positions] == [
+        ("515180", 1000.0)], proj.positions
+    # 既有调用方一行不用改 —— NamedTuple 照样能解包。
+    positions, cash_rebalance, cash_grid = proj
+    assert positions == proj.positions
+    assert cash_rebalance == proj.cash_rebalance
+    assert cash_grid == proj.cash_grid
+
+
+def test_the_write_side_and_the_read_side_live_in_different_modules():
+    """写侧 (apply_trade) 与读侧 (project_ledger) 各归各的模块。"""
+    assert hasattr(ledger, "apply_trade")
+    assert not hasattr(ledger, "project_ledger")
+    assert hasattr(ledger_projection, "project_ledger")
+    # 读侧依赖写侧 (重放要用 apply_trade), 反过来不依赖 ——
+    # 单向依赖, 不是互相 import 的环。
+    src = (ROOT / "src" / "domain" / "ledger" / "projection.py").read_text(
+        encoding="utf-8")
+    assert "from .ledger import apply_trade" in src, src
+    ledger_src = (ROOT / "src" / "domain" / "ledger" / "ledger.py").read_text(
+        encoding="utf-8")
+    for forbidden in ("from .projection import", "from . import projection",
+                      "import projection"):
+        assert forbidden not in ledger_src, forbidden
 
 
 # -----------------------------------------------------------------------------

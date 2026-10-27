@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from ..domain.events.domain_events import EventStream
-from ..domain.ledger.ledger import rebuild_holdings_from_trades
+from ..domain.ledger.projection import project_ledger
 from ..domain.ledger.trade_side import AMOUNT_SIDES, SHARE_SIDES, TradeSide
 from ..domain.shared.identifiers import AssetCode, TradingDate
 from ..infrastructure.json_repositories import read_trades, write_json
@@ -228,7 +228,7 @@ def apply_batch(cleaned: list[dict], existing: list[dict], *,
     merged = list(existing) + list(cleaned)
     stream = events if events is not None else EventStream()
     try:
-        positions, cash_rebalance, cash_grid = rebuild_holdings_from_trades(
+        positions, cash_rebalance, cash_grid = project_ledger(
             merged, name_lookup=name_lookup, events=stream)
     except ValueError as ex:
         raise TradeError(str(ex)) from ex

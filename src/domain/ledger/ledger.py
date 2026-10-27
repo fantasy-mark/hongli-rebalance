@@ -3,6 +3,8 @@
 `data/trades.json` records **real fills only**. Everything else in the
 project (positions, cash balances) is a *projection* of this ledger —
 `data/holdings.json` is just a cached projection of it, never a fact.
+**读侧**在 `projection.py` (`project_ledger` → `LedgerProjection`);
+这个模块只管**写侧** (追加一笔 + 校验不变量)。
 
 Invariants enforced here (see docs/domain_model.md §10):
   - I1  neither cash pool may go negative
@@ -164,51 +166,12 @@ def _emit_trade_event(events: EventStream, trade: dict) -> None:
                                       amount=float(trade.get("amount", 0.0) or 0.0)))
 
 
-def rebuild_holdings_from_trades(
-    trades: list[dict],
-    as_of_date: str | None = None,
-    name_lookup: Optional[dict[str, str]] = None,
-    events: Optional[EventStream] = None,
-) -> tuple[list[dict], float, float]:
-    """Replay `trades` chronologically; return (positions, cash_rebalance, cash_grid).
-
-    Only includes codes with shares > 0 in the returned positions list.
-    `as_of_date` (ISO yyyy-mm-dd) is inclusive — trades dated after it are
-    skipped. `name_lookup` defaults to the asset universe's names.
-
-    `events` (optional) collects a `TradeRecorded` / `CashTransferred`
-    event per applied trade — 账本重放**顺手**把「发生过什么」讲出来。
-    """
-    if name_lookup is None:
-        from ..portfolio.asset_universe import ETF_DEFS
-        name_lookup = {code: v[2] for code, v in ETF_DEFS.items()}
-    state: dict = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
-    seen_codes: list[str] = []
-
-    # Sort by (date, original_index) so same-day trades play in append order.
-    indexed = list(enumerate(trades))
-    indexed.sort(key=lambda kv: (kv[1].get("date", ""), kv[0]))
-
-    for _, t in indexed:
-        if as_of_date and t.get("date", "") > as_of_date:
-            continue
-        side = t.get("side")
-        code = t.get("code")
-        if side in ("buy", "sell") and code not in seen_codes:
-            seen_codes.append(code)
-        apply_trade(state, t, events)
-
-    positions = [
-        {"name": name_lookup.get(c, c), "code": c,
-         "shares": state["positions"][c]}
-        for c in seen_codes
-        if state["positions"].get(c, 0.0) > 0
-    ]
-    return positions, state["cash_rebalance"], state["cash_grid"]
+# ⚠️ **读侧不在这里** —— 「把账本重放成持仓 + 现金池」是**投影**, 住在
+# `projection.py:project_ledger`。这个模块只管**写侧**: 追加一笔, 校验不变量。
+# 每天快照与写路径都调那**同一份**重放实现 —— 两份实现只可能长歪。
 
 
 __all__ = [
     "apply_trade",
-    "rebuild_holdings_from_trades",
     "TradeSide",
 ]

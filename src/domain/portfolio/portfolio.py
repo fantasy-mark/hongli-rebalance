@@ -40,7 +40,7 @@ class PositionLot:
         recovering its principal, so their cost basis is zero by
         construction (the "sell only the cost amount" exit rule).
 
-    ⚠️ The ledger projection (`rebuild_holdings_from_trades`) does not carry
+    ⚠️ The ledger projection (`projection.project_ledger`) does not carry
     a cost basis, so a REAL lot's `cost` is currently **0 = 未记录**, not
     "bought for free". Don't read anything into it until the projection
     grows a cost basis.

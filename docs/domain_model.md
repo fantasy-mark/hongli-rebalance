@@ -13,8 +13,9 @@
 > Phase 0 ✅ 立柱 · Phase 1 ✅ 值对象 · Phase 2 ✅ 网格聚合显式化 ·
 > Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
 > Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身
-> —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.8。
+> —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化 ·
+> Phase 7 ✅ 账本读侧拆成投影。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.9。
 
 ---
 
@@ -677,9 +678,10 @@ src/
                                 Weight / DeviationPP / LayerSize
       identifiers.py            ✅ Phase 1 —— AssetCode / TradingDate
     ledger/
-      ledger.py                 ✅ apply_trade / rebuild_holdings_from_trades
+      ledger.py                 ✅ 写侧 —— apply_trade（追加一笔 + 校验不变量）
       trade_side.py             ✅ 8 种 side
-      projection.py             ⬜ Phase 1+
+      projection.py             ✅ Phase 7 —— 读侧 —— LedgerProjection /
+                                project_ledger（重放账本 → 持仓 + 现金池）
     portfolio/
       portfolio.py              ✅ Phase 4 —— Portfolio(根) / Position / PositionLot
                                 （Provenance 落地，市值/权重由聚合推出来）
@@ -1427,7 +1429,7 @@ apply_grid_op.py                        apply_trade.py
 3. **账本重放** —— `scripts/apply_holdings.py` 里那份 `inline_apply` /
    `inline_rebuild` **删掉了**。它当年抄的注释说「因为 workflow 不装依赖」——
    那条理由早就过期了（`src/domain/ledger/*` 是 stdlib-only）。
-   现在写路径与每日快照跑**同一份** `src/domain/ledger/ledger.py`。
+   现在写路径与每日快照跑**同一份** `src/domain/ledger/projection.py`。
 
 **一处口径收紧（有意为之）**：不变量 I1「两个现金池都不得为负」在领域层是
 **逐笔**检查，旧脚本是**整批结束后**才查一次。逐笔更严，挡住的是这种账本：
@@ -1586,7 +1588,7 @@ position.in_cycle = edge.to_in_cycle
 - ✅ **5c-2 已落地**（2026-10-27）：两条**写路径**也搬进应用层 ——
   `apply_grid_op.py` / `apply_trade.py`；两个脚本瘦身成 CLI 外壳；
   op / side 词表改为领域枚举的投影（D10 收口）；账本重放**只剩一份实现**
-  （写路径与每日快照共用 `src/domain/ledger/ledger.py`）。详见 §11.1.7 (d)。
+  （写路径与每日快照共用 `src/domain/ledger/projection.py`）。详见 §11.1.7 (d)。
 
 #### Phase 6 — 状态机显式化（1 次提交）✅ 已落地
 
@@ -1596,6 +1598,56 @@ position.in_cycle = edge.to_in_cycle
 - ✅ **已落地**（2026-10-27）：`src/domain/grid/state_machine.py` ——
   `LEGAL_TRANSITIONS` + `transition()`；`manual_op` 只查表。
   详见 §11.1.8。
+
+#### 11.1.9 Phase 7 落地情况（2026-10-27）
+
+§11.1 的**目标树**里 `domain/ledger/` 有三个文件，实现上还差一个 ——
+`projection.py`（`LedgerProjection`）。Phase 7 把它补上。
+
+##### (a) 写侧与读侧分开
+
+```
+src/domain/ledger/
+  ledger.py        写侧 —— apply_trade: 追加一笔, 校验不变量 (I1 / I2)
+  trade_side.py    八个 side 的词表
+  projection.py    读侧 —— project_ledger: 重放账本 → LedgerProjection
+```
+
+账本是唯一的事实源；`data/holdings.json` 只是它的**缓存**。这条「事实 vs
+投影」的分界以前只写在注释里，现在**落在模块上** —— 读侧不必碰写侧，
+写侧也不必知道「投影」这个概念。依赖是单向的：`projection` → `ledger`
+（重放要用 `apply_trade`），反过来没有。
+
+##### (b) `LedgerProjection` —— 投影是个**有名字**的值
+
+```python
+class LedgerProjection(NamedTuple):
+    positions: list[dict]      # [{name, code, shares}]
+    cash_rebalance: float
+    cash_grid: float
+```
+
+⚠️ 选 `NamedTuple` 而不是普通 dataclass：既有调用方都是
+`positions, cash_rebalance, cash_grid = project_ledger(...)` 那样解包的。
+把投影**命名**不该逼着调用方改形状（那只是一次改名，不是一次建模）；
+想用具名属性的人写 `proj.positions` 就行。
+
+##### (c) 验证
+
+| 检查 | 结果 |
+|---|---|
+| `python -X utf8 -m tests.test_record` | **190/190 通过**（新增 2 个） |
+| 行为不变 | ✓ —— 重放的**实现**逐字搬过去（排序规则、只含份额 > 0 的持仓、事件收集都一样） |
+| 投影是有名字的值 | ✓ —— `test_the_ledger_projection_is_a_named_value` 钉住「具名属性」与「照样能解包」 |
+| 依赖单向 | ✓ —— `test_the_write_side_and_the_read_side_live_in_different_modules` 钉住 `ledger.py` 不反向 import `projection` |
+
+#### Phase 7 — 账本读侧拆成投影（1 次提交）✅ 已落地
+
+- `domain/ledger/projection.py` —— `LedgerProjection` + `project_ledger`
+- 写侧（`apply_trade`）与读侧（重放）分开，依赖单向
+
+- ✅ **已落地**（2026-10-27）：`src/domain/ledger/projection.py`；
+  `ledger.py` 只剩写侧。目标树（§11.1）对齐。详见 §11.1.9。
 
 ### 11.3 明确**不要**做的
 
@@ -1645,7 +1697,7 @@ position.in_cycle = edge.to_in_cycle
 - [x] 「记录里那个 total 是哪一个」在哪里保证？→ `SnapshotRun.snapshot_basis`（Phase 5c ✅）—— 层额定尺那次评估是**另一个**字段 `layer_sizing_basis`；两个名字各答一个问题，`test_size_grid_layer_uses_the_layer_sizing_basis_total` 钉住「层额用的是层额定尺那个数」
 - [x] 「应用层没有业务规则」在哪里保证？→ `daily_snapshot.main()` 只调 12 个具名用例（Phase 5c-1 ✅）—— `test_main_is_pure_wiring` 静态钉住（`abs(` / `round(` / `float(` / `min(` / `max(` 一个都不许出现）；`test_main_runs_the_use_cases_in_order` 钉住用例清单与顺序
 - [x] 「写路径的规则只有一份」在哪里保证？→ `src/application/apply_grid_op.py` / `apply_trade.py`（Phase 5c-2 ✅）—— op 词表 = `TriggerLevel` 的投影、side 词表 = `TradeSide` 的投影；两个脚本是**薄壳**（`test_the_write_path_scripts_are_thin_shims` 钉住脚本里没有校验/重放/发 id 的实现）
-- [x] 「写路径与读路径同一把尺子」在哪里保证？→ 写路径重放调用**领域层**的 `src/domain/ledger/ledger.py:rebuild_holdings_from_trades`（Phase 5c-2 ✅）—— 与每日快照 `daily_snapshot.replay_trade_ledger` 同一份实现；`test_write_path_and_daily_path_replay_the_ledger_identically` 钉住「两条路重放出的持仓与现金相同」
+- [x] 「写路径与读路径同一把尺子」在哪里保证？→ 写路径重放调用**领域层**的 `src/domain/ledger/projection.py:project_ledger`（Phase 5c-2 ✅，Phase 7 搬家）—— 与每日快照 `daily_snapshot.replay_trade_ledger` 同一份实现；`test_write_path_and_daily_path_replay_the_ledger_identically` 钉住「两条路重放出的持仓与现金相同」
 - [x] 「坏掉的账本不会被当成空账本」在哪里保证？→ 写路径走 `json_repositories.read_trades()` / `read_grid_state()`（Phase 5c-2 ✅）—— **严格读**：文件坏了就抛错（整批不写盘）；每日快照仍走宽松的 `load_trades()`（跑砸了只是今天的记录没出来，宁可少一天也别静默清空持仓）
 
 ---

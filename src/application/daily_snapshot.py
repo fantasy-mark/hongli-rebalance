@@ -59,7 +59,7 @@ from ..domain.events.domain_events import (
 from ..domain.grid import grid_position as grid_mod
 from ..domain.grid.config import GridConfig
 from ..domain.grid.layer_sizing import LayerSizingPolicy
-from ..domain.ledger.ledger import rebuild_holdings_from_trades
+from ..domain.ledger.projection import project_ledger
 from ..domain.portfolio.asset_universe import ASSET_NAMES, ETF_DEFS, QDII_CODES
 from ..domain.portfolio.portfolio import (
     Portfolio,
@@ -333,7 +333,7 @@ def replay_trade_ledger(run: SnapshotRun) -> None:
     账本是**份额与现金的唯一真相** (data/holdings.json 只是派生缓存)。
     """
     trades = load_trades()
-    positions, cash_rebalance, cash_grid = rebuild_holdings_from_trades(
+    positions, cash_rebalance, cash_grid = project_ledger(
         trades, as_of_date=run.today, events=run.events,
     )
     run.positions = positions
