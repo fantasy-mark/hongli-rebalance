@@ -33,6 +33,7 @@ the Action can commit `data/grid_state.json` after each run.
 Layer sizing:
   layer_yuan(d) = GRID_BASE_YUAN + max(pool_value - recent_min, 0) * GRID_FLOATING_FRACTION
   where recent_min = min(pool_value over the past GRID_FLOATING_WINDOW trading days).
+  (规则本体在 `layer_sizing.LayerSizingPolicy` —— 这里只是 re-export。)
 
 ---
 
@@ -63,7 +64,6 @@ that does not install those dependencies. pandas is a *local* import inside
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field, fields
 from typing import Optional
 
@@ -71,6 +71,13 @@ from ..shared.money import Money, Price, ShareCount
 from .advisor import GridAdvisor, GridSuggestion
 from .exit_policy import ExitAtCost, cost_only_exit
 from .grid_op import ExecutedOp, GridOp, OpKind, OpSource
+from .layer_sizing import (
+    GRID_BASE_YUAN,
+    GRID_FLOATING_FRACTION,
+    GRID_FLOATING_WINDOW,
+    LayerSizingPolicy,
+    layer_yuan,
+)
 from .trigger_policy import (
     GRID_STEP_PCT,
     GRID_TP_BASIS,
@@ -80,29 +87,12 @@ from .trigger_policy import (
 )
 
 # 网格参数 (env-overridable for parameter sweeps)
-GRID_BASE_YUAN: float = float(os.environ.get("GRID_BASE_YUAN", "10000"))
-GRID_FLOATING_FRACTION: float = float(os.environ.get("GRID_FLOATING_FRACTION", "0.05"))
-GRID_FLOATING_WINDOW: int = int(os.environ.get("GRID_FLOATING_WINDOW", "756"))
-GRID_LOOKBACK: int = 120
 # ⚠️ 触发参数 (`GRID_STEP_PCT` / `GRID_TP_PCT` / `GRID_TP_BASIS`) 的**本体**
-# 在 `trigger_policy.py` —— 这里只是 re-export, 既有 import 不断。
+# 在 `trigger_policy.py`; 层额参数 (`GRID_BASE_YUAN` / `GRID_FLOATING_*`) 的
+# 本体在 `layer_sizing.py` —— 这里只是 re-export, 既有 import 不断。
+GRID_LOOKBACK: int = 120
 # "avg_cost"   — exit when price >= avg_cost * (1 + tp_pct/100)             [v2]
 # "first_buy"  — exit when price >= first_buy_price * (1 + tp_pct/100)       [v3]
-
-
-def layer_yuan(pool_value: float, recent_min: float) -> float:
-    """Compute today's per-layer buy amount in ¥.
-
-    ⚠️ 返回**未取整**的 float —— 层额要除以价格算份额 (`amount / price`),
-    提前取整会改掉份额。它只在**输出边界**上被包成 `LayerSize`
-    (见 `advisory` 的 `suggest_amount` 与快照里的 `layer_yuan`)。
-
-    Args:
-        pool_value: current 3pp portfolio total (¥).
-        recent_min: min pool value over the past GRID_FLOATING_WINDOW days.
-    """
-    floating = max(pool_value - recent_min, 0.0)
-    return GRID_BASE_YUAN + floating * GRID_FLOATING_FRACTION
 
 
 # -----------------------------------------------------------------------------

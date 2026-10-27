@@ -2781,6 +2781,157 @@ def test_ops_from_cycles_returns_simulated_ops():
 
 
 # ---------------------------------------------------------------------------
+# src/simulation/grid_simulator — 回测路径必须调用**同一个** TriggerPolicy
+#
+# 背景 (docs/domain_model.md §7「最严重的一处重复」): 网格规则以前有两套
+# 实现 —— 生产路径的 `_triggers` 与回测路径 `run_compound_grid` 的内联判断。
+# 两套在 GRID_STEP_PCT / GRID_TP_PCT / GRID_TP_BASIS 被改动时会静默分叉。
+#
+# Phase 3: 回测路径改成调用同一个 `TriggerPolicy`。驱动价/层额不同是合理的
+# (回测用**收盘价** + 固定 ¥10k, 生产用 K 线最低价 + 浮动层额), 但**判定
+# 规则**必须只有一份。
+# ---------------------------------------------------------------------------
+
+#: 一条精心设计的价格序列 (lookback=3) —— 每个事件都算得出来:
+#:   i=4  9.0  跌破前 3 日最低 (10.2) → OPEN
+#:   i=5  8.5  ≤ 9.0×97% = 8.73    → ADD
+#:   i=6  8.0  ≤ 8.5×97% = 8.245   → ADD
+#:   i=7  7.5  ≤ 8.0×97% = 7.76    → ADD
+#:   i=8  9.4  ≥ 9.0×103% = 9.27   → TP (周期 1 收尾)
+#:   i=10 7.0  跌破前 3 日最低 (7.5) → OPEN (周期 2)
+#:   i=12 7.3  ≥ 7.0×103% = 7.21   → TP (周期 2 收尾)
+#:   i=13 6.5  跌破前 3 日最低 (7.0) → OPEN (周期 3, 未收尾)
+#:   i=14 6.0  ≤ 6.5×97% = 6.305   → ADD
+_PHASE3_PRICES = [10.0, 10.5, 10.2, 10.4, 9.0, 8.5, 8.0, 7.5, 9.4, 9.2,
+                  7.0, 7.2, 7.3, 6.5, 6.0]
+
+
+def _phase3_series():
+    idx = pd.date_range("2026-01-01", periods=len(_PHASE3_PRICES), freq="B")
+    return pd.Series(_PHASE3_PRICES, index=idx)
+
+
+def test_simulator_follows_the_shared_trigger_policy():
+    """回测路径的开仓/加仓/出场, 必须落在 TriggerPolicy 算出的触发位上。"""
+    r = grid_sim.run_compound_grid(_phase3_series(), lookback=3,
+                                   trigger_mode="window")
+    cycles = r["cycles"]
+    assert len(cycles) == 2, "应有两个已收尾的周期"
+
+    # 周期 1: 9.0 开仓 → 8.5/8.0/7.5 三层加仓 → 9.4 回本出场
+    c1 = cycles[0]
+    assert [e["price"] for e in c1["entries"]] == [9.0, 8.5, 8.0, 7.5]
+    assert c1["exit_price"] == 9.4
+    assert c1["num_buys"] == 4
+    assert c1["total_invested"] == 40000.0, "每层固定 ¥10,000"
+    assert c1["pnl"] == 0.0, "只卖成本额 → 已实现盈亏恒为 0"
+
+    # 周期 2: 7.0 开仓 → 7.3 回本出场
+    c2 = cycles[1]
+    assert [e["price"] for e in c2["entries"]] == [7.0]
+    assert c2["exit_price"] == 7.3
+    assert c2["num_buys"] == 1
+
+    # 周期 3 还没收尾 → 留在 open_cycle
+    assert [e["price"] for e in (r["open_cycle"] or [])] == [6.5, 6.0]
+    assert r["cum_realized"] == 0.0
+    assert r["merged_shares"] > 0, "出场余量归并到再平衡持仓"
+
+
+def test_simulator_add_and_tp_never_fire_on_the_same_bar():
+    """add 与 tp 互斥 —— 金字塔里最后一笔永远是最便宜的。
+
+    所以「一个周期 N 买 1 卖」的 N 笔买入不会跟出场挤在同一根 K 线上。
+    """
+    r = grid_sim.run_compound_grid(_phase3_series(), lookback=3,
+                                   trigger_mode="window")
+    for c in r["cycles"]:
+        entry_dates = {str(e["date"]) for e in c["entries"]}
+        assert str(c["exit_date"]) not in entry_dates, (
+            "出场日不能同时是加仓日")
+
+
+def test_simulator_trigger_sequence_matches_policy_level_by_level():
+    """差分测试: 自己用 TriggerPolicy 跑一遍, 事件序列必须与模拟器一致。
+
+    这条锁住的是「回测路径确实在用那个策略」—— 万一以后有人把内联判断
+    又塞回来, 这里会红。
+    """
+    from src.domain.grid.trigger_policy import TriggerLevel, TriggerPolicy
+    series = _phase3_series()
+    policy = TriggerPolicy()
+    prices = series.tolist()
+
+    expected: list = []
+    in_cycle = False
+    entries: list = []
+    for i, price in enumerate(prices):
+        window = prices[max(0, i - 3):i]
+        lv = policy.levels(in_cycle=in_cycle, entries=entries,
+                           window=list(window), price=float(price))
+        if lv.signal is TriggerLevel.OPEN:
+            expected.append((i, "open"))
+            entries.append({"price": float(price),
+                            "shares": 10000.0 / float(price)})
+            in_cycle = True
+        elif lv.signal is TriggerLevel.ADD:
+            expected.append((i, "add"))
+            entries.append({"price": float(price),
+                            "shares": 10000.0 / float(price)})
+        elif lv.signal is TriggerLevel.TP:
+            expected.append((i, "tp"))
+            entries = []
+            in_cycle = False
+
+    # 从模拟器的结果里还原出同样的事件序列
+    result = grid_sim.run_compound_grid(series, lookback=3,
+                                        trigger_mode="window")
+    actual: list = []
+    for c in result["cycles"]:
+        for i, e in enumerate(c["entries"]):
+            actual.append((series.index.get_loc(e["date"]),
+                           "open" if i == 0 else "add"))
+        actual.append((series.index.get_loc(c["exit_date"]), "tp"))
+    for i, e in enumerate(result["open_cycle"] or []):
+        actual.append((series.index.get_loc(e["date"]),
+                       "open" if i == 0 else "add"))
+    actual.sort()
+
+    assert actual == sorted(expected), (
+        f"模拟器的事件序列与 TriggerPolicy 不一致:\n"
+        f"  policy  = {sorted(expected)}\n  模拟器 = {actual}")
+
+
+def test_simulator_global_trigger_mode_uses_all_history():
+    """trigger_mode='global' → 开仓看**全部**历史最低, 不是滚动窗口最低。
+
+    两条路径的开仓门槛不同:
+      window  → 最近 3 根的最低 (12.0) → 11.0 跌破 → 开仓
+      global  → 全历史最低 (10.0)     → 11.0 没跌破 → 不开仓
+    """
+    idx = pd.date_range("2026-01-01", periods=5, freq="B")
+    series = pd.Series([10.0, 12.0, 12.5, 12.2, 11.0], index=idx)
+
+    win = grid_sim.run_compound_grid(series, lookback=3, trigger_mode="window")
+    assert win["open_cycle"] is not None
+    assert win["open_cycle"][0]["price"] == 11.0
+
+    glob = grid_sim.run_compound_grid(series, lookback=3, trigger_mode="global")
+    assert glob["open_cycle"] is None, "11.0 没有跌破全历史最低 10.0"
+    assert glob["cycles"] == []
+
+
+def test_simulator_has_no_inline_trigger_arithmetic():
+    """「什么算触发」只有一份 —— 回测路径不许再有内联的 3% 算术。"""
+    import inspect
+    src = inspect.getsource(grid_sim)
+    for bad in ("1 - step_pct / 100", "1 + tp_pct / 100",
+                "1 - self.step_pct", "1 + self.tp_pct"):
+        assert bad not in src, f"回测路径里还有内联的触发算术: {bad}"
+    assert "TriggerPolicy(" in src, "回测路径必须调用 TriggerPolicy"
+
+
+# ---------------------------------------------------------------------------
 # src/presentation/notify_failure — 失败邮件必须上报真实步骤状态
 #
 # 背景 (2026-10-23 事故): 旧版邮件无论何种失败都写死 "失败原因: record

@@ -195,8 +195,8 @@ class PositionLot:
 会一直误读。`app.js` / `notify.py` 里已经用的是「建议回本」。
 
 > `GRID_TP_PCT` **故意没改名**：它是「回本**触发**阈值」（高于首笔买入价 3%），
-> 属于**触发规则**而不是出场规则 —— Phase 3 的 `TriggerPolicy` 会接管它，
-> 届时再随该上下文一起命名。
+> 属于**触发规则**而不是出场规则 —— Phase 3 的 `TriggerPolicy` 已接管它
+> （生产路径与回测路径现在共用同一个类），届时再随该上下文一起命名。
 
 **⚠ 建议 ≠ 成交**：2026-10-25 起引擎降级为**只建议不下单**（`grid.py:539
 advance_one_day` 只滚窗口 + 算建议；`grid.py:668 manual_op` 是唯一实盘入口）。
@@ -392,17 +392,17 @@ class GridSuggestion:
 | `ValuationService` | `record.py:295 fetch_positions` | 有 I/O | 属 BC-D，但结果组装在 BC-B |
 | `RebalancePolicy` | `record.py:431 evaluate` | 纯 | ⚠ 依赖模块级 `THRESHOLD_PP` |
 | `RebalancePlanner` | `record.py:452-462`（plan 构造） | 纯 | 混在 `evaluate` 里，应拆 |
-| `TriggerPolicy` | `grid.py:395 _triggers` | 纯 | ✅ 已经是单一事实源 → Phase 2b 提成类 `domain/grid/trigger_policy.py` |
+| `TriggerPolicy` | `grid.py:395 _triggers` | 纯 | ✅ Phase 2b 提成类 `domain/grid/trigger_policy.py`；**Phase 3 生产 + 回测两条路径都接上** |
 | `GridAdvisor` | `grid.py:501 advisory` | 纯 | ✅ 纯函数，不改 state → Phase 2b 提成类 `domain/grid/advisor.py` |
-| `LayerSizingPolicy` | `grid.py:54 layer_yuan` | 纯 | 依赖模块级常量 |
+| `LayerSizingPolicy` | `grid.py:54 layer_yuan` | 纯 | ✅ Phase 3 提成类 `domain/grid/layer_sizing.py`（参数显式化） |
 | `CostOnlyExitPolicy` | `grid/exit_policy.py cost_only_exit` | 纯 | ✅ 三处复用，唯一实现 |
-| `GridSimulator` | `grid.py:116 run_compound_grid` | 纯（有 I/O 取价） | ⚠ 自带一套触发逻辑 |
+| `GridSimulator` | `grid.py:116 run_compound_grid` | 纯（有 I/O 取价） | ✅ Phase 3 —— 触发判定改为调用 `TriggerPolicy`，不再自带一套 |
 | `EqualWeightBacktester` | `three_pp.py:63 run_backtest` | 纯 | 通用，可直接被 DDD 包一层 |
 | `DailyDigestBuilder` | `notify.py:122/335/520` | 纯 | 呈现层 |
 
-### ⚠ 最严重的一处重复：网格规则有两套实现
+### ✅ 最严重的一处重复：网格规则有两套实现 —— Phase 3 已消除
 
-| 规则 | 生产（`_triggers`，`grid.py:395`） | 回测（`run_compound_grid`，`grid.py:116`） |
+| 规则 | 生产（`TriggerPolicy.levels`） | 回测（`TriggerPolicy.levels`，**同一个类**） |
 |---|---|---|
 | 开仓 | `price < min(last_prices)` | `price < past.min()`（同） |
 | 加仓 | `price ≤ entries[-1].price × 97%` | `price ≤ last_price × 97%`（同） |
@@ -423,14 +423,13 @@ TriggerPolicy
 ```
 
 三个 driver 的**驱动价/层额**不同是**合理的**（它们本来就是三种场景），
-但**判定规则**必须只有一份。现在的两套实现在 `GRID_TP_BASIS`、`GRID_STEP_PCT`
-被改动时会静默分叉。
+但**判定规则**必须只有一份。
 
-> **进度**：`TriggerPolicy` 类已在 Phase 2b 落地
-> （`src/domain/grid/trigger_policy.py`，生产路径 `_triggers` 已改成它的薄适配器）。
-> Phase 3 剩的那一步是**把回测路径接上** —— `run_compound_grid` 里的内联
-> 判断换成调用同一个 `TriggerPolicy`。注意回测用的是**收盘价 + 固定 ¥10k 层额**，
-> 所以接上去之后**行为必须逐位不变**（60 行 `backtest` ops 会重算，需比对）。
+> **进度** ✅ **已消除**（Phase 3，2026-10-27）。`TriggerPolicy` 类在 Phase 2b
+> 落地（`src/domain/grid/trigger_policy.py`），Phase 3 把**回测路径也接上** ——
+> `run_compound_grid` 里的内联判断换成调用同一个 `TriggerPolicy.levels(...)`。
+> 剩下的驱动价/层额差异是**场景差异**（收盘价 vs K 线最低价、浮动层额 vs 固定
+> ¥10k），**不是规则的两套实现**。行为**逐位不变**已验证 —— 详见 §11.1.5。
 
 ---
 
@@ -646,10 +645,10 @@ src/
       grid_position.py          ✅ 网格聚合的领域半（stdlib-only！）
       grid_op.py                ✅ Phase 2b —— GridOp / ExecutedOp / SimulatedOp
       trigger_policy.py         ✅ Phase 2b —— TriggerPolicy / TriggerLevel /
-                                TriggerDistance（Phase 3 再把回测接上）
+                                TriggerDistance（Phase 3 生产+回测都已接上）
       exit_policy.py            ✅ Phase 2 —— ExitAtCost / cost_only_exit
       advisor.py                ✅ Phase 2b —— GridAdvisor → GridSuggestion
-      layer_sizing.py           ⬜ Phase 3
+      layer_sizing.py           ✅ Phase 3 —— LayerSizingPolicy
     events/
       domain_events.py          ⬜ Phase 5
   application/                 ✅ 用例编排
@@ -923,12 +922,107 @@ domain/grid/advisor.py           GridSuggestion / GridAdvisor
 | `scripts/apply_grid.py` 真实 payload 冒烟 | import 链正常；非法 op 正确报错并退出 rc=1（`::error::` annotation 在） |
 | `import src.domain.grid.{trigger_policy,grid_op,advisor,grid_position}` 拉起 pandas / akshare？ | **没有**（stdlib-only 约束仍成立） |
 
-##### (g) Phase 3 还剩什么
+##### (g) Phase 3 的后续
 
-`TriggerPolicy` 已经就位，但**回测路径还没接上** ——
-`run_compound_grid` 仍是内联判断。接的时候注意：回测用的是**收盘价 + 固定
-¥10k 层额**，接上去之后**行为必须逐位不变**（60 行 `backtest` ops 会重算，
-需逐行比对）。
+`TriggerPolicy` 已就位，**回测路径也接上了**（见 §11.1.5）。
+
+#### 11.1.5 Phase 3 落地情况（2026-10-27）
+
+Phase 3 = **触发规则去重**。两件事：
+
+| # | 做了什么 | 文件 |
+|---|---|---|
+| (a) | 回测路径接上 `TriggerPolicy` —— `run_compound_grid` 不再有内联的开仓/加仓/回本判断 | `src/simulation/grid_simulator.py` |
+| (b) | 层额规则提成显式策略类 —— 依赖模块级常量的三行变成可注入的纯函数 | `src/domain/grid/layer_sizing.py`（新） |
+
+##### (a) 回测接上 `TriggerPolicy`
+
+```python
+# src/simulation/grid_simulator.py —— 以前是内联的 30 行 if/elif
+policy = TriggerPolicy(step_pct=step_pct, tp_pct=tp_pct, tp_basis=tp_basis)
+
+for i, (date, price) in enumerate(prices_sorted.items()):
+    past = prices_sorted.iloc[:i] if trigger_mode == "global" \
+        else prices_sorted.iloc[max(0, i - lookback):i]
+    window = past.dropna().tolist()          # ← 为了跟 pandas 的 nanmin 逐位一致
+    levels = policy.levels(in_cycle=in_cycle, entries=entries,
+                            window=window, price=float(price))
+    signal = levels.signal
+    if signal is TriggerLevel.OPEN:  ...
+    elif signal is TriggerLevel.ADD:  ...
+    elif signal is TriggerLevel.TP:   ...
+```
+
+⚠️ **三个必须原样保留的细节**，否则不是「逐位不变」而是「差一点点」：
+
+1. **`.dropna()`** —— pandas 的 `.min()` 是 `nanmin`（跳过 NaN），而 Python 的
+   `min(list)` 遇到 NaN 会给出不一样的结果。回测路径必须用 `dropna()`。
+2. **触发位看的是「今天之前」的收盘价** —— `past = prices_sorted.iloc[:i]`
+   （`global` 模式）或 `iloc[max(0, i-lookback):i]`（`window` 模式）。
+   今天的价不能自己当自己的门槛。
+3. **tp 在 add 之前判定** —— `TriggerPolicy.levels` 里 tp 的分支在 add 之前。
+   金字塔的买价严格递减（`entries[-1].price ≤ entries[0].price`，
+   `avg_cost ≥ entries[-1].price`），所以「`price ≤ entries[-1].price × 0.97`」
+   与「`price ≥ tp_target`」**不可能同时成立** —— tp 优先与旧的「先 add 后 tp」
+   等价，不会改变任何一根 K 线的结果。
+
+**驱动价/层额仍然不同，这是对的**：回测用**收盘价** + 固定 ¥10k/层，
+生产用 **K 线最低价** + 浮动层额 —— 这是**场景差异**，不是规则的两套实现。
+§11.3 明确「统一回测与实盘口径」是**不做**的，正确做法是隔离。
+
+##### (b) `LayerSizingPolicy` —— 层额的唯一实现
+
+```python
+# src/domain/grid/layer_sizing.py
+@dataclass(frozen=True)
+class LayerSizingPolicy:
+    base_yuan: float = GRID_BASE_YUAN              # 默认 ¥10,000
+    floating_fraction: float = GRID_FLOATING_FRACTION   # 默认 0.05
+
+    def layer_yuan(self, pool_value: float, recent_min: float) -> float:
+        floating = max(pool_value - recent_min, 0.0)
+        return self.base_yuan + floating * self.floating_fraction
+```
+
+以前这段逻辑是 `grid_position.layer_yuan()` 里的三行，依赖模块级常量 ——
+没法做多策略并存，测试也只能改环境变量。现在参数是显式的。
+
+⚠️ **返回未取整的 float** —— 层额要除以价格算份额（`amount / price`），
+提前取整会改掉份额。它只在**输出边界**上被包成 `LayerSize`
+（`GridSuggestion.suggest_amount` 与快照里的 `layer_yuan`）。这跟 §11.1.2 的
+舍入点纪律是同一条。
+
+⚠️ **回测口径不同**：`grid_simulator` 每层**固定** ¥10,000（或由调用方给回调）
+—— 那是**另一种场景**的口径，不是本规则的重复实现（§9.2 ① 列的就是这条
+防腐层）。
+
+⚠️ **常量在调用时读取**：`layer_yuan()` 便捷入口每次调用都重新读模块级常量
+（不是在 import 时冻结），改了 `GRID_BASE_YUAN` 立即生效 —— 与以前模块级函数
+的行为一致。
+
+##### (c) 验证
+
+| 检查 | 结果 |
+|---|---|
+| 逐字节回归（确定性流程 dump 前后对比：state 往返 / `advance_one_day` × 20 天 × 4 资产 / `advisory` / `manual_op` open→add→tp / `ops_from_cycles` / `merge_backtest_ops` / `layer_yuan`） | **逐字节相同**（sha256 一致） |
+| 60 行 `backtest` op 重算（4 个资产 × 全历史） | **完全一致** —— 可转债 13 / 红利 20 / 纳指 18 / 黄金 9，全部 `same=True` |
+| 模拟器**完整输出**重算（cycles + history，4 组场景 = trigger_mode {window, global} × tp_basis {first_buy, avg_cost}） | **逐字节相同** |
+| `scripts/compare_grid_exit_mode.py --selftest`（独立重实现 vs 生产逻辑） | ✓ 重实现与生产逻辑一致（4 个资产 5 项指标全 ✓） |
+| `python -X utf8 -m tests.test_record` | **136/136 通过**（新增 5 个 Phase 3 测试） |
+| `import src.domain.grid.{trigger_policy,grid_op,advisor,layer_sizing,grid_position}` 拉起 pandas / akshare？ | **没有**（stdlib-only 约束仍成立） |
+
+##### (d) 新增测试（5 个）
+
+| 测试 | 断言 |
+|---|---|
+| `test_simulator_follows_the_shared_trigger_policy` | 模拟器的信号与 `TriggerPolicy.levels` **逐个 bar** 一致 |
+| `test_simulator_add_and_tp_never_fire_on_the_same_bar` | add 与 tp 互斥（等价性前提） |
+| `test_simulator_trigger_sequence_matches_policy_level_by_level` | 整段序列与 policy 驱动的期望逐条对齐 |
+| `test_simulator_global_trigger_mode_uses_all_history` | `trigger_mode="global"` 用**全历史**最低价，而非 120 日窗口 |
+| `test_simulator_has_no_inline_trigger_arithmetic` | **静态**断言 `grid_simulator.py` 源码里没有 `1 - step_pct / 100` / `1 + tp_pct / 100` 这类内联算术，且必须出现 `TriggerPolicy(` —— 防止有人日后把判定逻辑又写回回测路径 |
+
+最后那个测试是这一阶段的**防回归钉子**：光比对行为不够，行为一致但逻辑
+重新分叉（比如有人为了「优化」把内联判断抄回去）也该被拦住。
 
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
@@ -959,7 +1053,7 @@ domain/grid/advisor.py           GridSuggestion / GridAdvisor
 
 - 收益：I11 的静默丢数据风险消失；"引擎不下单"由类型保证
 
-#### Phase 3 — 触发规则去重（1~2 次提交）
+#### Phase 3 — 触发规则去重（1~2 次提交）✅ 已落地
 
 `TriggerPolicy` 已在 **2b** 提成独立的类（`domain/grid/trigger_policy.py`），
 生产路径 `_triggers` 已改成它的薄适配器。剩下的是把 **`run_compound_grid`
@@ -969,6 +1063,10 @@ domain/grid/advisor.py           GridSuggestion / GridAdvisor
 
 - 注意：`ops` 里已有的 60 行 `backtest` op 是用旧逻辑算的。若新逻辑结果不同，
   要么保持旧逻辑（加测试锁定），要么重跑 `backfill_grid_ops.py` 并在文档里记一笔
+
+- ✅ **已完成**（2026-10-27）：60 行 `backtest` op 重算**完全一致**（无需重跑
+  `backfill_grid_ops.py`）；模拟器完整输出（cycles + history，4 组场景）
+  **逐字节相同**。详见 §11.1.5。
 
 #### Phase 4 — 组合聚合与来源标注（2 次提交）
 
@@ -1009,7 +1107,7 @@ domain/grid/advisor.py           GridSuggestion / GridAdvisor
 | D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | 把网格那一栏标成"虚拟"或从合计剔除（**本轮不修**，迁移后两者已自动对齐到只剩 `cash_rebalance` 的差额） |
 | D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | `src/infrastructure/json_repositories.py:read_holdings` | 职责混乱 | Phase 4 拆出 `AssetUniverse` |
 | D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:merge_grid_shares_into_positions` + `rebalance_policy.evaluate` | 模拟影响真实 | `Provenance` 标注 + 页面披露（规则本身是用户选的，不改语义） |
-| D7 | 网格规则两套实现 | `src/domain/grid/trigger_policy.py:TriggerPolicy`（生产路径已接）vs `src/simulation/grid_simulator.py:run_compound_grid`（仍是内联判断） | 改参数会静默分叉 | Phase 3 —— `TriggerPolicy` 已就位，只剩回测接上 |
+| D7 | 网格规则两套实现 | ✅ **已解决**（Phase 3）—— `src/domain/grid/trigger_policy.py:TriggerPolicy` 现在是**生产 + 回测**两条路径**唯一**的判定来源 | 改参数会静默分叉 | ✅ 已解决（§11.1.5）—— `run_compound_grid` 调用 `policy.levels(...)`，并有静态测试防止内联算术回流 |
 | D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | `src/application/daily_snapshot.py:THRESHOLD_PP`, `src/domain/grid/grid_position.py:GRID_*` | 无法做多策略并存、测试需改环境 | Phase 5 提为配置对象 |
 | D9 | `evaluate()` 的两段式求值是隐式近似 | `src/application/daily_snapshot.py:main` | 恢复自动行为时会有偏差 | 显式命名为 `LayerSizingBasis` / `SnapshotBasis` |
 | D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | `apply_grid.py` 的 `VALID_OPS` vs `grid_position.py` 的 op 名 | 改一处漏一处 | 提到 `domain/grid` 单一处 |
@@ -1024,11 +1122,12 @@ domain/grid/advisor.py           GridSuggestion / GridAdvisor
 - [x] 「网格引擎不交易」在哪里保证？→ `GridAdvisor` 返回不可变 `GridSuggestion`，类型上无法写 state（Phase 2b ✅）
 - [ ] 「一个周期 N 买 1 卖」在哪里保证？→ `GridPosition` 状态机的合法边
 - [x] 「出场只卖成本额」在哪里保证？→ `cost_only_exit` 唯一实现（Phase 2a ✅）
+- [x] 「什么算触发只有一份规则」在哪里保证？→ `TriggerPolicy.levels` 是生产路径与回测路径**唯一**的判定来源（Phase 3 ✅）；`test_simulator_has_no_inline_trigger_arithmetic` 静态挡住内联算术回流
 - [ ] 「归并份额不写 trades.json」在哪里保证？→ `MergedSharesTransferred` 事件，账本上下文无写权限
 - [x] 「模拟不是实盘」在哪里保证？→ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b ✅）；`Provenance` 待 Phase 4/5
 - [ ] 「目标权重 = 1/n」在哪里保证？→ `TargetWeightPolicy`，且 UI 从 `Portfolio` 推导而非硬编码
 - [x] 「状态形状固定」在哪里保证？→ `GridPosition` dataclass，mapper 显式（Phase 2a ✅）
-- [ ] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型、不同仓储权限（`SimulatedOp` 已就位，Phase 3 收尾）
+- [x] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型（`SimulatedOp` vs `ExecutedOp`）、不同仓储权限（Phase 2b + Phase 3 ✅）；`GridSimulator` 只能产出 `SimulatedOp`，`merge_backtest_ops` 只能写 `source="backtest"` 的行 |
 
 ---
 

@@ -27,14 +27,14 @@ from typing import Callable, Optional
 
 from ..domain.grid.exit_policy import cost_only_exit
 from ..domain.grid.grid_op import OpKind, OpSource, SimulatedOp
-from ..domain.grid.grid_position import (
-    GRID_BASE_YUAN,
-    GRID_LOOKBACK,
-)
+from ..domain.grid.grid_position import GRID_LOOKBACK
+from ..domain.grid.layer_sizing import GRID_BASE_YUAN
 from ..domain.grid.trigger_policy import (
     GRID_STEP_PCT,
     GRID_TP_BASIS,
     GRID_TP_PCT,
+    TriggerLevel,
+    TriggerPolicy,
 )
 from ..domain.shared.money import Price, ShareCount
 
@@ -69,54 +69,62 @@ def run_compound_grid(
     history: list[dict] = []
     prices_sorted = prices.sort_index()
 
+    # 「什么算触发」的**唯一**定义 —— 与生产路径共用同一个类
+    # (`domain/grid/trigger_policy.py`)。驱动价/层额不同是合理的
+    # (回测用**收盘价** + 固定 ¥10k, 生产用 K 线最低价 + 浮动层额),
+    # 但**判定规则**必须只有一份 (docs/domain_model.md §7)。
+    policy = TriggerPolicy(step_pct=step_pct, tp_pct=tp_pct,
+                            tp_basis=tp_basis)
+
     def _layer(d, p) -> float:
         if pos_yuan_fn is not None:
             return float(pos_yuan_fn(d))
         return float(pos_yuan)
 
     for i, (date, price) in enumerate(prices_sorted.items()):
-        if not in_cycle:
-            if i > 0:
-                if trigger_mode == "global":
-                    past = prices_sorted.iloc[:i]
-                else:
-                    past = prices_sorted.iloc[max(0, i - lookback):i]
-                if len(past) >= 1 and price < past.min():
-                    sh = _layer(date, price) / price
-                    entries.append({"date": date, "price": float(price), "shares": sh})
-                    in_cycle = True
+        # 触发位看的是**今天之前**的收盘价 —— 今天的价不能自己当自己的门槛。
+        if trigger_mode == "global":
+            past = prices_sorted.iloc[:i]
         else:
-            last_price = entries[-1]["price"]
-            if price <= last_price * (1 - step_pct / 100):
-                sh = _layer(date, price) / price
-                entries.append({"date": date, "price": float(price), "shares": sh})
+            past = prices_sorted.iloc[max(0, i - lookback):i]
+        # ⚠️ `.dropna()` 是为了跟 pandas 的 `.min()` (nanmin) 逐位一致 ——
+        # 直接 `min(list)` 遇到 NaN 会得到不一样的结果。
+        window = past.dropna().tolist()
+
+        levels = policy.levels(in_cycle=in_cycle, entries=entries,
+                                window=window, price=float(price))
+        signal = levels.signal
+
+        if signal is TriggerLevel.OPEN:
+            sh = _layer(date, price) / price
+            entries.append({"date": date, "price": float(price), "shares": sh})
+            in_cycle = True
+        elif signal is TriggerLevel.ADD:
+            sh = _layer(date, price) / price
+            entries.append({"date": date, "price": float(price), "shares": sh})
+        elif signal is TriggerLevel.TP:
             total_shares = sum(e["shares"] for e in entries)
             total_invested = sum(e["shares"] * e["price"] for e in entries)
             avg_cost = total_invested / total_shares if total_shares else 0.0
-            if tp_basis == "first_buy" and entries:
-                tp_target = entries[0]["price"] * (1 + tp_pct / 100)
-            else:
-                tp_target = avg_cost * (1 + tp_pct / 100)
-            if price >= tp_target:
-                split = cost_only_exit(total_shares, total_invested, float(price))
-                merged_shares += split.merged_shares
-                cum_realized += split.pnl
-                cycles.append({
-                    "entries": entries,
-                    "exit_date": date,
-                    "exit_price": float(price),
-                    "num_buys": len(entries),
-                    "avg_cost": avg_cost,
-                    # 卖出的是"回本所需"那部分, 不是全部持仓 —— 见 cost_only_exit
-                    "total_shares": split.shares_sold,
-                    "shares_transferred": split.merged_shares,
-                    "total_invested": total_invested,
-                    "exit_value": split.proceeds,
-                    "pnl": split.pnl,
-                    "return_pct": 0.0,
-                })
-                in_cycle = False
-                entries = []
+            split = cost_only_exit(total_shares, total_invested, float(price))
+            merged_shares += split.merged_shares
+            cum_realized += split.pnl
+            cycles.append({
+                "entries": entries,
+                "exit_date": date,
+                "exit_price": float(price),
+                "num_buys": len(entries),
+                "avg_cost": avg_cost,
+                # 卖出的是"回本所需"那部分, 不是全部持仓 —— 见 cost_only_exit
+                "total_shares": split.shares_sold,
+                "shares_transferred": split.merged_shares,
+                "total_invested": total_invested,
+                "exit_value": split.proceeds,
+                "pnl": split.pnl,
+                "return_pct": 0.0,
+            })
+            in_cycle = False
+            entries = []
 
         if in_cycle:
             total_shares = sum(e["shares"] for e in entries)
