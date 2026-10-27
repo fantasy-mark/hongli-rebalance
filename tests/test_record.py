@@ -4004,6 +4004,63 @@ def test_the_page_and_the_email_disclose_the_same_two_numbers():
     assert 'real_sh = float(p.get("shares"' in src, src
 
 
+# -----------------------------------------------------------------------------
+# D11 —— 图表画的是用户**实际持仓**, 不是完整 ETF_DEFS
+# -----------------------------------------------------------------------------
+
+def _chart_holdings_file(tmpdir: Path, positions: list[dict]) -> Path:
+    """写一份临时 holdings.json —— 给图表装载器读。"""
+    path = tmpdir / "holdings.json"
+    path.write_text(json.dumps(
+        {"_schema": "v2", "cash_rebalance": 0.0, "cash_grid": 0.0,
+         "positions": positions},
+        ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_the_chart_draws_the_holdings_the_user_actually_has():
+    """D11: read_holdings() 返回**三个**值。
+
+    以前这里解包成两个 → ValueError → 被 `except Exception` 吞掉 →
+    图表静默退回「全部 ETF_DEFS」, 换仓/减仓后画的还是老品种。
+    """
+    from src.infrastructure import json_repositories
+    from src.infrastructure.chart_renderer import _load_chart_assets
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _chart_holdings_file(Path(tmp), [
+            {"name": "黄金ETF博时", "code": "159937", "shares": 100.0},
+        ])
+        old = json_repositories.HOLDINGS
+        json_repositories.HOLDINGS = path
+        try:
+            assets = _load_chart_assets()
+        finally:
+            json_repositories.HOLDINGS = old
+
+    # 只有用户真的持有的那一个 —— 不是 4 个品种的全集
+    assert len(assets) == 1, assets
+    assert assets[0][0] == "黄金ETF博时", assets
+
+
+def test_the_chart_falls_back_to_the_full_registry_when_holdings_are_unreadable():
+    """兜底路径还在 —— 但**只**在读不到 holdings 时才走。"""
+    from src.infrastructure import json_repositories
+    from src.infrastructure.chart_renderer import _load_chart_assets
+    from src.domain.portfolio.asset_universe import ETF_DEFS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        missing = Path(tmp) / "nope.json"
+        old = json_repositories.HOLDINGS
+        json_repositories.HOLDINGS = missing
+        try:
+            assets = _load_chart_assets()
+        finally:
+            json_repositories.HOLDINGS = old
+
+    assert len(assets) == len(ETF_DEFS), assets
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]

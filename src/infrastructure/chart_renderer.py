@@ -83,7 +83,11 @@ def _load_chart_assets() -> list[tuple[str, str, str]]:
     try:
         from src.domain.portfolio.asset_universe import ETF_DEFS
         from src.infrastructure.json_repositories import read_holdings
-        holdings, _ = read_holdings()
+        # read_holdings() returns THREE values (positions + the two cash pools).
+        # Unpacking two raised ValueError, the `except Exception` below swallowed
+        # it, and the chart silently fell back to the full ETF_DEFS registry --
+        # so the chart never showed the user's actual holdings (D11).
+        holdings, _cash_rebalance, _grid_budget = read_holdings()
         out: list[tuple[str, str, str]] = []
         seen: set[str] = set()
         for h in holdings:

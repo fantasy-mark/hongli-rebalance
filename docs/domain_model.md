@@ -14,8 +14,9 @@
 > Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
 > Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身
 > —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化 ·
-> Phase 7 ✅ 账本读侧拆成投影 · D6 ✅ 披露侧（真实持仓 / 归并 分栏）。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.10。
+> Phase 7 ✅ 账本读侧拆成投影 · D6 ✅ 披露侧（真实持仓 / 归并 分栏）·
+> D11 ✅ 图表读实际持仓。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.11。
 
 ---
 
@@ -1718,6 +1719,44 @@ class LedgerProjection(NamedTuple):
 | 页面（chrome-devtools，硬刷新） | ✓ —— 表头 `真实持仓 / 归并`；灌一份带归并的假记录，行显示 `5,200 / 1,232`，归并那栏是红的 |
 | 邮件（真实记录渲染） | ✓ —— 文本表 `真实持仓 32,000 / 归并 —`，脚注两行口径说明 |
 
+#### 11.1.11 D11 落地情况（2026-10-28）
+
+§12 里最小的一条 —— 一行代码，但它让**图表一直在说谎**。
+
+##### (a) 错在哪
+
+`src/infrastructure/chart_renderer.py:_load_chart_assets()` 写的是：
+
+```python
+holdings, _ = read_holdings()      # ❌ read_holdings() 返回**三个**值
+```
+
+`read_holdings()` 返回 `(positions, cash_rebalance, cash_grid)` —— 三个。
+解包成两个抛 `ValueError`；而紧接着那行 `except Exception` 把异常**吞了**，
+直接走 fallback 分支：**图表永远画完整的 `ETF_DEFS`**。
+
+所以「换仓 / 减仓后图表仍画全部 4 个品种」不是数据错了，是**异常被吞了**。
+
+##### (b) 修法
+
+```python
+holdings, _cash_rebalance, _grid_budget = read_holdings()
+```
+
+fallback 逻辑**不动** —— 文件读不到时仍然退回全量品种（测试环境 / 第一次跑
+`record.py` 之前）。兜底**只在读不到文件时**才走，不再是「读得到也走」。
+
+⚠️ 今天的持仓恰好就是 `ETF_DEFS` 那 4 个代码，所以**图看起来没变** ——
+但它现在读的是**用户实际持仓**，换仓之后会跟着变。
+
+##### (c) 验证
+
+| 检查 | 结果 |
+|---|---|
+| `python -X utf8 -m tests.test_record` | **194/194 通过**（新增 2 个） |
+| `test_the_chart_draws_the_holdings_the_user_actually_has` | ✓ —— 只画用户持有的那一个品种 |
+| `test_the_chart_falls_back_to_the_full_registry_when_holdings_are_unreadable` | ✓ —— 兜底路径仍在 |
+
 ### 11.3 明确**不要**做的
 
 | 不做 | 理由 |
@@ -1744,7 +1783,7 @@ class LedgerProjection(NamedTuple):
 | D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | ✅ **已解决**（Phase 5a）—— 参数收进 `src/domain/grid/config.py:GridConfig` 与 `src/application/config.py:AppConfig`；模块级别名保留为**配置对象的投影**；`TriggerPolicy.from_config` / `LayerSizingPolicy.from_config` / `advance_all_grids(config=)` / `run_backtest(threshold_pp=)` 让多套策略在一个进程里并存 | 无法做多策略并存、测试需改环境 | ✅ 已解决（§11.1.7 a）—— `test_env_reads_are_confined_to_the_config_objects` 静态钉住「只有配置对象读环境变量」 |
 | D9 | `evaluate()` 的两段式求值是隐式近似 | ✅ **已解决**（Phase 5c）—— `SnapshotRun.layer_sizing_basis` / `SnapshotRun.snapshot_basis` 各有名字：层额定尺用前者，记录用后者 | 恢复自动行为时会有偏差 | ✅ 已解决（§11.1.7 c）—— `test_size_grid_layer_uses_the_layer_sizing_basis_total` 钉住「层额用的是层额定尺那个数」 |
 | D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | ✅ **已解决**（Phase 5c-2）—— 写路径的 `VALID_OPS` 现在是 `TriggerLevel` 的**投影**，`VALID_SIDES` 是 `TradeSide` 的投影；两份脚本里手抄的词表删掉了 | 改一处漏一处 | ✅ 已解决（§11.1.7 d）—— `test_write_path_vocabularies_come_from_the_domain` 静态钉住 |
-| D11 | 图表永远用完整 `ETF_DEFS`，读不到用户实际持仓 | `src/infrastructure/chart_renderer.py:_load_chart_assets()` 里 `holdings, _ = read_holdings()` —— `read_holdings()` 返回 **3** 个值，解包抛 `ValueError`，被 `except Exception` 吞掉后走 fallback 分支 | 换仓/减仓后图表仍画全部 4 个品种 | 改成 `holdings, _cr, _cg = read_holdings()`（Phase 0 **保持原样**，只搬不改行为；修它会改变图表输出） |
+| D11 | 图表永远用完整 `ETF_DEFS`，读不到用户实际持仓 | `src/infrastructure/chart_renderer.py:_load_chart_assets()` 里 `holdings, _ = read_holdings()` —— `read_holdings()` 返回 **3** 个值，解包抛 `ValueError`，被 `except Exception` 吞掉后走 fallback 分支 | 换仓/减仓后图表仍画全部 4 个品种 | ✅ **已解决** —— `holdings, _cash_rebalance, _grid_budget = read_holdings()`；兜底分支**只在文件读不到时**才走（详见 §11.1.11）|
 
 ---
 
@@ -1767,6 +1806,7 @@ class LedgerProjection(NamedTuple):
 - [x] 「应用层没有业务规则」在哪里保证？→ `daily_snapshot.main()` 只调 12 个具名用例（Phase 5c-1 ✅）—— `test_main_is_pure_wiring` 静态钉住（`abs(` / `round(` / `float(` / `min(` / `max(` 一个都不许出现）；`test_main_runs_the_use_cases_in_order` 钉住用例清单与顺序
 - [x] 「写路径的规则只有一份」在哪里保证？→ `src/application/apply_grid_op.py` / `apply_trade.py`（Phase 5c-2 ✅）—— op 词表 = `TriggerLevel` 的投影、side 词表 = `TradeSide` 的投影；两个脚本是**薄壳**（`test_the_write_path_scripts_are_thin_shims` 钉住脚本里没有校验/重放/发 id 的实现）
 - [x] 「写路径与读路径同一把尺子」在哪里保证？→ 写路径重放调用**领域层**的 `src/domain/ledger/projection.py:project_ledger`（Phase 5c-2 ✅，Phase 7 搬家）—— 与每日快照 `daily_snapshot.replay_trade_ledger` 同一份实现；`test_write_path_and_daily_path_replay_the_ledger_identically` 钉住「两条路重放出的持仓与现金相同」
+- [x] 「图表画的是不是用户实际持仓」在哪里保证？→ `_load_chart_assets()` 解包 `read_holdings()` 的**三个**返回值（D11 ✅）—— 以前解包成两个抛 `ValueError`，被 `except Exception` 吞掉后静默退回全量 `ETF_DEFS`；`test_the_chart_draws_the_holdings_the_user_actually_has` 钉住
 - [x] 「坏掉的账本不会被当成空账本」在哪里保证？→ 写路径走 `json_repositories.read_trades()` / `read_grid_state()`（Phase 5c-2 ✅）—— **严格读**：文件坏了就抛错（整批不写盘）；每日快照仍走宽松的 `load_trades()`（跑砸了只是今天的记录没出来，宁可少一天也别静默清空持仓）
 
 ---
