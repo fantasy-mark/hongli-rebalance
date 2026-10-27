@@ -638,6 +638,8 @@ src/
       portfolio.py             # Portfolio(根) / Position / PositionLot
       rebalance_policy.py      # RebalancePolicy / RebalancePlan
       valuation.py             # Valuation
+      asset_universe.py        # AssetUniverse —— 「跟踪哪些资产」的注册表
+      cash_pools.py            # CashPoolBreakdown —— 「合计」口径 (D4)
     grid/
       grid_position.py         # GridPosition(根) / GridCycle / GridLayer
       grid_op.py               # GridOp / ExecutedOp / SimulatedOp
@@ -645,6 +647,9 @@ src/
       exit_policy.py           # CostOnlyExitPolicy  (原 split_take_profit)
       advisor.py               # GridAdvisor → GridSuggestion
       layer_sizing.py          # LayerSizingPolicy
+      price_window.py          # PriceWindow / WindowBar —— 带日期的 120 日窗口 (D1)
+      state_machine.py         # LEGAL_TRANSITIONS —— 「N 买 1 卖」的那张表
+      config.py                # GridConfig —— 唯一的 env 读取点
     events/
       domain_events.py         # 9 个事件
   application/                 # 用例编排 —— 薄
@@ -692,6 +697,8 @@ src/
       valuation.py              ✅ value_positions / value_extra_codes（价格来源注入）
       asset_universe.py         ✅ Phase 4 —— AssetUniverse（注册表）/ UNIVERSE
                                 + ETF_DEFS / ASSET_NAMES / NAME_TO_CODE / QDII_CODES
+      cash_pools.py             ✅ D4 —— CashPoolBreakdown：资金管理表的「合计」
+                                口径写在这里（合计市值 + 合计余额 = badge 总市值）
     grid/
       grid_position.py          ✅ 网格聚合的领域半（stdlib-only！）
       grid_op.py                ✅ Phase 2b —— GridOp / ExecutedOp / SimulatedOp
@@ -704,6 +711,8 @@ src/
                                 「一个周期 N 买 1 卖」的形状
       config.py                 ✅ Phase 5a —— GridConfig（七个网格参数 + from_env，
                                 领域层读环境变量的**唯一**一处）
+      price_window.py           ✅ D1 —— PriceWindow / WindowBar：120 日滚动窗口
+                                **带日期**（同一天重复运行是覆盖，不是追加）
     events/
       domain_events.py          ✅ Phase 5b —— 九个领域事件 + EventStream
   application/                 ✅ 用例编排
@@ -744,6 +753,7 @@ src/
 **已知的口径保留**：Phase 0 **只搬不改行为**。`chart_renderer.py` 里
 `holdings, _ = read_holdings()` 的解包 bug（见 D11）被**原样保留** ——
 修它会改变图表输出，属于另一个提交的事。
+（→ D11 已于 2026-10-28 修掉，见 §11.1.11。）
 
 #### 11.1.2 Phase 1 落地情况（2026-10-26）
 
