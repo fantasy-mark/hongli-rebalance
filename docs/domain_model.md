@@ -15,8 +15,9 @@
 > Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身
 > —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化 ·
 > Phase 7 ✅ 账本读侧拆成投影 · D6 ✅ 披露侧（真实持仓 / 归并 分栏）·
-> D11 ✅ 图表读实际持仓 · D3 ✅ 虚拟预算改 `GridBudget`。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.12。
+> D11 ✅ 图表读实际持仓 · D3 ✅ 虚拟预算改 `GridBudget` ·
+> D4 ✅ 资金管理与 badge 口径对齐。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.13。
 
 ---
 
@@ -1810,6 +1811,64 @@ fallback 逻辑**不动** —— 文件读不到时仍然退回全量品种（�
 | `test_the_virtual_budget_still_counts_towards_the_total` | ✓ —— 规则没改：1600 = 1000 + 100 + 500 |
 | `test_the_ledger_rejects_the_legacy_grid_cash_key` | ✓ —— 旧键报错，钱不会凭空消失 |
 
+#### 11.1.13 D4 落地情况（2026-10-28）
+
+##### (a) 原来错在哪
+
+页面上有两个「市值」，说的却不是一件事：
+
+| 位置 | 算的是什么 |
+|---|---|
+| 顶部 badge「总市值」 | `etf_value + cash_rebalance + cash_grid` —— **不含**网格的虚拟占用 |
+| 资金管理表「合计市值」 | ETF 持仓市值 + **网格的虚拟资金占用** |
+
+网格那一块是**虚拟**的（网格是虚拟策略，那不是用户的钱），badge 不算它 ——
+对。但表把它算进了「合计」，于是两张表自相矛盾，用户只能靠猜那个差额去哪了。
+
+##### (b) 改法：口径写进**代码**
+
+`src/domain/portfolio/cash_pools.py:CashPoolBreakdown`：
+
+```
+合计市值 = 只含 3pp再平衡 的 ETF 持仓市值（网格的虚拟占用**不计入**）
+合计余额 = 真实现金 + 虚拟现金
+⇒ 合计市值 + 合计余额 == 顶部 badge 的「总市值」
+```
+
+为什么「不计入」是对的那一个？badge 的总市值**本来就不含**网格的虚拟占用
+（`total = etf_value + cash_rebalance + grid_budget`，D3）—— 要两张表对上，
+合计市值就也不能含。
+
+⚠️ **虚拟占用没有被藏起来** —— 它还在「复合网格」那一行里，标着「虚拟」，
+只是**不参与合计**。D3 的原则在这里继续生效：虚拟不等于该被藏起来，只等于
+**必须被标出来**。
+
+⚠️ 虚拟的**余额**（`cash_grid`）**计入**合计余额 —— badge 就是这么算的
+（`grid_budget` 计入 `total`，D3）。要是对称地把它也踢出去，那张表反而跟
+badge 对不上 —— 那才是真的自相矛盾。
+
+##### (c) 呈现层
+
+| 位置 | 改法 |
+|---|---|
+| `index.html` 网格那一行 | 行名下加一行「虚拟」；两个格子挂「虚拟」标记 |
+| `index.html` 合计那一行 | 行名下加一行「不含网格虚拟占用」 |
+| `index.html` 页脚 | 写死三条公式（合计市值 / 合计余额 / 两者相加 = 总市值） |
+| `app.js` 合计市值 | `money(rebalanceMarket)` —— **不再** `rebalanceMarket + gridMarket` |
+| `app.js` badge | 网格那一笔标「复合网格(虚拟)」 |
+| `src/presentation/digest.py` | 邮件头「网格(虚拟)」；网格段加一句「资金占用 = 虚拟，不计入上方总市值」 |
+
+`daily_snapshot.build_record` 的 `cash_total` 现在从 `CashPoolBreakdown`
+出 —— **数字逐位不变**（加法顺序一致）。
+
+##### (d) 验证
+
+| 检查 | 结果 |
+|---|---|
+| `python -X utf8 -m tests.test_record` | **203/203 通过**（新增 5 个） |
+| 页面实测 | 合计市值 ¥168,884.40 + 合计余额 ¥165.00 = badge 总市值 ¥169,049 ✓ |
+| 数字有没有变 | 没有 —— 记录的 `cash_total` 加法顺序不变 |
+
 ### 11.3 明确**不要**做的
 
 | 不做 | 理由 |
@@ -1829,7 +1888,7 @@ fallback 逻辑**不动** —— 文件读不到时仍然退回全量品种（�
 | D1 | 同一天重复运行会让 120 日窗口少一天深度 | `apply-grid.yml` 提交后 re-trigger `daily.yml`；窗口尾部有重复值（黄金 `[8.35, 8.29, 8.12, 8.12]`） | 窗口是**唯一**的距开仓依据 | `PriceWindow` 改带日期（`list[(date, price)]`），重复日按日期覆盖而非追加 |
 | D2 | `ops` 混装执行日志与模拟日志 | `src/domain/grid/grid_position.py:manual_op` 写 `source:"manual"`；`src/simulation/grid_simulator.py:ops_from_cycles` 写 `source:"backtest"` | 容易被误读成"真实成交记录" | Phase 2 拆成 `ExecutedOp` / `SimulatedOp` |
 | D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | ✅ **已解决**（领域侧，详见 §11.1.12）—— 改名 `GridBudget` / `grid_budget`（`src/domain/shared/money.py`），`Portfolio.__post_init__` 保证类型；**规则不变**，虚拟预算仍然计入 `total` |
-| D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | 把网格那一栏标成"虚拟"或从合计剔除（**本轮不修**，迁移后两者已自动对齐到只剩 `cash_rebalance` 的差额） |
+| D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | ✅ **已解决** —— `CashPoolBreakdown`（`src/domain/portfolio/cash_pools.py`）把「合计」口径写成代码：合计市值**不含**网格虚拟占用、合计余额含虚拟余额 ⇒ 合计市值 + 合计余额 = badge 总市值；网格那一行标「虚拟」（详见 §11.1.13）|
 | D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | ✅ **已解决**（Phase 4）—— 资产清单独立成 `AssetUniverse` 注册表（`src/domain/portfolio/asset_universe.py`），`holdings.json` 只剩持仓 | 职责混乱 | ✅ 已解决（§11.1.6） |
 | D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:Portfolio.from_holdings` + `RebalancePolicy.evaluate` | 模拟影响真实 | ✅ **已解决**（Phase 4 标注 + Phase 5d 披露）—— 标注侧：`Provenance` 落在 `PositionLot` 上，`Position.simulated_shares` 是**求和出来的**；披露侧：页面/邮件/日志都把「**真实持仓**」与「**归并**」分成两栏显示，口径写在各自脚注里（详见 §11.1.10）。**规则本身不改** —— 归并仍计入权重，那是用户 2026-10-25 拍板的 |
 | D7 | 网格规则两套实现 | ✅ **已解决**（Phase 3）—— `src/domain/grid/trigger_policy.py:TriggerPolicy` 现在是**生产 + 回测**两条路径**唯一**的判定来源 | 改参数会静默分叉 | ✅ 已解决（§11.1.5）—— `run_compound_grid` 调用 `policy.levels(...)`，并有静态测试防止内联算术回流 |
@@ -1861,6 +1920,7 @@ fallback 逻辑**不动** —— 文件读不到时仍然退回全量品种（�
 - [x] 「写路径与读路径同一把尺子」在哪里保证？→ 写路径重放调用**领域层**的 `src/domain/ledger/projection.py:project_ledger`（Phase 5c-2 ✅，Phase 7 搬家）—— 与每日快照 `daily_snapshot.replay_trade_ledger` 同一份实现；`test_write_path_and_daily_path_replay_the_ledger_identically` 钉住「两条路重放出的持仓与现金相同」
 - [x] 「图表画的是不是用户实际持仓」在哪里保证？→ `_load_chart_assets()` 解包 `read_holdings()` 的**三个**返回值（D11 ✅）—— 以前解包成两个抛 `ValueError`，被 `except Exception` 吞掉后静默退回全量 `ETF_DEFS`；`test_the_chart_draws_the_holdings_the_user_actually_has` 钉住
 - [x] 「哪一池是虚拟的」在哪里保证？→ `GridBudget` 类型（D3 ✅）—— 领域里已经没有 `cash_grid` 这个名字了（`Portfolio.grid_budget` / `LedgerProjection.grid_budget`）；类型由 `Portfolio.__post_init__` 保证；**JSON 键仍是 `cash_grid`**（committed artifact 不改键名），映射只在读/写两处；账本写侧遇到旧键直接报错
+- [x] 「资金管理表的『合计』和顶部 badge 的『总市值』是同一个数吗？」→ `CashPoolBreakdown.total == Portfolio.total`（D4 ✅）—— 规则在 `src/domain/portfolio/cash_pools.py`，不是注释；记录的 `cash_total` 从同一个对象出；页面那一行的公式写在页脚
 - [x] 「坏掉的账本不会被当成空账本」在哪里保证？→ 写路径走 `json_repositories.read_trades()` / `read_grid_state()`（Phase 5c-2 ✅）—— **严格读**：文件坏了就抛错（整批不写盘）；每日快照仍走宽松的 `load_trades()`（跑砸了只是今天的记录没出来，宁可少一天也别静默清空持仓）
 
 ---

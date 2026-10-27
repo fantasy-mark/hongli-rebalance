@@ -161,13 +161,13 @@
             <td style="text-align:right;" id="cash-rebalance-balance">¥0.00</td>
           </tr>
           <tr>
-            <th style="text-align:left;">复合网格</th>
+            <th style="text-align:left;">复合网格<span class="muted" style="font-weight:400; display:block; font-size:0.85em;">虚拟</span></th>
             <td id="cash-grid-assets" class="assets-cell"><span class="muted">—</span></td>
             <td style="text-align:right;" id="cash-grid-market">¥0.00</td>
             <td style="text-align:right;" id="cash-grid-balance">¥0.00</td>
           </tr>
           <tr class="total-row">
-            <th style="text-align:left;">合计</th>
+            <th style="text-align:left;">合计<span class="muted" style="font-weight:400; display:block; font-size:0.85em;">不含网格虚拟占用</span></th>
             <td></td>
             <td style="text-align:right;" id="cash-total-market">¥0.00</td>
             <td style="text-align:right;" id="cash-total-balance">¥0.00</td>
@@ -177,14 +177,21 @@
       <p class="muted" style="font-size:12px; margin-top:0.4em;">
         每行一笔 <strong>资金操作</strong>。
         市值 = 已持仓 (3pp再平衡: ETF 持仓，<strong>含网格归并进来的份额</strong>;
-        复合网格: 虚拟仓位<strong>资金占用</strong>的当前价估值，
+        复合网格: <strong>虚拟</strong>仓位<strong>资金占用</strong>的当前价估值，
         只算在周期内的层 —— 出场后本金收回，占用回落)；
-        余额 = 可立即动用的现金 (3pp再平衡: 真实现金; 复合网格: 虚拟现金)；
-        两者分别独立。 复合网格的「市值」是<strong>虚拟</strong>的
-        资金占用估值，<strong>不计入</strong>顶部 badge 的「总市值」。
+        余额 = 可立即动用的现金 (3pp再平衡: 真实现金; 复合网格: <strong>虚拟</strong>现金)；
+        两者分别独立。
         复合网格是<strong>虚拟</strong>的（不与真实交易挂钩），
         但开仓/加仓/回本会修改
         <a href="data/grid_state.json" target="_blank"><code>data/grid_state.json</code></a>。
+      </p>
+      <p class="muted" style="font-size:12px;">
+        <strong>口径 —— 两张表对得上</strong>：
+        <strong>合计市值</strong> = 3pp再平衡 的 ETF 持仓市值 ——
+        <strong>不含</strong>复合网格的<strong>虚拟资金占用</strong>
+        （那一块摆在「复合网格」那一行，标着「虚拟」，<strong>不参与合计</strong>）；
+        <strong>合计余额</strong> = 真实现金 + 虚拟现金；
+        所以 <strong>合计市值 + 合计余额 = 顶部 badge 的「总市值」</strong>。
       </p>
       <p class="muted" style="font-size:12px;">
         6 种操作: <code>deposit_rebalance</code> / <code>deposit_grid</code> /

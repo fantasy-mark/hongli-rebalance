@@ -87,7 +87,7 @@ function renderStatus(rec) {
       `ETF ¥${Math.round(rec.etf_value).toLocaleString()}` +
       ` + 现金 ¥${Math.round(cashTotal).toLocaleString()}` +
       ` <span class="status-pool">(3pp再平衡 ¥${Math.round(cashReb).toLocaleString()} + ` +
-      `复合网格 ¥${Math.round(cashGr).toLocaleString()})</span>` +
+      `复合网格(虚拟) ¥${Math.round(cashGr).toLocaleString()})</span>` +
     `</div>`;
 }
 
@@ -469,13 +469,26 @@ function renderCashPoolSummary(latestRec, holdings) {
   const rebalanceMarket = computeRebalanceMarketValue(latestRec);
   const gridMarket      = computeGridMarketValue(latestRec);
   const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
-  setText('cash-rebalance-market', `¥${rebalanceMarket.toFixed(2)}`);
-  setText('cash-rebalance-balance', `¥${cashReb.toFixed(2)}`);
-  setText('cash-grid-market', `¥${gridMarket.toFixed(2)}`);
-  setText('cash-grid-balance', `¥${cashGr.toFixed(2)}`);
-  setText('cash-total-market', `¥${(rebalanceMarket + gridMarket).toFixed(2)}`);
-  setText('cash-total-balance', `¥${(cashReb + cashGr).toFixed(2)}`);
   const setHTML = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  const setTitle = (id, txt) => { const el = document.getElementById(id); if (el) el.title = txt; };
+  const money = (v) => `¥${v.toFixed(2)}`;
+  setText('cash-rebalance-market', money(rebalanceMarket));
+  setText('cash-rebalance-balance', money(cashReb));
+  // 复合网格那一行是**虚拟**的 —— 数字后面挂一个「虚拟」标记, 别把它当成
+  // 真钱。数字本身**不藏**: 虚拟不等于该被藏起来, 只等于必须被标出来。
+  setHTML('cash-grid-market', `${money(gridMarket)}<span class="muted"> 虚拟</span>`);
+  setHTML('cash-grid-balance', `${money(cashGr)}<span class="muted"> 虚拟</span>`);
+  // ⚠️ D4 —— 合计市值**不含**复合网格的虚拟资金占用:
+  //       合计市值 + 合计余额 == 顶部 badge 的「总市值」
+  //   badge 的总市值 = etf_value + cash_rebalance + cash_grid, 本来就**不含**
+  //   网格的虚拟占用 —— 合计市值要是含了它, 两张表说的就不是同一件事, 用户
+  //   只能靠猜那个差额去哪了。规则见 domain/portfolio/cash_pools.py。
+  setText('cash-total-market', money(rebalanceMarket));
+  setText('cash-total-balance', money(cashReb + cashGr));
+  setTitle('cash-total-market',
+    '合计市值 = 3pp再平衡的 ETF 持仓市值 (不含复合网格的虚拟资金占用)');
+  setTitle('cash-total-balance',
+    '合计余额 = 真实现金 + 虚拟现金; 合计市值 + 合计余额 = 顶部「总市值」');
   setHTML('cash-rebalance-assets',
     rebalanceCodes(latestRec)
       .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)

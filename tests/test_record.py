@@ -4130,6 +4130,115 @@ def test_the_json_key_stays_cash_grid_but_the_domain_name_is_grid_budget():
     assert Portfolio.from_records([], grid_budget=42.0).grid_budget == 42.0
 
 
+# -----------------------------------------------------------------------------
+# D4 —— 资金管理「合计市值」与 badge「总市值」是同一个口径
+# -----------------------------------------------------------------------------
+#
+# 以前这两处不是一个口径: badge 的总市值 = etf_value + cash_rebalance +
+# cash_grid (不含网格的虚拟占用), 而资金管理表的「合计市值」把网格的虚拟
+# 占用也加了进去 —— 两张表说的不是同一件事, 用户只能靠猜那个差额去哪了。
+#
+# 规则现在写在 `domain/portfolio/cash_pools.py` 里 (代码, 不是注释)。
+
+def _d4_portfolio():
+    """一个带虚拟预算的组合 —— 用来验「合计 == 总市值」。"""
+    from src.domain.portfolio.portfolio import Portfolio
+    records = [{"name": "黄金ETF博时", "code": "159937", "shares": 100.0,
+                "price": 10.0, "value": 1000.0}]
+    return Portfolio.from_records(records, cash_rebalance=100.0,
+                                  grid_budget=500.0)
+
+
+def test_the_two_tables_tell_the_same_story():
+    """D4: 合计市值 + 合计余额 == 顶部 badge 的「总市值」。"""
+    from src.domain.portfolio.cash_pools import CashPoolBreakdown
+
+    pf = _d4_portfolio()
+    pools = CashPoolBreakdown.from_portfolio(pf, grid_market=10000.0)
+    # 合计市值 = ETF 持仓市值 —— 网格的虚拟占用**不计入**
+    assert pools.total_market == 1000.0, pools
+    # 合计余额 = 真实现金 + 虚拟现金 (虚拟的**余额**要计入 —— badge 就是这么算的)
+    assert pools.total_balance == 600.0, pools
+    # 两张表说的同一个数
+    assert pools.total == pf.total == 1600.0, (pools.total, pf.total)
+
+
+def test_the_virtual_occupancy_is_shown_but_not_counted():
+    """虚拟占用**不藏** —— 它摆在网格那一行, 只是不参与合计。
+
+    ⚠️ D3 的原则: 虚拟不等于该被藏起来, 只等于**必须被标出来**。
+    """
+    from src.domain.portfolio.cash_pools import CashPoolBreakdown
+
+    pools = CashPoolBreakdown.from_portfolio(_d4_portfolio(),
+                                             grid_market=10000.0)
+    assert pools.grid_market == 10000.0, "虚拟占用得看得见"
+    assert pools.total_market == 1000.0, "但它不进合计市值"
+    # 加不加它, 合计都不动 —— 合计只看真钱那一侧
+    without = CashPoolBreakdown.from_portfolio(_d4_portfolio(),
+                                               grid_market=0.0)
+    assert without.total == pools.total, (without.total, pools.total)
+
+
+def test_the_record_and_the_badge_agree_on_the_total():
+    """记录里的 cash_total / total 与两池分解对得上。"""
+    from src.domain.portfolio.cash_pools import CashPoolBreakdown
+
+    positions = [{"name": "黄金ETF博时", "code": "159937", "shares": 100.0,
+                  "price": 10.0, "value": 1000.0, "date": "2026-10-27"}]
+    grid_signals = [{"name": "黄金ETF博时", "price": 10.0, "current_value": 10000.0,
+                     "in_cycle": True, "num_buys": 1, "avg_cost": 10.0,
+                     "signal": None, "trigger_pct": 1.0, "trigger_kind": "open",
+                     "layer_yuan": 10000.0, "merged_shares": 0.0,
+                     "merged_value": 0.0, "unrealized_pnl": 0.0,
+                     "return_pct": 0.0}]
+    r = snapshot.build_record(
+        today="2026-10-27", positions=positions,
+        cash_rebalance=100.0, grid_budget=500.0,
+        total=1600.0, weights=[1.0], triggered_3pp=False, plan=[],
+        grid_signals=grid_signals, grid_state={},
+    )
+    pools = CashPoolBreakdown.from_record(r)
+    assert pools.total_market == r["etf_value"] == 1000.0, pools
+    assert pools.total_balance == r["cash_total"] == 600.0, pools
+    assert pools.grid_market == 10000.0, pools
+    assert pools.total == r["total"] == 1600.0, (pools.total, r["total"])
+
+
+def test_the_page_labels_the_virtual_pool_and_reconciles_the_totals():
+    """D4: 页面把「虚拟」标出来, 并把合计口径写成公式。"""
+    html = (ROOT / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app.js").read_text(encoding="utf-8")
+
+    # 网格那一行标了「虚拟」; 合计那一行说明了它不含什么
+    assert "复合网格<span" in html, html
+    assert "不含网格虚拟占用" in html, html
+    # 网格那两个格子挂着「虚拟」标记
+    assert "'cash-grid-market', `${money(gridMarket)}<span class=\"muted\"> 虚拟</span>`" in js, js
+    assert "'cash-grid-balance', `${money(cashGr)}<span class=\"muted\"> 虚拟</span>`" in js, js
+    # ⚠️ 合计市值**不含**网格的虚拟占用 —— app.js 里不能再把 gridMarket 加进去
+    assert "setText('cash-total-market', money(rebalanceMarket))" in js, js
+    assert "rebalanceMarket + gridMarket" not in js, js
+    # 公式写在页脚 —— 用户不用猜差额去哪了
+    assert "合计市值 + 合计余额 = 顶部 badge 的「总市值」" in html, html
+
+
+def test_the_email_says_the_same_thing_about_the_virtual_pool():
+    """邮件与页面用同一套词 —— 「虚拟」。"""
+    from src.presentation import digest as notify
+
+    r = _make_record_with_grid()
+    text = notify.build_text(r)
+    html = notify.build_html(r, pages_url="https://x/")
+    for body in (text, html):
+        assert "资金占用" in body, body[:400]
+        assert "虚拟" in body, body[:400]
+    assert "不计入上方「总市值」" in text, text
+    assert "不计入上方「总市值」" in html, html
+    # 邮件头的「网格」那一笔也标了虚拟 (与页面 badge 同一个词)
+    assert "网格(虚拟)" in html, html
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]

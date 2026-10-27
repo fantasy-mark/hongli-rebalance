@@ -223,6 +223,8 @@ def build_text(r: dict) -> str:
             f"= ¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%",
             "⚠ 以上均为**建议** —— 请在页面「交易记录 → 复合网格」"
             "提交开仓/加仓/回本, 引擎不会自动下单.",
+            "⚠ 资金占用 = 网格的**虚拟**资金占用 (不是真钱), "
+            "不计入上方「总市值」.",
         ]
         merged_note = _grid_merged_note(grid_signals)
         if merged_note:
@@ -428,7 +430,8 @@ def build_html(r: dict, pages_url: str = "") -> str:
       <div style="font-size:12px;color:#666;margin-bottom:10px;">
         复合网格 · 120 日新低 + 3% 加仓 + 3% 回本出场(余量归并再平衡持仓) · 建议单层金额 <strong>¥{layer:,.0f}</strong>
         (¥10,000 底仓 + 3pp 近 3 年浮盈 × 5%)<br/>
-        ⚠ <strong>引擎只给建议, 不会自动下单</strong> —— 开仓 / 加仓 / 回本请在页面「交易记录 → 复合网格」提交.
+        ⚠ <strong>引擎只给建议, 不会自动下单</strong> —— 开仓 / 加仓 / 回本请在页面「交易记录 → 复合网格」提交.<br/>
+        ⚠ <strong>资金占用 = 网格的虚拟资金占用</strong>(不是真钱), 不计入上方「总市值」.
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <thead>
@@ -483,7 +486,7 @@ def build_html(r: dict, pages_url: str = "") -> str:
           <td style="padding:6px 0;width:25%;vertical-align:top;">
             <div style="font-size:11px;color:#888;text-transform:uppercase;">再平衡</div>
             <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r.get('cash_rebalance', 0))}</div>
-            <div style="font-size:10px;color:#aaa;margin-top:1px;">网格 {fmt_money(r.get('cash_grid', 0))}</div>
+            <div style="font-size:10px;color:#aaa;margin-top:1px;">网格(虚拟) {fmt_money(r.get('cash_grid', 0))}</div>
           </td>
           <td style="padding:6px 0;width:25%;vertical-align:top;">
             <div style="font-size:11px;color:#888;text-transform:uppercase;">现金合计</div>

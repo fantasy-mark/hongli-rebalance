@@ -61,6 +61,7 @@ from ..domain.grid.config import GridConfig
 from ..domain.grid.layer_sizing import LayerSizingPolicy
 from ..domain.ledger.projection import project_ledger
 from ..domain.portfolio.asset_universe import ASSET_NAMES, ETF_DEFS, QDII_CODES
+from ..domain.portfolio.cash_pools import CashPoolBreakdown, grid_occupancy
 from ..domain.portfolio.portfolio import (
     Portfolio,
     merged_by_code_from_transfers,
@@ -236,6 +237,15 @@ def build_record(today: str, positions: list[dict],
                               for p in positions)
     merged_value_total = sum(float(p.get("merged_value", 0.0) or 0.0)
                              for p in positions)
+    # ⚠️ D4: 「合计」的口径由 `CashPoolBreakdown` 定死 —— 合计市值**不含**
+    # 网格的虚拟资金占用, 合计余额 = 真实现金 + 虚拟现金。记录里的
+    # `cash_total` 从这里出, 于是页面/邮件/记录说的是同一个数。
+    pools = CashPoolBreakdown(
+        rebalance_market=etf_total,
+        rebalance_balance=cash_rebalance,
+        grid_market=grid_occupancy(grid_signals),
+        grid_balance=grid_budget,
+    )
     return {
         "date": today,
         "total": Money(total),
@@ -244,7 +254,7 @@ def build_record(today: str, positions: list[dict],
         # ⚠️ JSON 键仍然叫 `cash_grid` (committed artifact, 不改键名);
         #    领域里它是**虚拟预算** `grid_budget` (D3)。
         "cash_grid": Money(grid_budget),
-        "cash_total": Money(cash_rebalance + grid_budget),
+        "cash_total": Money(pools.total_balance),
         "positions": positions,
         # ⚠️ `Weight` 只在**展示边界**构造 —— `evaluate` 内部算触发判定用的
         # 必须是未取整的权重: 取整到 4 位会移动触发边界, 让「差 0.0001pp
