@@ -16,6 +16,31 @@ Flow (each Action run):
 This module is **orchestration**: it wires the domain services to the
 infrastructure adapters and owns the *order* of the steps.  The rules
 themselves live in `src/domain/`.
+
+**Phase 5c (2026-10-27)** — 应用层瘦身。`main()` 从一条 180 行的直线流程
+拆成一串**用例**:
+
+    load_universe            读 holdings.json (只取代码清单) + grid_state.json
+    replay_trade_ledger      重放 trades.json → 真实持仓 + 两个现金池
+    value_holdings           给每个持仓定价 (价格来源注入)
+    attach_qdii_premiums     挂上 QDII 溢价 (best-effort)
+    absorb_merged_shares     网格宣告的归并份额 → 组合吸收
+    size_grid_layer          算网格层额
+    advance_grids            推进网格状态 + 生成建议 (**不下单**)
+    judge_rebalance          评估 3pp —— 记录里那个 total 的来源
+    persist_snapshot         写 data/history.json
+    render_snapshot_chart    画 data/grid_chart.png (best-effort)
+    report_snapshot          打印人看的摘要
+    emit_step_outputs        写 $GITHUB_OUTPUT
+
+每个用例是一个**具名函数**: 读 `SnapshotRun`、写 `SnapshotRun`。应用层因此
+**只剩接线** —— 规则一条都不在这里 (规则全在 `src/domain/`)。
+
+⚠️ **两个基准** (D9): `layer_sizing_basis` 与 `snapshot_basis` 是**两次**
+评估 —— 前者给网格层额定尺, 后者才是记录里 `total` / `weights` /
+`triggered` 的来源。以前这两段是 `main()` 里相隔几十行的两行代码, 读的人
+要数行数才知道「哪个 total 是记录里的那个」; 现在它们各有名字, 各自的
+职责写在名字里。
 """
 from __future__ import annotations
 
@@ -23,13 +48,13 @@ import datetime
 import os
 import sys
 import traceback
+from dataclasses import dataclass, field
 
 import pandas as pd
 
 from ..domain.events.domain_events import (
     DailySnapshotProduced,
     EventStream,
-    MergedSharesTransferred,
 )
 from ..domain.grid import grid_position as grid_mod
 from ..domain.grid.config import GridConfig
@@ -41,6 +66,7 @@ from ..domain.portfolio.portfolio import (
     merged_by_code_from_transfers,
 )
 from ..domain.portfolio.rebalance_policy import (
+    RebalanceOutcome,
     RebalancePolicy,
     TargetWeightPolicy,
 )
@@ -54,10 +80,6 @@ from ..domain.shared.money import (
 )
 from ..infrastructure.json_repositories import (
     GRID_CHART,
-    GRID_STATE,
-    HISTORY,
-    HOLDINGS,
-    TRADES,
     load_grid_state,
     load_history,
     load_trades,
@@ -72,7 +94,7 @@ from ..infrastructure.quote_providers import (
 )
 from .config import AppConfig
 
-#: 运行配置 —— 环境变量在这里读**一次** (Phase 5), 之后一路当**值**传。
+#: 运行配置 —— 环境变量在这里读**一次** (Phase 5a), 之后一路当**值**传。
 #: 领域层 (`domain/grid/config.py`) 只有纯数据 + 一个 `from_env` 工厂。
 APP_CONFIG = AppConfig.from_env()
 
@@ -239,7 +261,279 @@ def build_record(today: str, positions: list[dict],
 
 
 # -----------------------------------------------------------------------------
-# Use-case steps
+# 运行上下文 —— 一趟快照的「工作记忆」
+# -----------------------------------------------------------------------------
+
+def _empty_outcome() -> RebalanceOutcome:
+    return RebalanceOutcome(total=0.0, weights=[], triggered=False, plan=[])
+
+
+@dataclass
+class SnapshotRun:
+    """一次快照运行的上下文 —— BC-G 编排层的「工作记忆」。
+
+    每个用例函数读它、写它。这**不是**「上帝对象」: 里面的字段全是这一步
+    的输入或输出, 没有行为 (行为全在用例函数里), 也没有跨层依赖。
+
+    ⚠️ 两个「基准」是**分开命名**的 (D9):
+      - `layer_sizing_basis` — 给网格层额定尺的那次评估。它**不是**记录里
+        的那个 total。
+      - `snapshot_basis`    — 记录里 `total` / `weights` / `triggered` 的
+        来源。
+
+    以前这两段评估是 `main()` 里相隔几十行的两行代码 —— 「哪个 total 是
+    记录里的那个」要靠数行数才答得上来。现在两个名字把答案写出来了。
+    """
+
+    today: str
+    events: EventStream = field(default_factory=EventStream)
+
+    # -- 输入 --
+    raw_holdings: list[dict] = field(default_factory=list)
+    grid_state: dict = field(default_factory=dict)
+
+    # -- 中间结果 --
+    positions: list[dict] = field(default_factory=list)
+    cash_rebalance: float = 0.0
+    cash_grid: float = 0.0
+    qdii_top: list[dict] = field(default_factory=list)
+    portfolio: Portfolio = field(default_factory=Portfolio)
+    merged_by_code: dict[str, float] = field(default_factory=dict)
+    extra_prices: dict[str, float] = field(default_factory=dict)
+    layer_sizing_basis: RebalanceOutcome = field(default_factory=_empty_outcome)
+    recent_min: float = 0.0
+    new_grid_state: dict = field(default_factory=dict)
+    grid_signals: list[dict] = field(default_factory=list)
+    history: list[dict] = field(default_factory=list)
+
+    # -- 输出 --
+    snapshot_basis: RebalanceOutcome = field(default_factory=_empty_outcome)
+    record: dict = field(default_factory=dict)
+    any_signal: bool = False
+
+
+# -----------------------------------------------------------------------------
+# 用例 —— 每个函数做一件事: 读 SnapshotRun, 写 SnapshotRun
+# -----------------------------------------------------------------------------
+
+def load_universe(run: SnapshotRun) -> None:
+    """读两份输入: holdings.json (代码清单) + grid_state.json (网格状态)。
+
+    ⚠️ holdings.json 里的 shares 是**陈旧的** —— 这里只取**代码清单**;
+    份额与现金的真相在账本 (trades.json) 里。
+    """
+    raw_holdings, _legacy_cash_rebalance, _legacy_cash_grid = read_holdings()
+    run.raw_holdings = list(raw_holdings)
+    run.grid_state = load_grid_state()
+
+
+def replay_trade_ledger(run: SnapshotRun) -> None:
+    """重放 trades.json → 真实持仓 + 两个现金池。
+
+    账本是**份额与现金的唯一真相** (data/holdings.json 只是派生缓存)。
+    """
+    trades = load_trades()
+    positions, cash_rebalance, cash_grid = rebuild_holdings_from_trades(
+        trades, as_of_date=run.today, events=run.events,
+    )
+    run.positions = positions
+    run.cash_rebalance = cash_rebalance
+    run.cash_grid = cash_grid
+
+    # 防御性兜底: 账本还空着 (scripts/init_trades_ledger.py 还没跑过)。
+    # 没有这一步, 新用户第一次跑会直接退出 —— 那时还没有任何持仓。
+    if not positions:
+        if not run.raw_holdings:
+            print("ERROR no positions (trades.json empty and holdings.json empty)",
+                  file=sys.stderr)
+            sys.exit(1)
+        run.positions = [
+            {"name": h["name"], "code": h["code"], "shares": h["shares"]}
+            for h in run.raw_holdings
+        ]
+        print("WARN trades.json empty; falling back to holdings.json shares",
+              file=sys.stderr)
+
+
+def value_holdings(run: SnapshotRun) -> None:
+    """给每个持仓定价 —— 价格来源是**注入**的 (领域层不认识 sina/eastmoney)。
+
+    全部取不到价 → 直接退出: 没有价的组合算不出权重, 记出来的快照没有意义。
+    """
+    positions, _etf_total, errors = value_positions(
+        run.positions, latest_for_code, events=run.events)
+    for code, msg in errors:
+        print(f"WARN {code}: {msg}", file=sys.stderr)
+    if not positions:
+        print("ERROR all fetches failed", file=sys.stderr)
+        sys.exit(1)
+    run.positions = positions
+    _report_prices(positions)
+
+
+def attach_qdii_premiums(run: SnapshotRun) -> None:
+    """挂上 QDII 溢价 —— best-effort, 失败不中断这一趟。"""
+    run.qdii_top = _enrich_qdii_premiums(run.positions)
+
+
+def absorb_merged_shares(run: SnapshotRun, grid_state: dict) -> None:
+    """把网格宣告的归并份额**吸收进组合** (BC-C → BC-B)。
+
+    网格只**宣告** (`MergedSharesTransferred`), 组合自己决定怎么吸收 ——
+    记 `Provenance.SIMULATED_GRID`。这些份额从此刻起是组合的持仓, 必须进
+    市值、进 3pp 权重。
+
+    ⚠️ 「组合没持有、但有归并份额」的代码也要定价 —— 它是真的持有, 只是
+    没有持仓行可以挂价格。
+    """
+    transfers = grid_mod.merged_share_transfers(grid_state)
+    run.events.extend(transfers)
+    merged = merged_by_code_from_transfers(transfers)
+    run.merged_by_code = merged
+    held_codes = {p["code"] for p in run.positions}
+    extra_codes = [c for c in merged if c not in held_codes]
+    extra_prices, extra_errors = value_extra_codes(extra_codes, latest_for_code)
+    for code, msg in extra_errors:
+        print(f"WARN merged-share price {code}: {msg}", file=sys.stderr)
+    run.extra_prices = extra_prices
+    run.portfolio = Portfolio.from_holdings(
+        run.positions, merged_by_code=merged, extra_prices=extra_prices,
+        cash_rebalance=run.cash_rebalance, cash_grid=run.cash_grid,
+    )
+
+
+def size_grid_layer(run: SnapshotRun) -> None:
+    """算网格层额 —— 用 `layer_sizing_basis` 那次评估的 total 当池子。
+
+    池子 = history 里每天的 total + 今天这个 total; 取最近
+    `floating_window` 天的**最小值**当 `recent_min`。层额由
+    `LayerSizingPolicy` 算 (BASE + max(pool − recent_min, 0) × 5%)。
+    """
+    history = load_history()
+    pool = pd.Series(
+        [r["total"] for r in history if "total" in r]
+        + [run.layer_sizing_basis.total],
+        index=pd.to_datetime(
+            [r["date"] for r in history if "total" in r] + [run.today]
+        ),
+    ).sort_index()
+    window = APP_CONFIG.grid.floating_window + 1
+    run.recent_min = float(pool.tail(window).min()) if len(pool) else 0.0
+    run.history = history
+
+
+def advance_grids(run: SnapshotRun) -> None:
+    """推进网格状态 + 生成建议 —— **引擎不下单**。
+
+    今日用 **K 线最低价** (盘中低点) 当触发输入, 所以盘中跌破也能触发;
+    取不到就退回实时收盘价。
+
+    ⚠️ 源是 `portfolio.to_records()` 而不是 `run.positions` —— 它还带着
+    「网格移交了归并份额、但组合没持有」的那些行, 网格照样要在它们上面推进。
+    """
+    positions_eff = run.portfolio.to_records()
+    prices_by_name = {p["name"]: p["price"] for p in positions_eff
+                      if p["name"] in ASSET_NAMES}
+    lows_by_name = _intraday_lows(positions_eff, run.today)
+    # If K-line fetch failed for an asset, fall back to the realtime close
+    grid_prices = {n: lows_by_name.get(n, prices_by_name.get(n))
+                   for n in ASSET_NAMES}
+    new_state, grid_signals = advance_all_grids(
+        run.grid_state, run.today, grid_prices,
+        run.layer_sizing_basis.total, run.recent_min,
+        config=APP_CONFIG.grid,
+    )
+    # Annotate signals with the (intraday) low that drove the decision so
+    # the daily record shows the actual trigger price, not the close.
+    for s in grid_signals:
+        if s["name"] in lows_by_name:
+            s["intraday_low"] = Price(lows_by_name[s["name"]])
+    run.new_grid_state = new_state
+    run.grid_signals = grid_signals
+    save_grid_state(new_state)
+
+
+def judge_rebalance(run: SnapshotRun) -> None:
+    """评估 3pp —— `snapshot_basis` 是记录里 total/weights/triggered 的来源。
+
+    ⚠️ 只给**这一次**发事件 —— 前面那次 (`layer_sizing_basis`) 只是给层额
+    定尺用的中间量, 它触发了也不该报「要调仓」。
+    """
+    outcome = rebalance_policy().evaluate(run.portfolio, events=run.events)
+    run.snapshot_basis = outcome
+    run.positions = run.portfolio.to_records()
+
+
+def persist_snapshot(run: SnapshotRun) -> None:
+    """写 data/history.json —— 今天那条记录。
+
+    同一天重跑会**替换**当天那条 (一天只有一条记录), 不是追加。
+    """
+    record = build_record(
+        today=run.today, positions=run.positions,
+        cash_rebalance=run.cash_rebalance, cash_grid=run.cash_grid,
+        total=run.snapshot_basis.total, weights=run.snapshot_basis.weights,
+        triggered_3pp=run.snapshot_basis.triggered,
+        plan=run.snapshot_basis.plan,
+        grid_signals=run.grid_signals, grid_state=run.new_grid_state,
+        qdii_premiums=run.qdii_top,
+    )
+    run.record = record
+    history = [r for r in run.history if r["date"] != run.today]
+    history.append(record)
+    run.history = history
+    save_history(history)
+
+
+def render_snapshot_chart(run: SnapshotRun) -> None:
+    """画 data/grid_chart.png —— best-effort。
+
+    画图失败不能把已经存好的记录搞丢, 所以只警告不退出。
+    """
+    try:
+        from ..infrastructure.chart_renderer import render_chart
+        render_chart(run.history, GRID_CHART)
+    except Exception as ex:
+        print(f"WARN chart render failed: {ex}", file=sys.stderr)
+
+
+def report_snapshot(run: SnapshotRun) -> None:
+    """打印人看的摘要 (stdout)。"""
+    total = run.snapshot_basis.total
+    weights = run.snapshot_basis.weights
+    triggered_3pp = run.snapshot_basis.triggered
+    positions = run.positions
+    any_signal = triggered_3pp or any(s["signal"] for s in run.grid_signals)
+    run.any_signal = any_signal
+    dyn_target = 1.0 / len(positions) if positions else 1.0 / 3
+    print(f"DATE={run.today} TOTAL={total:.2f} STATUS={'TRIGGER' if any_signal else 'ok'}")
+    print(f"  3pp: {'⚠ TRIGGERED' if triggered_3pp else 'ok'} (max Δ {max(abs(w - dyn_target) * 100 for w in weights):.2f}pp)")
+    for p, w in zip(positions, weights):
+        delta = (w - dyn_target) * 100
+        flag = " ⚠" if abs(delta) > THRESHOLD_PP else ""
+        merged_tag = (f"  (含归并 {p['merged_shares']:,.0f}份)"
+                      if p.get("merged_shares") else "")
+        print(f"    {p['name']:<14} {w:>6.2%}  Δ={delta:+.2f}pp{flag}{merged_tag}")
+    print(f"  grid layer: ¥{LayerSizingPolicy.from_config(APP_CONFIG.grid).layer_yuan(total, run.recent_min):,.0f} "
+          f"(pool ¥{total:,.0f}, recent_min ¥{run.recent_min:,.0f})")
+    for s in run.grid_signals:
+        # ⚠️ 引擎只给建议, 不会自动下单 —— tag 是"建议提交哪种 op"
+        tag = f"建议{s['signal']}" if s["signal"] else "-"
+        print(f"    {s['name']:<14} {tag:<8}  layer=¥{s['layer_yuan']:,.0f}  "
+              f"in_cycle={s['in_cycle']}  buys={s['num_buys']}  "
+              f"unreal={s['unrealized_pnl']:+,.0f}  "
+              f"占用=¥{s['current_value']:,.0f}  "
+              f"已归并={s['merged_shares']:,.0f}份(¥{s['merged_value']:,.0f})  "
+              f"距{s['trigger_kind']}={s['trigger_pct']:+.2f}%")
+
+
+def emit_step_outputs(run: SnapshotRun) -> None:
+    """写 $GITHUB_OUTPUT —— date / total / trigger 给下游 step 用。"""
+    write_github_output(run.today, run.snapshot_basis.total, run.any_signal)
+
+
+# -----------------------------------------------------------------------------
+# Internal helpers (报告 / 取价 —— 不是用例)
 # -----------------------------------------------------------------------------
 
 def _report_prices(positions: list[dict]) -> None:
@@ -322,188 +616,55 @@ def _intraday_lows(positions: list[dict], today: str) -> dict[str, float]:
 # -----------------------------------------------------------------------------
 
 def main() -> None:
-    today = datetime.date.today().isoformat()
-    #: 本次运行发生的**领域事件** (Phase 5b) —— 各领域服务顺手发出来的,
-    #: 汇总成一条流, 最后打印一行摘要 + 发一个 `DailySnapshotProduced`。
-    events = EventStream()
+    """跑一趟每日快照 —— 一串用例, 按顺序。
 
-    # 1) Universe of codes = holdings.json (cheap registry of what the user
-    #    wants tracked).  Shares here are STALE — we only use the code list.
-    raw_holdings, _legacy_cash_rebalance, _legacy_cash_grid = read_holdings()
+    每一行都是**一个具名用例**; 规则一条都不在这里 (全在 `src/domain/`)。
+    """
+    run = SnapshotRun(today=datetime.date.today().isoformat())
 
-    # 2) Real positions + cash from the trade ledger.  This is the
-    #    canonical source for shares/cash in the daily snapshot.
-    trades = load_trades()
-    positions, cash_rebalance, cash_grid = rebuild_holdings_from_trades(
-        trades, as_of_date=today, events=events,
-    )
+    # 1) 读输入: 代码清单 (holdings.json) + 网格状态 (grid_state.json)
+    load_universe(run)
 
-    # 3) Defensive fallback: empty trades (the bootstrap moment before
-    #    scripts/init_trades_ledger.py has been run).  In that case fall
-    #    back to whatever shares are in holdings.json so the snapshot
-    #    still produces a meaningful daily record.
-    if not positions:
-        if not raw_holdings:
-            print("ERROR no positions (trades.json empty and holdings.json empty)",
-                  file=sys.stderr)
-            sys.exit(1)
-        positions = [
-            {"name": h["name"], "code": h["code"], "shares": h["shares"]}
-            for h in raw_holdings
-        ]
-        print("WARN trades.json empty; falling back to holdings.json shares",
-              file=sys.stderr)
+    # 2) 账本重放 → 真实持仓 + 两个现金池
+    replay_trade_ledger(run)
 
-    positions, etf_total, errors = value_positions(
-        positions, latest_for_code, events=events)
-    for code, msg in errors:
-        print(f"WARN {code}: {msg}", file=sys.stderr)
-    if not positions:
-        print("ERROR all fetches failed", file=sys.stderr)
-        sys.exit(1)
-    _report_prices(positions)
+    # 3) 定价 + QDII 溢价
+    value_holdings(run)
+    attach_qdii_premiums(run)
 
-    # QDII premium rate: enrich position dicts with premium info
-    # (best-effort: failure does not abort the run)
-    qdii_top = _enrich_qdii_premiums(positions)
+    # 4) 网格 → 组合: 吸收归并份额 (推进网格**之前**的口径)
+    absorb_merged_shares(run, run.grid_state)
+    #    这第一次评估只用来给层额定尺 —— 它**不是**记录里的那个 total。
+    run.layer_sizing_basis = rebalance_policy().evaluate(run.portfolio)
 
-    # --- Grid-merged shares → portfolio -------------------------------
-    # The grid's take-profit hands its leftover shares to the rebalance
-    # portfolio.  Those shares are portfolio holdings from then on, so they
-    # have to be in the value the 3pp weights are computed on.
-    #
-    # Two passes: the pre-merge value sizes today's grid layer, the
-    # post-merge value is what the record reports. Since the engine no
-    # longer trades, `merged_shares` can't change during a run — so the
-    # two totals are now always equal. The structure is kept because the
-    # manual path (apply_grid.py) *does* change merged shares, and the
-    # daily record must see the portfolio the user will actually hold.
-    state = load_grid_state()
-    # 网格**宣告**它移交了哪些归并份额 (BC-C → BC-B), 组合自己吸收。
-    # ⚠️ 载荷是**累计**量 —— 组合吸收的是网格当前持有的归并份额。
-    transfers_before = grid_mod.merged_share_transfers(state)
-    events.extend(transfers_before)
-    merged_before = merged_by_code_from_transfers(transfers_before)
-    held_codes = {p["code"] for p in positions}
-    extra_codes = [c for c in merged_before if c not in held_codes]
-    extra_prices, extra_errors = value_extra_codes(extra_codes, latest_for_code)
-    for code, msg in extra_errors:
-        print(f"WARN merged-share price {code}: {msg}", file=sys.stderr)
-    portfolio = Portfolio.from_holdings(
-        positions, merged_by_code=merged_before, extra_prices=extra_prices,
-        cash_rebalance=cash_rebalance, cash_grid=cash_grid,
-    )
-    total_pre, _w_pre, _t_pre, _p_pre = rebalance_policy().evaluate(
-        portfolio,
-    ).as_tuple()
-    positions_eff = portfolio.to_records()
+    # 5) 网格: 层额定尺 → 推进状态 + 出建议 (**不下单**)
+    size_grid_layer(run)
+    advance_grids(run)
 
-    # 3pp pool for grid layer sizing (history.totals + today)
-    history = load_history()
-    pool = pd.Series(
-        [r["total"] for r in history if "total" in r] + [total_pre],
-        index=pd.to_datetime(
-            [r["date"] for r in history if "total" in r] + [today]
-        ),
-    ).sort_index()
-    window = APP_CONFIG.grid.floating_window + 1
-    recent_min = float(pool.tail(window).min()) if len(pool) else 0.0
+    # 6) 再吸收一次 (推进**之后**的口径)。
+    #    ⚠️ 引擎不再自动交易, 所以 `merged_shares` 在这一趟里不会变 ——
+    #    两次吸收必然得到同一个组合。结构留着是因为手动路径
+    #    (scripts/apply_grid.py) 确实会改归并份额, 而每日记录必须看到
+    #    用户**将要持有**的那个组合。
+    absorb_merged_shares(run, run.new_grid_state)
 
-    # Advance grid
-    # Today uses the K-line LOW (intraday low) so the trigger can fire on
-    # intraday dips even if the close is above yesterday's close.
-    #
-    # `positions_eff` (not `positions`) is the source: it also carries the
-    # codes the grid tracks but the portfolio doesn't hold — those rows exist
-    # only because the grid merged shares into them, and the grid still has
-    # to advance on them.
-    prices_by_name = {p["name"]: p["price"] for p in positions_eff
-                      if p["name"] in ASSET_NAMES}
-    lows_by_name = _intraday_lows(positions_eff, today)
-    # If K-line fetch failed for an asset, fall back to the realtime close
-    grid_prices = {n: lows_by_name.get(n, prices_by_name.get(n)) for n in ASSET_NAMES}
-    new_state, grid_signals = advance_all_grids(
-        state, today, grid_prices, total_pre, recent_min,
-        config=APP_CONFIG.grid,
-    )
-    # Annotate signals with the (intraday) low that drove the decision so
-    # the daily record shows the actual trigger price, not the close.
-    for s in grid_signals:
-        if s["name"] in lows_by_name:
-            s["intraday_low"] = Price(lows_by_name[s["name"]])
-    save_grid_state(new_state)
+    # 7) 评估 3pp —— 这次才是记录里 total / weights / triggered 的来源
+    judge_rebalance(run)
 
-    # Re-merge: today's take-profit may have added new merged shares.
-    transfers_after = grid_mod.merged_share_transfers(new_state)
-    events.extend(transfers_after)
-    merged_after = merged_by_code_from_transfers(transfers_after)
-    extra_codes = [c for c in merged_after if c not in held_codes]
-    if extra_codes:
-        extra_prices, extra_errors = value_extra_codes(extra_codes, latest_for_code)
-        for code, msg in extra_errors:
-            print(f"WARN merged-share price {code}: {msg}", file=sys.stderr)
-    portfolio = Portfolio.from_holdings(
-        positions, merged_by_code=merged_after, extra_prices=extra_prices,
-        cash_rebalance=cash_rebalance, cash_grid=cash_grid,
-    )
-    # ⚠️ 只给**最终**这次评估发事件 —— 它才是记录里 `triggered_3pp` 的来源
-    # (前面那次 total_pre 只是给层额定尺用的中间量)。
-    outcome = rebalance_policy().evaluate(portfolio, events=events)
-    total, weights, triggered_3pp, plan = outcome.as_tuple()
-    positions_eff = portfolio.to_records()
-    positions = positions_eff
-
-    # Persist record
-    record = build_record(
-        today=today, positions=positions,
-        cash_rebalance=cash_rebalance, cash_grid=cash_grid,
-        total=total, weights=weights,
-        triggered_3pp=triggered_3pp, plan=plan,
-        grid_signals=grid_signals, grid_state=new_state,
-        qdii_premiums=qdii_top,
-    )
-    history = [r for r in history if r["date"] != today]
-    history.append(record)
-    save_history(history)
-
-    # Render chart (best-effort: chart may fail if network blocked; record is already saved)
-    try:
-        from ..infrastructure.chart_renderer import render_chart
-        render_chart(history, GRID_CHART)
-    except Exception as ex:
-        print(f"WARN chart render failed: {ex}", file=sys.stderr)
-
-    any_signal = triggered_3pp or any(s["signal"] for s in grid_signals)
-    dyn_target = 1.0 / len(positions) if positions else 1.0 / 3
-    print(f"DATE={today} TOTAL={total:.2f} STATUS={'TRIGGER' if any_signal else 'ok'}")
-    print(f"  3pp: {'⚠ TRIGGERED' if triggered_3pp else 'ok'} (max Δ {max(abs(w - dyn_target) * 100 for w in weights):.2f}pp)")
-    for p, w in zip(positions, weights):
-        delta = (w - dyn_target) * 100
-        flag = " ⚠" if abs(delta) > THRESHOLD_PP else ""
-        merged_tag = (f"  (含归并 {p['merged_shares']:,.0f}份)"
-                      if p.get("merged_shares") else "")
-        print(f"    {p['name']:<14} {w:>6.2%}  Δ={delta:+.2f}pp{flag}{merged_tag}")
-    print(f"  grid layer: ¥{LayerSizingPolicy.from_config(APP_CONFIG.grid).layer_yuan(total, recent_min):,.0f} "
-          f"(pool ¥{total:,.0f}, recent_min ¥{recent_min:,.0f})")
-    for s in grid_signals:
-        # ⚠️ 引擎只给建议, 不会自动下单 —— tag 是"建议提交哪种 op"
-        tag = f"建议{s['signal']}" if s["signal"] else "-"
-        print(f"    {s['name']:<14} {tag:<8}  layer=¥{s['layer_yuan']:,.0f}  "
-              f"in_cycle={s['in_cycle']}  buys={s['num_buys']}  "
-              f"unreal={s['unrealized_pnl']:+,.0f}  "
-              f"占用=¥{s['current_value']:,.0f}  "
-              f"已归并={s['merged_shares']:,.0f}份(¥{s['merged_value']:,.0f})  "
-              f"距{s['trigger_kind']}={s['trigger_pct']:+.2f}%")
-
-    write_github_output(today, total, any_signal)
+    # 8) 落盘 + 画图 + 报告 + step outputs
+    persist_snapshot(run)
+    render_snapshot_chart(run)
+    report_snapshot(run)
+    emit_step_outputs(run)
 
     # 收尾事件 —— 「今天这一趟到底发生了什么」。
-    events.record(DailySnapshotProduced(
-        date=today, total=total, weights=list(weights),
-        triggered=triggered_3pp,
-        signals=[str(s["signal"] or "") for s in grid_signals],
+    run.events.record(DailySnapshotProduced(
+        date=run.today, total=run.snapshot_basis.total,
+        weights=list(run.snapshot_basis.weights),
+        triggered=run.snapshot_basis.triggered,
+        signals=[str(s["signal"] or "") for s in run.grid_signals],
     ))
-    print(f"  events: {events.summary_line()}")
+    print(f"  events: {run.events.summary_line()}")
 
 
 if __name__ == "__main__":

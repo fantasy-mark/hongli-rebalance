@@ -3513,6 +3513,148 @@ def test_domain_events_module_is_stdlib_only():
     assert not bad, f"domain/events 必须 stdlib-only: {bad}"
 
 
+# ---------------- Phase 5c — 应用层瘦身 ----------------
+
+#: `daily_snapshot` 的用例清单 —— 主流程 = 这一串, 顺序即执行顺序。
+#: `absorb_merged_shares` 出现**两次**: 推进网格前一次 (给层额定尺)、
+#: 推进网格后一次 (记录里那个组合)。
+SNAPSHOT_USE_CASES = [
+    "load_universe",
+    "replay_trade_ledger",
+    "value_holdings",
+    "attach_qdii_premiums",
+    "absorb_merged_shares",
+    "size_grid_layer",
+    "advance_grids",
+    "absorb_merged_shares",
+    "judge_rebalance",
+    "persist_snapshot",
+    "render_snapshot_chart",
+    "report_snapshot",
+    "emit_step_outputs",
+]
+
+
+def test_snapshot_exposes_the_use_cases():
+    """应用层被拆成一串**具名**用例 —— 不是一条 180 行的直线流程。"""
+    for name in SNAPSHOT_USE_CASES:
+        fn = getattr(snapshot, name, None)
+        assert callable(fn), f"缺用例: {name}"
+
+
+def test_main_runs_the_use_cases_in_order():
+    """main() = 一串用例; 顺序就是「今天要做哪几件事」。"""
+    order = []
+    originals = {n: getattr(snapshot, n) for n in SNAPSHOT_USE_CASES}
+
+    def _spy(name):
+        def _f(*a, **k):
+            order.append(name)
+            return None
+        return _f
+
+    for n in SNAPSHOT_USE_CASES:
+        setattr(snapshot, n, _spy(n))
+    try:
+        snapshot.main()
+    finally:
+        for n in SNAPSHOT_USE_CASES:
+            setattr(snapshot, n, originals[n])
+    assert order == SNAPSHOT_USE_CASES, f"用例顺序变了: {order}"
+
+
+def test_main_is_pure_wiring():
+    """应用层瘦身: main() 里**没有业务算术** —— 只有接线。
+
+    规则一条都不许回到应用层 —— 这是 §11.1「application 只调 domain」的形状。
+    """
+    import inspect
+    src = inspect.getsource(snapshot.main)
+    for token in ("abs(", "round(", "float(", "min(", "max("):
+        assert token not in src, f"main() 里不该出现 {token} —— 规则留在 domain 层"
+
+
+def test_snapshot_run_names_the_two_bases_separately():
+    """D9: 两个「基准」各有名字 —— 层额定尺用的那个**不是**记录里那个。"""
+    fields = snapshot.SnapshotRun.__dataclass_fields__
+    assert "layer_sizing_basis" in fields
+    assert "snapshot_basis" in fields
+    assert fields["layer_sizing_basis"] is not fields["snapshot_basis"]
+    run = snapshot.SnapshotRun(today="2026-10-23")
+    assert run.layer_sizing_basis.total == 0.0
+    assert run.snapshot_basis.total == 0.0
+
+
+def test_size_grid_layer_uses_the_layer_sizing_basis_total():
+    """层额的池子取自 `layer_sizing_basis` —— 不是 `snapshot_basis`。"""
+    run = snapshot.SnapshotRun(today="2026-10-23")
+    run.layer_sizing_basis = policy.RebalanceOutcome(
+        total=123456.0, weights=[], triggered=False, plan=[])
+    run.snapshot_basis = policy.RebalanceOutcome(
+        total=999999.0, weights=[], triggered=False, plan=[])
+    original = snapshot.load_history
+    snapshot.load_history = lambda: [{"date": "2026-10-22", "total": 200000.0}]
+    try:
+        snapshot.size_grid_layer(run)
+    finally:
+        snapshot.load_history = original
+    # 池子 = history 的 total + layer_sizing_basis 的 total → min = 123456
+    assert run.recent_min == pytest_approx(123456.0)
+
+
+def test_absorb_merged_shares_absorbs_the_declared_transfers():
+    """网格只**宣告**, 组合自己吸收 —— 模拟份额落在 SIMULATED_GRID 那一档。"""
+    run = snapshot.SnapshotRun(today="2026-10-23")
+    run.positions = [{"name": "红利ETF易方达", "code": "515180",
+                      "shares": 100.0, "price": 1.5,
+                      "date": "2026-10-23", "value": 150.0}]
+    run.cash_rebalance = 100.0
+    state = {"红利ETF易方达": {"in_cycle": False, "entries": [],
+                              "last_prices": [], "cum_realized": 0.0,
+                              "ops": [], "merged_shares": 20.0}}
+    snapshot.absorb_merged_shares(run, state)
+    assert run.merged_by_code == {"515180": 20.0}
+    pos = run.portfolio.positions[0]
+    assert pos.real_shares == pytest_approx(100.0)
+    assert pos.simulated_shares == pytest_approx(20.0)
+    assert pos.total_shares == pytest_approx(120.0)
+    transfers = run.events.of_type(events.MergedSharesTransferred)
+    assert len(transfers) == 1
+    assert transfers[0].code == "515180"
+
+
+def test_only_the_final_evaluation_emits_rebalance_triggered():
+    """两次评估: 层额定尺那次**不发**事件, 只有记录里那次发。"""
+    import inspect
+    main_src = inspect.getsource(snapshot.main)
+    judge_src = inspect.getsource(snapshot.judge_rebalance)
+    assert "evaluate(run.portfolio)" in main_src, \
+        "层额定尺那次评估不该发事件 (它只是中间量)"
+    assert "events=run.events" in judge_src, \
+        "最终评估必须发 RebalanceTriggered"
+
+
+def test_judge_rebalance_emits_exactly_one_rebalance_triggered():
+    """触发时只发**一条** `RebalanceTriggered`。"""
+    run = snapshot.SnapshotRun(today="2026-10-23")
+    run.positions = [
+        {"name": "红利ETF易方达", "code": "515180", "shares": 100.0,
+         "price": 1.0, "date": "2026-10-23", "value": 100.0},
+        {"name": "黄金ETF博时", "code": "159937", "shares": 100.0,
+         "price": 10.0, "date": "2026-10-23", "value": 1000.0},
+        {"name": "纳斯达克ETF华夏", "code": "513300", "shares": 100.0,
+         "price": 1.0, "date": "2026-10-23", "value": 100.0},
+    ]
+    run.portfolio = portfolio.Portfolio.from_holdings(run.positions)
+    snapshot.judge_rebalance(run)
+    trig = run.events.of_type(events.RebalanceTriggered)
+    assert len(trig) == 1
+    assert trig[0].deviating_asset == "黄金ETF博时"
+    assert run.snapshot_basis.triggered is True
+    # 记录里的持仓是组合的输出 (含归并字段)
+    assert run.positions[0].get("total_shares") is not None
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]

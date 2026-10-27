@@ -12,7 +12,7 @@
 > **重构进度**（§11.2 有各阶段的详细记录）：
 > Phase 0 ✅ 立柱 · Phase 1 ✅ 值对象 · Phase 2 ✅ 网格聚合显式化 ·
 > Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
-> Phase 5 🔄 事件化 + 应用层瘦身（5a 配置对象 ✅ · 5b 领域事件 ✅ · 5c 应用层瘦身 ⬜）。
+> Phase 5 ✅ 事件化 + 应用层瘦身（5a 配置对象 · 5b 领域事件 · 5c 应用层瘦身）。
 > 各阶段的「落地情况」见 §11.1.1 ~ §11.1.7。
 
 ---
@@ -698,7 +698,8 @@ src/
     events/
       domain_events.py          ⬜ Phase 5
   application/                 ✅ 用例编排
-    daily_snapshot.py           ✅ ← record.py:main()
+    daily_snapshot.py           ✅ ← record.py:main()（Phase 5c: 拆成 12 个具名
+                                用例 + SnapshotRun 上下文）
   infrastructure/              ✅ 适配器
     json_repositories.py        ✅ 4 个 JSON 文件的读写（原子写）
     quote_providers.py          ✅ sina/eastmoney/tencent/akshare 防腐层
@@ -1337,7 +1338,53 @@ class GridConfig:
 
 ##### (c) 5c —— 应用层瘦身
 
-（见下）
+**改前**：`daily_snapshot.main()` 是一条 ~180 行的直线流程 —— 12 个步骤串在
+一起，中间穿插着十几个互相传递的局部变量（`positions` / `positions_eff` /
+`portfolio` / `merged_before` / `merged_after` / `total_pre` / `total` …）。
+读代码的人要数行数才知道「现在这个 `total` 是记录里那个吗」。
+
+**改后**：主流程是一串**具名用例**，共享一个 `SnapshotRun` 上下文：
+
+```
+load_universe            读 holdings.json (只取代码清单) + grid_state.json
+replay_trade_ledger      重放 trades.json → 真实持仓 + 两个现金池
+value_holdings           给每个持仓定价 (价格来源注入)
+attach_qdii_premiums     挂上 QDII 溢价 (best-effort)
+absorb_merged_shares     网格宣告的归并份额 → 组合吸收
+size_grid_layer          算网格层额
+advance_grids            推进网格状态 + 生成建议 (**不下单**)
+judge_rebalance          评估 3pp —— 记录里那个 total 的来源
+persist_snapshot         写 data/history.json
+render_snapshot_chart    画 data/grid_chart.png (best-effort)
+report_snapshot          打印人看的摘要
+emit_step_outputs        写 $GITHUB_OUTPUT
+```
+
+`absorb_merged_shares` 出现**两次** —— 推进网格前一次（给层额定尺）、
+推进网格后一次（记录里那个组合）。这是旧代码里的两段式求值，现在**有名字**了。
+
+**D9 收口** —— 两个「基准」各有名字：
+
+| 字段 | 是什么 | 谁用它 |
+|---|---|---|
+| `layer_sizing_basis` | 给网格层额定尺的那次评估 | `size_grid_layer` / `advance_grids` |
+| `snapshot_basis` | 记录里 `total` / `weights` / `triggered` 的来源 | `persist_snapshot` / `report_snapshot` |
+
+以前这两段是 `main()` 里相隔几十行的两行代码；现在「哪个 total 是记录里
+那个」由**字段名**回答。`test_size_grid_layer_uses_the_layer_sizing_basis_total`
+钉住「层额用的是层额定尺那个数」。
+
+**应用层只剩接线**：`main()` 里没有一条业务算术 ——
+`test_main_is_pure_wiring` 静态钉住（`abs(` / `round(` / `float(` / `min(` /
+`max(` 一个都不许出现）。规则一条都不许回到应用层。
+
+**验证**
+
+| 检查 | 结果 |
+|---|---|
+| 逐字节回归 | **四项全部逐字节相同** —— 把 `daily_snapshot.main()` 的全部 I/O mock 掉（固定价格 / 固定账本 / 固定网格状态），基线（`git stash`）与重构后各跑一次：stdout `6c5da940…`、stderr `ecc7cb6d…`、写出的 history `1e97beb7…`、写出的 grid_state `a83c6596…` —— sha256 全部一致 |
+| `python -X utf8 -m tests.test_record` | **176/176 通过**（新增 8 个 Phase 5c 测试） |
+| 应用层只剩接线 | ✓ —— `test_main_is_pure_wiring` 静态钉住 `main()` 里没有业务算术 |
 
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
@@ -1412,6 +1459,9 @@ class GridConfig:
 - ✅ **5b 已落地**（2026-10-27）：九个领域事件 + `EventStream`；
   `MergedSharesTransferred` 成为组合吸收归并份额的**唯一**通路（I9 落地）。
   详见 §11.1.7 (b)。
+- ✅ **5c 已落地**（2026-10-27）：`daily_snapshot.main()` 拆成 12 个具名用例 +
+  `SnapshotRun` 上下文；两个评估基准各有名字（`layer_sizing_basis` /
+  `snapshot_basis`，D9 收口）；应用层只剩接线。详见 §11.1.7 (c)。
 
 ### 11.3 明确**不要**做的
 
@@ -1437,7 +1487,7 @@ class GridConfig:
 | D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:Portfolio.from_holdings` + `RebalancePolicy.evaluate` | 模拟影响真实 | ⚠️ **半解决**（Phase 4）—— 标注侧已落地：`Provenance` 落在 `PositionLot` 上，`Position.simulated_shares` 是**求和出来的**；**披露侧**（页面/邮件分别显示「真实持仓」与「含归并」）还没做，留到 Phase 5（规则本身是用户选的，不改语义） |
 | D7 | 网格规则两套实现 | ✅ **已解决**（Phase 3）—— `src/domain/grid/trigger_policy.py:TriggerPolicy` 现在是**生产 + 回测**两条路径**唯一**的判定来源 | 改参数会静默分叉 | ✅ 已解决（§11.1.5）—— `run_compound_grid` 调用 `policy.levels(...)`，并有静态测试防止内联算术回流 |
 | D8 | `THRESHOLD_PP` / `GRID_*` 是模块级环境变量 | ✅ **已解决**（Phase 5a）—— 参数收进 `src/domain/grid/config.py:GridConfig` 与 `src/application/config.py:AppConfig`；模块级别名保留为**配置对象的投影**；`TriggerPolicy.from_config` / `LayerSizingPolicy.from_config` / `advance_all_grids(config=)` / `run_backtest(threshold_pp=)` 让多套策略在一个进程里并存 | 无法做多策略并存、测试需改环境 | ✅ 已解决（§11.1.7 a）—— `test_env_reads_are_confined_to_the_config_objects` 静态钉住「只有配置对象读环境变量」 |
-| D9 | `evaluate()` 的两段式求值是隐式近似 | `src/application/daily_snapshot.py:main` | 恢复自动行为时会有偏差 | 显式命名为 `LayerSizingBasis` / `SnapshotBasis` |
+| D9 | `evaluate()` 的两段式求值是隐式近似 | ✅ **已解决**（Phase 5c）—— `SnapshotRun.layer_sizing_basis` / `SnapshotRun.snapshot_basis` 各有名字：层额定尺用前者，记录用后者 | 恢复自动行为时会有偏差 | ✅ 已解决（§11.1.7 c）—— `test_size_grid_layer_uses_the_layer_sizing_basis_total` 钉住「层额用的是层额定尺那个数」 |
 | D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | `apply_grid.py` 的 `VALID_OPS` vs `grid_position.py` 的 op 名 | 改一处漏一处 | 提到 `domain/grid` 单一处 |
 | D11 | 图表永远用完整 `ETF_DEFS`，读不到用户实际持仓 | `src/infrastructure/chart_renderer.py:_load_chart_assets()` 里 `holdings, _ = read_holdings()` —— `read_holdings()` 返回 **3** 个值，解包抛 `ValueError`，被 `except Exception` 吞掉后走 fallback 分支 | 换仓/减仓后图表仍画全部 4 个品种 | 改成 `holdings, _cr, _cg = read_holdings()`（Phase 0 **保持原样**，只搬不改行为；修它会改变图表输出） |
 
@@ -1458,6 +1508,8 @@ class GridConfig:
 - [x] 「状态形状固定」在哪里保证？→ `GridPosition` dataclass，mapper 显式（Phase 2a ✅）
 - [x] 「回测与实盘不可对账」在哪里保证？→ 两者是不同上下文、不同类型（`SimulatedOp` vs `ExecutedOp`）、不同仓储权限（Phase 2b + Phase 3 ✅）；`GridSimulator` 只能产出 `SimulatedOp`，`merge_backtest_ops` 只能写 `source="backtest"` 的行
 - [x] 「规则参数只有一份」在哪里保证？→ `GridConfig` / `AppConfig`（Phase 5a ✅）—— 环境变量**只**在配置对象里读一次；模块级别名（`GRID_STEP_PCT` 等）是配置对象的**投影**；`TriggerPolicy.from_config` / `LayerSizingPolicy.from_config` / `advance_all_grids(config=)` / `run_backtest(threshold_pp=)` 让多套策略并存；`test_env_reads_are_confined_to_the_config_objects` 静态钉住「领域层与回测层不再自己读环境变量」
+- [x] 「记录里那个 total 是哪一个」在哪里保证？→ `SnapshotRun.snapshot_basis`（Phase 5c ✅）—— 层额定尺那次评估是**另一个**字段 `layer_sizing_basis`；两个名字各答一个问题，`test_size_grid_layer_uses_the_layer_sizing_basis_total` 钉住「层额用的是层额定尺那个数」
+- [x] 「应用层没有业务规则」在哪里保证？→ `daily_snapshot.main()` 只调 12 个具名用例（Phase 5c ✅）—— `test_main_is_pure_wiring` 静态钉住（`abs(` / `round(` / `float(` / `min(` / `max(` 一个都不许出现）；`test_main_runs_the_use_cases_in_order` 钉住用例清单与顺序
 
 ---
 
