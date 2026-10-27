@@ -227,8 +227,13 @@ def build_record(today: str, positions: list[dict],
     # 复合网格 操作记录 table). Embedding it in every daily record would
     # re-copy the whole log once per day forever, growing history.json
     # without bound. Strip it — nothing reads this copy.
+    #
+    # ⚠️ `last_prices` 同理 (D1) —— 那是 4 个资产 × 120 根带日期的 K 线,
+    # 每条历史记录都抄一份的话, history.json 每天胖几千行。窗口的**唯一**
+    # 真相在 data/grid_state.json。
     slim_grid_state = {
-        name: ({k: v for k, v in asset.items() if k != "ops"}
+        name: ({k: v for k, v in asset.items()
+                if k not in ("ops", "last_prices")}
                if isinstance(asset, dict) else asset)
         for name, asset in (grid_state or {}).items()
     }

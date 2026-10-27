@@ -209,10 +209,9 @@ def apply_batch(cleaned: list[dict], state: dict, *,
             asset_state = fresh_asset_state()
         else:
             asset_state = dict(asset_state)
-        # 兼容: 极老的 state 用单个 last_120d_min 记窗口最低价
-        if (not asset_state.get("last_prices")
-                and asset_state.get("last_120d_min") is not None):
-            asset_state["last_prices"] = [float(asset_state["last_120d_min"])]
+        # ⚠️ 极老的 state 用单个 `last_120d_min` 记窗口最低价 —— **不用**在这里
+        # 折: 领域层的 `GridPosition.from_state` 已经负责 (它同时还认新旧两种
+        # 窗口格式, D1)。这里再折一遍就是同一件事有两个地方做。
 
         before_in_cycle = bool(asset_state.get("in_cycle", False))
         before_cum = float(asset_state.get("cum_realized", 0.0))

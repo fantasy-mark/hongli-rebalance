@@ -128,6 +128,8 @@ GitHub Pages 自动重渲染 (PNG src 加 ?t=Date.now() 缓存破坏)
 - **引擎唯一会改的东西是 120 日窗口** (`last_prices`)。它**绝不**改
   `entries` / `in_cycle` / `cum_realized` / `merged_shares`, 也**绝不**写 `ops`。
   `ops` 是「已成交」的账本，只有用户提交的操作才算成交。
+  窗口的每一根 K 线**带日期** (`[[日期, 价格], ...]`) —— 同一天重复运行是
+  **覆盖** (留更低的那个)，窗口深度只由**交易日**决定 (详见下面的「已修复」)。
 - **距离口径**: 正数 = 还没触发, ≤0 = 已越过触发线。
   距开仓用 120 日窗口最低, 距加仓用最近一笔买价, 距回本用第一笔买价。
 
@@ -388,15 +390,25 @@ python -X utf8 scripts/init_trades_ledger.py
 - GitHub Actions 本身有 5-30 分钟排队延迟 (早上高峰期可能更长)。
   信号本身是确定的 (基于当日开盘前价格)，晚几分钟不影响决策。
 
-### 已知问题：同一天重复运行会少一天窗口深度
+### ✅ 已修复：同一天重复运行不再吃掉窗口深度
 
-`apply-grid.yml` 提交后会 re-trigger `daily.yml`，同一天 `record.py` 可能跑两次
-→ `last_prices` 同一天被 append 两次。当前 `data/grid_state.json` 里 4 个资产的
-窗口尾部都有重复值。
+`apply-grid.yml` 提交后会 re-trigger `daily.yml`，同一天 `record.py` 可能跑两次。
+以前窗口是一串**裸数字**，同一天跑两次就 append 两次 → 窗口浅一天，而窗口是
+「建议开仓」的**唯一**依据。
 
-引擎现在**只**滚动这个 120 日窗口（距开仓建议的唯一依据），所以窗口深度比
-以前更要紧。彻底修需要把 `last_prices` 改成带日期的 schema（`backfill_grid_window.py`
-和存量 JSON 都要迁移），收益不值 —— **深度差 1 天可忽略**。
+现在窗口的每一根 K 线**带日期**（`src/domain/grid/price_window.py`）：
+
+```
+last_prices: [8.35, 8.29, ...]  →  [["2026-10-27", 8.35], ["2026-10-28", 8.29], ...]
+```
+
+- 同一天再跑一次是**覆盖**（留**更低**的那个 —— 那才是那天的最低价），不是追加；
+- 窗口深度只由**交易日**决定；
+- JSON **键名不变**（仍是 `last_prices`）—— 只改值的格式；
+- 老数据（没日期）读得进来，迁成**无日期**的 bar（`["", 8.35]`）—— 那些日期
+  **不可恢复**（前复权会重新基准化历史价格），靠之后的每日运行自己长出来。
+
+一次性迁移脚本：`python -X utf8 scripts/migrate_grid_window.py`（幂等）。
 
 ---
 
@@ -406,7 +418,7 @@ python -X utf8 scripts/init_trades_ledger.py
 cd C:\Users\Administrator\project\hongli-rebalance
 pip install -r requirements.txt        # akshare pandas openpyxl requests matplotlib
 
-# 跑单测 (无网络, 107 个测试)
+# 跑单测 (无网络, 211 个测试)
 python -X utf8 -m tests.test_record
 
 # 跑一次每日快照 (会拉真实价格, 需要网络; 写 history.json + grid_state.json + grid_chart.png)

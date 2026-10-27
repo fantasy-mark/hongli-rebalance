@@ -79,6 +79,7 @@ from .advisor import GridAdvisor, GridSuggestion
 from .config import DEFAULT_GRID_CONFIG
 from .exit_policy import ExitAtCost, cost_only_exit
 from .grid_op import ExecutedOp, GridOp, OpKind, OpSource
+from .price_window import PriceWindow
 from .layer_sizing import (
     GRID_BASE_YUAN,
     GRID_FLOATING_FRACTION,
@@ -167,7 +168,8 @@ class GridPosition:
 
       in_cycle      是否处于一个进行中的周期
       entries       周期内的买入层 [{date, price, shares}]
-      last_prices   滚动窗口 (最多 GRID_LOOKBACK 根), 「建议开仓」的唯一依据
+      last_prices   滚动窗口 (最多 GRID_LOOKBACK 根, **带日期**), 「建议开仓」
+                    的唯一依据 —— 见 `price_window.PriceWindow`
       cum_realized  累计已实现盈亏 (正常回本出场恒为 0)
       ops           只增不改的操作日志 (manual = 实盘, backtest = 模拟)
       merged_shares 已归并到再平衡组合的份额 (模拟口径)
@@ -175,6 +177,11 @@ class GridPosition:
     **JSON 契约** (改格式 = 破坏线上数据, 改之前先想清楚):
 
       - `entries` 每行: {date, price, shares}
+      - `last_prices` 每行: `[日期, 价格]` —— 120 日滚动窗口 (D1)。
+        同一天重复运行是**覆盖** (留更低的那个), 不是追加 —— 窗口深度只由
+        **交易日**决定。旧格式 (`[8.35, 8.29, ...]`, 没有日期) 仍然读得进来,
+        迁成**无日期**的 bar (`["", 8.35]`) —— 那些日期**不可恢复**
+        (前复权会重新基准化历史价格), 靠之后的每日运行自己长出来。
       - `ops` 每行: {date, op, source, price, shares, note}, tp 额外带
         {pnl, num_buys_exited, total_shares_exited, shares_to_merge}
       - `ops[].source` 只有两个值:
@@ -202,7 +209,10 @@ class GridPosition:
 
     in_cycle: bool = False
     entries: list[dict] = field(default_factory=list)
-    last_prices: list[float] = field(default_factory=list)
+    #: 120 日滚动窗口 (D1: **带日期** —— 同一天重复运行不再吃掉窗口深度)。
+    #: ⚠️ JSON 键仍然叫 `last_prices`, 但**值的格式**变了:
+    #: `[8.35, 8.29, ...]` → `[["2026-10-27", 8.35], ...]`。
+    last_prices: PriceWindow = field(default_factory=PriceWindow)
     cum_realized: float = 0.0
     ops: list[GridOp] = field(default_factory=list)
     merged_shares: float = 0.0
@@ -219,7 +229,7 @@ class GridPosition:
         state = {
             "in_cycle": self.in_cycle,
             "entries": self.entries,
-            "last_prices": self.last_prices,
+            "last_prices": self.last_prices.to_state(),
             "cum_realized": self.cum_realized,
             "ops": [op.to_dict() for op in self.ops],
             "merged_shares": self.merged_shares,
@@ -247,10 +257,13 @@ class GridPosition:
                 f"grid state has unknown keys {sorted(unknown)}; "
                 f"known keys are {sorted(_STATE_KEYS)}"
             )
-        last_prices = list(state.get("last_prices") or [])
+        # ⚠️ D1: 窗口**带日期** —— 新格式 `[[日期, 价格], ...]`, 旧格式
+        # `[价格, ...]` 迁成**无日期**的 bar (那些日期不可恢复, 见
+        # `price_window` 的模块 docstring)。
+        last_prices = PriceWindow.from_state(state.get("last_prices"))
         if not last_prices and state.get("last_120d_min") is not None:
             # 历史别名: 单值窗口 → 折成一条队列
-            last_prices = [float(state["last_120d_min"])]
+            last_prices = PriceWindow.from_state([float(state["last_120d_min"])])
         return cls(
             in_cycle=bool(state.get("in_cycle", False)),
             entries=list(state.get("entries") or []),
@@ -300,7 +313,7 @@ def _triggers(state: dict, price: float, step_pct: float, tp_pct: float,
     position = GridPosition.from_state(state)
     policy = TriggerPolicy(step_pct=step_pct, tp_pct=tp_pct, tp_basis=tp_basis)
     return policy.levels(in_cycle=position.in_cycle, entries=position.entries,
-                          window=position.last_prices,
+                          window=position.last_prices.prices,
                           price=float(price)).to_dict()
 
 
@@ -319,7 +332,7 @@ def advisory(state: dict, price: float, layer_yuan_value: float,
     position = GridPosition.from_state(state)
     advisor = GridAdvisor(step_pct=step_pct, tp_pct=tp_pct, tp_basis=tp_basis)
     return advisor.suggest(in_cycle=position.in_cycle, entries=position.entries,
-                            window=position.last_prices, price=price,
+                            window=position.last_prices.prices, price=price,
                             layer_yuan_value=layer_yuan_value)
 
 
@@ -356,13 +369,14 @@ def advance_one_day(
     # 建议基于**追加今天之前**的窗口算 (规则本体在 trigger_policy.TriggerPolicy)
     policy = TriggerPolicy(step_pct=step_pct, tp_pct=tp_pct, tp_basis=tp_basis)
     levels = policy.levels(in_cycle=position.in_cycle, entries=position.entries,
-                            window=position.last_prices, price=float(price))
+                            window=position.last_prices.prices, price=float(price))
     suggestion = levels.signal.value if levels.signal is not None else None
 
     # 唯一的副作用: 滚动窗口
-    position.last_prices.append(float(price))
-    if len(position.last_prices) > lookback:
-        position.last_prices = position.last_prices[-lookback:]
+    # ⚠️ D1: **按日期**记 —— 同一天再跑一次是**覆盖** (留更低的那个),
+    # 不是追加 —— 窗口深度只由交易日决定。
+    position.last_prices = position.last_prices.record(
+        date_str, float(price), lookback=lookback)
 
     return position.to_state(), suggestion
 
@@ -471,9 +485,9 @@ def manual_op(state: dict, op: str, today: str,
         })
         position.in_cycle = edge.to_in_cycle
         if op == "open":
-            position.last_prices.append(float(price))
-            if len(position.last_prices) > GRID_LOOKBACK:
-                position.last_prices = position.last_prices[-GRID_LOOKBACK:]
+            # ⚠️ D1: 按日期记 —— 用户当天已经手动开过仓, 再记一次是覆盖。
+            position.last_prices = position.last_prices.record(
+                today, float(price), lookback=GRID_LOOKBACK)
         position.ops.append(ExecutedOp(
             date=today, op=OpKind(op), source=OpSource.MANUAL,
             price=float(price), shares=float(shares), note=note,

@@ -16,8 +16,8 @@
 > —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化 ·
 > Phase 7 ✅ 账本读侧拆成投影 · D6 ✅ 披露侧（真实持仓 / 归并 分栏）·
 > D11 ✅ 图表读实际持仓 · D3 ✅ 虚拟预算改 `GridBudget` ·
-> D4 ✅ 资金管理与 badge 口径对齐。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.13。
+> D4 ✅ 资金管理与 badge 口径对齐 · D1 ✅ 120 日窗口带日期。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.14。
 
 ---
 
@@ -1869,6 +1869,89 @@ badge 对不上 —— 那才是真的自相矛盾。
 | 页面实测 | 合计市值 ¥168,884.40 + 合计余额 ¥165.00 = badge 总市值 ¥169,049 ✓ |
 | 数字有没有变 | 没有 —— 记录的 `cash_total` 加法顺序不变 |
 
+#### 11.1.14 D1 落地情况（2026-10-28）
+
+##### (a) 原来错在哪
+
+`apply-grid.yml` 提交后会 re-trigger `daily.yml` —— **同一天** `record.py`
+可能跑两次。而窗口原来是一串**裸数字**：
+
+```python
+last_prices.append(float(price))          # ← 同一天跑两次 = 追加两次
+if len(last_prices) > lookback:
+    last_prices = last_prices[-lookback:]
+```
+
+于是同一天的 K 线在窗口里出现**两次**。窗口深度少一天。
+
+看着无所谓 —— 但窗口是「**建议开仓**」的**唯一**依据（条件 =
+`price < min(window)`），少一天就少一天的历史，**而且看不出来**：队列尾巴上
+两根一模一样的 K 线，谁知道那是两天，还是同一天跑了两遍。
+
+窗口里存的又是**前复权**之后的 K 线低点 —— 同样的「历史低点」在不同日子
+算出来是不同的数（分红除权会重新基准化）。所以老窗口的**日期不可恢复**。
+
+##### (b) 改法：给它一个自己的类型
+
+新模块 `src/domain/grid/price_window.py`：
+
+```
+WindowBar(day, price)   一根 K 线 —— 日期 + 最低价
+PriceWindow(bars)       120 日滚动窗口 (不可变)
+```
+
+`PriceWindow.record(day, price, lookback=)` 是**唯一**的写入口：
+
+| 情况 | 行为 |
+|---|---|
+| 同一天 | **覆盖** —— 留**更低**的那个（那才是那天的最低价） |
+| 新的一天 | 按日期插到正确的位置（无日期的旧 bar 排在最前） |
+| 超过 `lookback` | 砍掉**最老**的几根 |
+
+⚠️ **留低不留高**：窗口最低价是「今天是否创新低」的门槛。把它抬高会让已经
+该触发的建议**不再触发** —— 那是假的否定信号，比深度少一天严重得多。
+
+⚠️ **老数据的日期不可恢复** → 迁成**无日期**的 bar（`day = ""`）。日期靠之后
+的每日运行**自己长出来**（约 120 个交易日后，窗口全是带日期的）。迁移动作
+在 `scripts/migrate_grid_window.py`（一次性、幂等）。
+
+##### (c) ⚠️ JSON 键**不改**
+
+`data/grid_state.json` 的 key **仍然是 `last_prices`** —— 那是 committed
+artifact，用户读它的 diff。而且 `GridPosition.to_state()` 有自检：
+
+```python
+produced = frozenset(state)
+declared = frozenset(f.name for f in fields(self))
+if produced != declared:
+    raise ValueError("grid state mapper is out of sync: ...")
+```
+
+⇒ **字段名 == JSON 键**是强制的（不然新加字段忘了写 mapper 会静默丢数据，
+不变量 I11）。改的只是**值的格式**：
+
+```
+[8.35, 8.29, ...]   →   [["2026-10-27", 8.35], ["2026-10-28", 8.29], ...]
+```
+
+两种格式都**读得进来**（`PriceWindow.from_state`）—— 旧格式迁成无日期的 bar。
+
+##### (d) 顺带瘦身：`history.json` 里不再抄窗口
+
+`build_record` 的 `slim_grid_state` 现在同时剥掉 `ops` **和** `last_prices`
+—— 那是 4 个资产 × 120 根**带日期**的 K 线，每条历史记录抄一份的话
+`history.json` 每天胖几千行。窗口的**唯一**真相在 `data/grid_state.json`。
+
+##### (e) 验证
+
+| 检查 | 结果 |
+|---|---|
+| `python -X utf8 -m tests.test_record` | **211/211 通过**（新增 7 个 D1 用例） |
+| 同一天跑两遍 | 窗口**不变长**（`test_the_same_day_does_not_grow_the_window`） |
+| 同一天、更低的价格 | 覆盖成更低的（`test_the_same_day_keeps_the_lower_price`） |
+| 老数据读得进来 | 迁成 `["", 价格]`（`test_the_window_reads_both_the_old_and_the_new_format`） |
+| 真实 `data/grid_state.json` | 4 个资产 × 120 根迁移完毕，**价格一个没改** |
+
 ### 11.3 明确**不要**做的
 
 | 不做 | 理由 |
@@ -1885,8 +1968,8 @@ badge 对不上 —— 那才是真的自相矛盾。
 
 | # | 问题 | 证据 | 影响 | 建议 |
 |---|---|---|---|---|
-| D1 | 同一天重复运行会让 120 日窗口少一天深度 | `apply-grid.yml` 提交后 re-trigger `daily.yml`；窗口尾部有重复值（黄金 `[8.35, 8.29, 8.12, 8.12]`） | 窗口是**唯一**的距开仓依据 | `PriceWindow` 改带日期（`list[(date, price)]`），重复日按日期覆盖而非追加 |
-| D2 | `ops` 混装执行日志与模拟日志 | `src/domain/grid/grid_position.py:manual_op` 写 `source:"manual"`；`src/simulation/grid_simulator.py:ops_from_cycles` 写 `source:"backtest"` | 容易被误读成"真实成交记录" | Phase 2 拆成 `ExecutedOp` / `SimulatedOp` |
+| D1 | 同一天重复运行会让 120 日窗口少一天深度 | `apply-grid.yml` 提交后 re-trigger `daily.yml`；窗口尾部有重复值（黄金 `[8.35, 8.29, 8.12, 8.12]`） | 窗口是**唯一**的距开仓依据 | ✅ **已解决** —— `PriceWindow`（`src/domain/grid/price_window.py`）把窗口改成一等公民：`WindowBar(day, price)` 带日期，同一天是**覆盖**（留更低的那个）而不是追加；老数据迁成无日期的 bar（日期不可恢复 —— 前复权会重新基准化）。**JSON 键仍是 `last_prices`**（committed artifact），只改值的格式（详见 §11.1.14）|
+| D2 | `ops` 混装执行日志与模拟日志 | `src/domain/grid/grid_position.py:manual_op` 写 `source:"manual"`；`src/simulation/grid_simulator.py:ops_from_cycles` 写 `source:"backtest"` | 容易被误读成"真实成交记录" | ✅ **已解决**（Phase 2b，详见 §11.1.4）—— `GridOp` 基类 + `ExecutedOp`（`source="manual"`）/ `SimulatedOp`（`source="backtest"`）两个子类；`GridOp.from_dict` 按 `source` **分型**，`SimulatedOp` 拒绝 `source!="backtest"` |
 | D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | ✅ **已解决**（领域侧，详见 §11.1.12）—— 改名 `GridBudget` / `grid_budget`（`src/domain/shared/money.py`），`Portfolio.__post_init__` 保证类型；**规则不变**，虚拟预算仍然计入 `total` |
 | D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | ✅ **已解决** —— `CashPoolBreakdown`（`src/domain/portfolio/cash_pools.py`）把「合计」口径写成代码：合计市值**不含**网格虚拟占用、合计余额含虚拟余额 ⇒ 合计市值 + 合计余额 = badge 总市值；网格那一行标「虚拟」（详见 §11.1.13）|
 | D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | ✅ **已解决**（Phase 4）—— 资产清单独立成 `AssetUniverse` 注册表（`src/domain/portfolio/asset_universe.py`），`holdings.json` 只剩持仓 | 职责混乱 | ✅ 已解决（§11.1.6） |
@@ -1921,6 +2004,7 @@ badge 对不上 —— 那才是真的自相矛盾。
 - [x] 「图表画的是不是用户实际持仓」在哪里保证？→ `_load_chart_assets()` 解包 `read_holdings()` 的**三个**返回值（D11 ✅）—— 以前解包成两个抛 `ValueError`，被 `except Exception` 吞掉后静默退回全量 `ETF_DEFS`；`test_the_chart_draws_the_holdings_the_user_actually_has` 钉住
 - [x] 「哪一池是虚拟的」在哪里保证？→ `GridBudget` 类型（D3 ✅）—— 领域里已经没有 `cash_grid` 这个名字了（`Portfolio.grid_budget` / `LedgerProjection.grid_budget`）；类型由 `Portfolio.__post_init__` 保证；**JSON 键仍是 `cash_grid`**（committed artifact 不改键名），映射只在读/写两处；账本写侧遇到旧键直接报错
 - [x] 「资金管理表的『合计』和顶部 badge 的『总市值』是同一个数吗？」→ `CashPoolBreakdown.total == Portfolio.total`（D4 ✅）—— 规则在 `src/domain/portfolio/cash_pools.py`，不是注释；记录的 `cash_total` 从同一个对象出；页面那一行的公式写在页脚
+- [x] 「窗口里的每一根 K 线是哪一天？」在哪里保证？→ `PriceWindow` / `WindowBar`（D1 ✅）—— 窗口的每一根都带日期；`PriceWindow.record()` 是**唯一**的写入口，同一天是**覆盖**（留更低的那个）而不是追加 ⇒ 窗口深度只由**交易日**决定；老数据读得进来（迁成无日期的 bar，因为前复权让历史日期不可恢复）
 - [x] 「坏掉的账本不会被当成空账本」在哪里保证？→ 写路径走 `json_repositories.read_trades()` / `read_grid_state()`（Phase 5c-2 ✅）—— **严格读**：文件坏了就抛错（整批不写盘）；每日快照仍走宽松的 `load_trades()`（跑砸了只是今天的记录没出来，宁可少一天也别静默清空持仓）
 
 ---

@@ -77,11 +77,15 @@ def main() -> None:
         s["in_cycle"] = False
         s["entries"] = []
         s["cum_realized"] = 0.0
-        s["last_prices"] = [float(p) for p in window.values]
+        # ⚠️ D1: 窗口**带日期** —— `[[日期, 价格], ...]`。同一天重复运行是
+        # 覆盖而不是追加, 窗口深度只由交易日决定 (见 price_window.py)。
+        s["last_prices"] = [[idx.strftime("%Y-%m-%d"), float(p)]
+                            for idx, p in window.items()]
+        prices = [p for _d, p in s["last_prices"]]
         print(f"[{name}]  清 {len(old_entries)} 旧 entries, "
               f"K线 {len(df)} 行 → 取末 {LOOKBACK} = {len(window)} 行, "
-              f"min={min(s['last_prices']):.4f}  max={max(s['last_prices']):.4f}  "
-              f"末值={s['last_prices'][-1]:.4f}  "
+              f"min={min(prices):.4f}  max={max(prices):.4f}  "
+              f"末值={prices[-1]:.4f}  "
               f"窗口 {window.index[0].date()} → {window.index[-1].date()}")
 
     atomic = GRID_STATE.with_suffix(".json.tmp")

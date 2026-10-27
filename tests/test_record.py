@@ -50,6 +50,33 @@ from src.simulation import equal_weight_backtest as three_pp
 from src.simulation import grid_simulator as grid_sim
 
 
+def _window_prices(raw) -> list:
+    """窗口里的价格序列 —— **两种格式都收** (D1)。
+
+    新格式 `[[日期, 价格], ...]`, 旧格式 `[价格, ...]` (老数据迁移上来时
+    的样子)。测试关心的是「窗口里有哪些价格」, 不关心日期 —— 日期的
+    断言另有专门的用例。
+    """
+    out = []
+    for item in (raw or []):
+        if isinstance(item, (list, tuple)):
+            out.append(float(item[1]))
+        else:
+            out.append(float(item))
+    return out
+
+
+def _window_days(raw) -> list:
+    """窗口里的日期序列 —— 旧格式 (裸数字) 的日期是 `""` (不可恢复)。"""
+    out = []
+    for item in (raw or []):
+        if isinstance(item, (list, tuple)):
+            out.append(str(item[0]))
+        else:
+            out.append("")
+    return out
+
+
 def test_read_holdings_with_现金_label():
     with tempfile.TemporaryDirectory() as td:
         xlsx = Path(td) / "h.xlsx"
@@ -426,7 +453,7 @@ def test_advance_grid_suggests_open_without_opening():
     assert new_state["entries"] == []
     assert new_state["ops"] == []
     # 唯一的副作用: 滚动窗口
-    assert new_state["last_prices"] == [100.0, 99.0]
+    assert _window_prices(new_state["last_prices"]) == [100.0, 99.0]
 
 
 def test_advance_grid_hold_no_signal():
@@ -439,7 +466,7 @@ def test_advance_grid_hold_no_signal():
     assert new_state["in_cycle"] is False
     assert new_state["entries"] == []
     # rolling window: today's 101 appended → [100, 101]
-    assert new_state["last_prices"] == [100.0, 101.0]
+    assert _window_prices(new_state["last_prices"]) == [100.0, 101.0]
 
 
 def test_advance_grid_suggests_add_and_tp_without_mutating():
@@ -577,7 +604,7 @@ def test_manual_op_open_creates_cycle():
         "date": "2026-10-17", "price": 1.35, "shares": 1000.0,
     }
     # 1.35 pushed to rolling window
-    assert new_state["last_prices"][-1] == 1.35
+    assert _window_prices(new_state["last_prices"])[-1] == 1.35
     assert len(new_state["last_prices"]) == 4
     # original state NOT mutated
     assert state["in_cycle"] is False
@@ -613,7 +640,7 @@ def test_manual_op_add_appends_to_cycle():
     # 加仓参考价 = entries[-1].price (新加的)
     assert new_state["entries"][-1]["price"] == 1.30
     # last_prices unchanged
-    assert new_state["last_prices"] == [1.40, 1.38, 1.37]
+    assert _window_prices(new_state["last_prices"]) == [1.40, 1.38, 1.37]
 
 
 def test_manual_op_add_rejects_no_cycle():
@@ -801,7 +828,7 @@ def test_advance_one_day_never_mutates_position_fields():
     for k in ("in_cycle", "entries", "cum_realized", "merged_shares", "ops"):
         assert new_state[k] == state[k], f"{k} must be untouched by the engine"
     # 唯一变的是窗口 (manual open 把 99.0 塞进了窗口, add 不塞)
-    assert new_state["last_prices"] == [100.0, 99.0, 97.0]
+    assert _window_prices(new_state["last_prices"]) == [100.0, 99.0, 97.0]
 
 
 def test_advance_one_day_rolls_last_prices_and_trims_to_120():
@@ -812,8 +839,8 @@ def test_advance_one_day_rolls_last_prices_and_trims_to_120():
         state, "2026-01-01", price=1000.0, layer_yuan_value=10_000.0,
     )
     assert len(new_state["last_prices"]) == 120
-    assert new_state["last_prices"][0] == 1.0, "最老的一根 (0.0) 应被挤掉"
-    assert new_state["last_prices"][-1] == 1000.0, "最新一根是今天"
+    assert _window_prices(new_state["last_prices"])[0] == 1.0, "最老的一根 (0.0) 应被挤掉"
+    assert _window_prices(new_state["last_prices"])[-1] == 1000.0, "最新一根是今天"
     # 传入的对象没被就地改
     assert len(state["last_prices"]) == 120
     assert state["last_prices"][-1] == 119.0
@@ -1998,7 +2025,7 @@ def test_apply_grid_happy_path_add_then_tp():
         assert a["cum_realized"] == 0.0
         assert a["merged_shares"] == pytest_approx(200.0)
         # last_prices for the add branch should NOT have been touched
-        assert a["last_prices"] == [1.40, 1.38, 1.37]
+        assert _window_prices(a["last_prices"]) == [1.40, 1.38, 1.37]
         # ops log: 2 entries (add + tp), both source='manual', with notes
         # round-tripped from the payload.  tp op records the cost split.
         assert len(a["ops"]) == 2
@@ -2250,10 +2277,14 @@ def test_build_record_strips_ops_from_grid_state_snapshot():
     # ops stripped everywhere
     for name in snap:
         assert "ops" not in snap[name], f"{name} still carries ops"
+    # ⚠️ D1: `last_prices` 也被剥掉 —— 那是 4 个资产 × 120 根**带日期**的
+    # K 线, 每条历史记录抄一份的话 history.json 每天胖几千行。窗口的
+    # 唯一真相在 data/grid_state.json。
+    for name in snap:
+        assert "last_prices" not in snap[name], f"{name} still carries last_prices"
     # but the fields a daily snapshot actually needs survive intact
     assert snap["可转债ETF博时"]["in_cycle"] is True
     assert snap["可转债ETF博时"]["entries"] == grid_state["可转债ETF博时"]["entries"]
-    assert snap["可转债ETF博时"]["last_prices"] == [13.1, 13.2]
     assert snap["可转债ETF博时"]["cum_realized"] == pytest_approx(3048.28)
     assert snap["黄金ETF博时"]["in_cycle"] is False
     # the caller's dict is not mutated
@@ -2493,10 +2524,12 @@ def test_grid_position_mapper_writes_exactly_the_declared_fields():
 
 
 def test_grid_position_mapper_roundtrip_is_lossless():
+    """往返必须**逐字段**相同 —— 新格式 (带日期, D1)。"""
     state = {
         "in_cycle": True,
         "entries": [{"date": "2026-10-20", "price": 1.3, "shares": 1000.0}],
-        "last_prices": [1.35, 1.32, 1.3],
+        "last_prices": [["2026-10-18", 1.35], ["2026-10-19", 1.32],
+                        ["2026-10-20", 1.3]],
         "cum_realized": 0.0,
         "ops": [{"date": "2026-10-20", "op": "open", "source": "manual",
                  "price": 1.3, "shares": 1000.0, "note": "x"}],
@@ -2504,6 +2537,25 @@ def test_grid_position_mapper_roundtrip_is_lossless():
     }
     pos = grid_pos.GridPosition.from_state(state)
     assert pos.to_state() == state, "往返必须逐字段相同"
+
+
+def test_grid_position_mapper_migrates_the_legacy_float_window():
+    """老格式 `[价格, ...]` → 迁成**无日期**的 bar (D1)。
+
+    日期不可恢复 (前复权会重新基准化历史价格) —— 只能迁成 `["", 价格]`。
+    """
+    state = {
+        "in_cycle": False,
+        "entries": [],
+        "last_prices": [1.35, 1.32, 1.3],
+        "cum_realized": 0.0,
+        "ops": [],
+        "merged_shares": 0.0,
+    }
+    pos = grid_pos.GridPosition.from_state(state)
+    assert pos.last_prices.prices == [1.35, 1.32, 1.3], "价格一个都不能少"
+    assert pos.last_prices.days == ["", "", ""], "日期不可恢复 → 无日期"
+    assert pos.to_state()["last_prices"] == [["", 1.35], ["", 1.32], ["", 1.3]]
 
 
 def test_grid_position_mapper_rejects_unknown_keys():
@@ -2523,7 +2575,9 @@ def test_grid_position_mapper_accepts_legacy_min_key():
     state = {"in_cycle": False, "entries": [], "cum_realized": 0.0,
              "ops": [], "merged_shares": 0.0, "last_120d_min": 8.205}
     pos = grid_pos.GridPosition.from_state(state)
-    assert pos.last_prices == [8.205]
+    assert pos.last_prices.prices == [8.205]
+    # D1: 老数据没有日期 → 迁成**无日期**的 bar (日期不可恢复, 见 price_window)
+    assert pos.last_prices.days == [""]
     assert "last_120d_min" not in pos.to_state()
 
 
@@ -4237,6 +4291,131 @@ def test_the_email_says_the_same_thing_about_the_virtual_pool():
     assert "不计入上方「总市值」" in html, html
     # 邮件头的「网格」那一笔也标了虚拟 (与页面 badge 同一个词)
     assert "网格(虚拟)" in html, html
+
+
+# -----------------------------------------------------------------------------
+# D1 —— 120 日窗口**带日期** (同一天重复运行不再吃掉窗口深度)
+# -----------------------------------------------------------------------------
+#
+# 以前窗口是一串裸数字, `record.py` 同一天跑两次就 append 两次 → 窗口浅
+# 一天。而窗口是「建议开仓」的**唯一**依据 (条件 = `price < min(window)`),
+# 少一天就少一天的历史 —— 而且**看不出来** (尾巴上两根一模一样的 K 线,
+# 谁知道那是两天还是同一天跑了两遍)。
+#
+# 现在每一根 K 线带日期 → 同一天是**覆盖** (留更低的那个), 不是追加。
+
+def test_the_same_day_does_not_grow_the_window():
+    """D1 的核心 —— 同一天跑两次, 窗口**不变长**。"""
+    state = grid_pos.fresh_asset_state()
+    state["last_prices"] = [["2026-10-26", 100.0], ["2026-10-27", 99.0]]
+
+    once, _ = grid_pos.advance_one_day(
+        state, date_str="2026-10-28", price=98.0, layer_yuan_value=10_000.0)
+    twice, _ = grid_pos.advance_one_day(
+        once, date_str="2026-10-28", price=98.0, layer_yuan_value=10_000.0)
+
+    assert _window_prices(once["last_prices"]) == [100.0, 99.0, 98.0]
+    assert _window_prices(twice["last_prices"]) == [100.0, 99.0, 98.0], (
+        "同一天再跑一次**不能**把窗口撑长")
+    assert len(twice["last_prices"]) == 3
+
+
+def test_the_same_day_keeps_the_lower_price():
+    """同一天记录两次 → 留**更低**的那个 (那才是那天的最低价)。
+
+    ⚠️ 留高会把窗口最低价抬上去, 「今天是否创新低」的判定就失真 ——
+    那是假的否定信号, 比深度少一天严重得多。
+    """
+    state = grid_pos.fresh_asset_state()
+    state["last_prices"] = [["2026-10-27", 100.0]]
+
+    high, _ = grid_pos.advance_one_day(
+        state, date_str="2026-10-28", price=99.0, layer_yuan_value=10_000.0)
+    low, _ = grid_pos.advance_one_day(
+        high, date_str="2026-10-28", price=95.0, layer_yuan_value=10_000.0)
+
+    assert _window_prices(low["last_prices"]) == [100.0, 95.0], low["last_prices"]
+    assert _window_days(low["last_prices"]) == ["2026-10-27", "2026-10-28"]
+
+    # 顺序反过来: 先低后高 → 高的那个**不覆盖**低的
+    low2, _ = grid_pos.advance_one_day(
+        state, date_str="2026-10-28", price=95.0, layer_yuan_value=10_000.0)
+    high2, _ = grid_pos.advance_one_day(
+        low2, date_str="2026-10-28", price=99.0, layer_yuan_value=10_000.0)
+    assert _window_prices(high2["last_prices"]) == [100.0, 95.0], high2["last_prices"]
+
+
+def test_the_window_keeps_the_days_in_order():
+    """新的一天按日期插到正确的位置; 老数据 (无日期) 排在最前。"""
+    state = grid_pos.fresh_asset_state()
+    # 老数据迁移上来: 无日期
+    state["last_prices"] = [["", 10.0], ["", 9.5]]
+
+    out, _ = grid_pos.advance_one_day(
+        state, date_str="2026-10-28", price=9.0, layer_yuan_value=10_000.0)
+    assert _window_days(out["last_prices"]) == ["", "", "2026-10-28"]
+    assert _window_prices(out["last_prices"]) == [10.0, 9.5, 9.0]
+
+    # 再来一天 → 往后接, 不是往前插
+    out2, _ = grid_pos.advance_one_day(
+        out, date_str="2026-10-29", price=8.8, layer_yuan_value=10_000.0)
+    assert _window_days(out2["last_prices"]) == ["", "", "2026-10-28", "2026-10-29"]
+    assert _window_prices(out2["last_prices"]) == [10.0, 9.5, 9.0, 8.8]
+
+
+def test_the_window_caps_its_depth_at_the_lookback():
+    """超过 lookback → 砍掉**最老**的几根。"""
+    state = grid_pos.fresh_asset_state()
+    state["last_prices"] = [[f"2026-01-{i:02d}", float(i)] for i in range(1, 121)]
+    out, _ = grid_pos.advance_one_day(
+        state, date_str="2026-06-01", price=999.0, layer_yuan_value=10_000.0)
+    assert len(out["last_prices"]) == 120
+    assert _window_prices(out["last_prices"])[0] == 2.0, "最老的一根被挤掉"
+    assert _window_prices(out["last_prices"])[-1] == 999.0
+
+
+def test_the_window_survives_a_round_trip_through_the_state_file():
+    """`to_state` → `from_state` 往返, **日期**也得回来。"""
+    state = grid_pos.fresh_asset_state()
+    state["last_prices"] = [["2026-10-27", 8.12], ["2026-10-28", 8.05]]
+    out, _ = grid_pos.advance_one_day(
+        state, date_str="2026-10-29", price=8.0, layer_yuan_value=10_000.0)
+    again = grid_pos.GridPosition.from_state(out)
+    assert _window_days(again.to_state()["last_prices"]) == [
+        "2026-10-27", "2026-10-28", "2026-10-29"]
+    assert again.to_state() == out, "往返必须逐字段相同"
+
+
+def test_the_window_reads_both_the_old_and_the_new_format():
+    """老格式 (裸数字) 读得进来 —— 迁成**无日期**的 bar。"""
+    from src.domain.grid.price_window import PriceWindow
+
+    legacy = PriceWindow.from_state([8.12, 8.05])
+    assert legacy.prices == [8.12, 8.05]
+    assert legacy.days == ["", ""], "老数据的日期**不可恢复**"
+
+    fresh = PriceWindow.from_state([["2026-10-28", 8.05]])
+    assert fresh.prices == [8.05]
+    assert fresh.days == ["2026-10-28"]
+
+
+def test_the_migration_script_is_idempotent():
+    """迁移脚本跑两遍 = 跑一遍 (幂等)。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "migrate_grid_window",
+        ROOT / "scripts" / "migrate_grid_window.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    window, changed = mod.migrate_window([1.0, 2.0])
+    assert changed is True
+    assert window == [["", 1.0], ["", 2.0]]
+
+    again, changed2 = mod.migrate_window(window)
+    assert changed2 is False, "已经是新格式就不该再动"
+    assert again == window
 
 
 def test_main():
