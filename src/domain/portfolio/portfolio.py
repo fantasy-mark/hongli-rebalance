@@ -266,6 +266,18 @@ class Portfolio:
 
     # -- valuation --------------------------------------------------------
     @property
+    def as_of_date(self) -> str:
+        """The portfolio's as-of date (the quote date of its positions).
+
+        Used to stamp domain events (`RebalanceTriggered`). Empty when the
+        positions carry no date.
+        """
+        for p in self.positions:
+            if p.date:
+                return p.date
+        return ""
+
+    @property
     def etf_value(self) -> float:
         """Σ position values (the ETF part of `total`).
 
@@ -315,6 +327,30 @@ def merged_shares_by_code(grid_state: dict) -> dict[str, float]:
     return out
 
 
+def merged_by_code_from_transfers(transfers: Sequence[Any]) -> dict[str, float]:
+    """归并移交**事件** → code → 份额 —— 组合吸收的那一步 (Phase 5b)。
+
+    网格只**宣告**「我这边有 N 份归并份额归组合」, 组合自己决定怎么吸收
+    (记 `Provenance.SIMULATED_GRID`)。载荷里的 `shares` 是**累计**量,
+    所以同一资产有多条声明时**最后一条**说了算。
+
+    ⚠️ 这是不变量 **I9**（归并份额不写 `trades.json`）在代码里的形状:
+    模拟份额进组合的**唯一**通路就是这条事件 —— 账本上下文里根本没有
+    能写模拟份额的入口。
+    """
+    out: dict[str, float] = {}
+    for t in transfers:
+        code = getattr(t, "code", "")
+        if not code:
+            continue
+        shares = float(getattr(t, "shares", 0.0) or 0.0)
+        if shares > 0:
+            out[code] = shares
+        else:
+            out.pop(code, None)
+    return out
+
+
 def merge_grid_shares_into_positions(
     positions: list[dict],
     merged_by_code: dict[str, float],
@@ -339,4 +375,5 @@ def merge_grid_shares_into_positions(
 __all__ = [
     "Portfolio", "Position", "PositionLot",
     "merge_grid_shares_into_positions", "merged_shares_by_code",
+    "merged_by_code_from_transfers",
 ]

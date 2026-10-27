@@ -26,6 +26,11 @@ import traceback
 
 import pandas as pd
 
+from ..domain.events.domain_events import (
+    DailySnapshotProduced,
+    EventStream,
+    MergedSharesTransferred,
+)
 from ..domain.grid import grid_position as grid_mod
 from ..domain.grid.config import GridConfig
 from ..domain.grid.layer_sizing import LayerSizingPolicy
@@ -33,7 +38,7 @@ from ..domain.ledger.ledger import rebuild_holdings_from_trades
 from ..domain.portfolio.asset_universe import ASSET_NAMES, ETF_DEFS, QDII_CODES
 from ..domain.portfolio.portfolio import (
     Portfolio,
-    merged_shares_by_code,
+    merged_by_code_from_transfers,
 )
 from ..domain.portfolio.rebalance_policy import (
     RebalancePolicy,
@@ -318,6 +323,9 @@ def _intraday_lows(positions: list[dict], today: str) -> dict[str, float]:
 
 def main() -> None:
     today = datetime.date.today().isoformat()
+    #: 本次运行发生的**领域事件** (Phase 5b) —— 各领域服务顺手发出来的,
+    #: 汇总成一条流, 最后打印一行摘要 + 发一个 `DailySnapshotProduced`。
+    events = EventStream()
 
     # 1) Universe of codes = holdings.json (cheap registry of what the user
     #    wants tracked).  Shares here are STALE — we only use the code list.
@@ -327,7 +335,7 @@ def main() -> None:
     #    canonical source for shares/cash in the daily snapshot.
     trades = load_trades()
     positions, cash_rebalance, cash_grid = rebuild_holdings_from_trades(
-        trades, as_of_date=today,
+        trades, as_of_date=today, events=events,
     )
 
     # 3) Defensive fallback: empty trades (the bootstrap moment before
@@ -346,7 +354,8 @@ def main() -> None:
         print("WARN trades.json empty; falling back to holdings.json shares",
               file=sys.stderr)
 
-    positions, etf_total, errors = value_positions(positions, latest_for_code)
+    positions, etf_total, errors = value_positions(
+        positions, latest_for_code, events=events)
     for code, msg in errors:
         print(f"WARN {code}: {msg}", file=sys.stderr)
     if not positions:
@@ -370,7 +379,11 @@ def main() -> None:
     # manual path (apply_grid.py) *does* change merged shares, and the
     # daily record must see the portfolio the user will actually hold.
     state = load_grid_state()
-    merged_before = merged_shares_by_code(state)
+    # 网格**宣告**它移交了哪些归并份额 (BC-C → BC-B), 组合自己吸收。
+    # ⚠️ 载荷是**累计**量 —— 组合吸收的是网格当前持有的归并份额。
+    transfers_before = grid_mod.merged_share_transfers(state)
+    events.extend(transfers_before)
+    merged_before = merged_by_code_from_transfers(transfers_before)
     held_codes = {p["code"] for p in positions}
     extra_codes = [c for c in merged_before if c not in held_codes]
     extra_prices, extra_errors = value_extra_codes(extra_codes, latest_for_code)
@@ -421,7 +434,9 @@ def main() -> None:
     save_grid_state(new_state)
 
     # Re-merge: today's take-profit may have added new merged shares.
-    merged_after = merged_shares_by_code(new_state)
+    transfers_after = grid_mod.merged_share_transfers(new_state)
+    events.extend(transfers_after)
+    merged_after = merged_by_code_from_transfers(transfers_after)
     extra_codes = [c for c in merged_after if c not in held_codes]
     if extra_codes:
         extra_prices, extra_errors = value_extra_codes(extra_codes, latest_for_code)
@@ -431,7 +446,9 @@ def main() -> None:
         positions, merged_by_code=merged_after, extra_prices=extra_prices,
         cash_rebalance=cash_rebalance, cash_grid=cash_grid,
     )
-    outcome = rebalance_policy().evaluate(portfolio)
+    # ⚠️ 只给**最终**这次评估发事件 —— 它才是记录里 `triggered_3pp` 的来源
+    # (前面那次 total_pre 只是给层额定尺用的中间量)。
+    outcome = rebalance_policy().evaluate(portfolio, events=events)
     total, weights, triggered_3pp, plan = outcome.as_tuple()
     positions_eff = portfolio.to_records()
     positions = positions_eff
@@ -479,6 +496,14 @@ def main() -> None:
               f"距{s['trigger_kind']}={s['trigger_pct']:+.2f}%")
 
     write_github_output(today, total, any_signal)
+
+    # 收尾事件 —— 「今天这一趟到底发生了什么」。
+    events.record(DailySnapshotProduced(
+        date=today, total=total, weights=list(weights),
+        triggered=triggered_3pp,
+        signals=[str(s["signal"] or "") for s in grid_signals],
+    ))
+    print(f"  events: {events.summary_line()}")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ import pandas as pd
 
 from src.application import config as app_config
 from src.application import daily_snapshot as snapshot
+from src.domain.events import domain_events as events
 from src.domain.grid import config as grid_config
 from src.domain.grid import grid_position as grid_pos
 from src.domain.grid import layer_sizing
@@ -35,6 +36,7 @@ from src.domain.grid import trigger_policy as grid_trigger_policy
 from src.domain.ledger import ledger
 from src.domain.portfolio import asset_universe as universe
 from src.domain.portfolio import portfolio, rebalance_policy as policy
+from src.domain.portfolio import valuation as valuation_mod
 from src.domain.shared.provenance import Provenance
 from src.infrastructure import json_repositories as repos
 from src.presentation import notify_failure as nf
@@ -3334,6 +3336,181 @@ def test_domain_grid_stays_stdlib_only():
             if f"import {mod}" in text:
                 bad.append(f"{p.name}: {mod}")
     assert not bad, f"domain/grid 必须 stdlib-only: {bad}"
+
+
+# -----------------------------------------------------------------------------
+# Phase 5b —— 领域事件
+# -----------------------------------------------------------------------------
+
+def test_domain_events_are_immutable_and_named():
+    """事件是**不可变**的, 类型名与文档 §8 的表一一对应。"""
+    e = events.TradeRecorded(date="2026-10-12", side="buy", code="515180",
+                              shares=100.0, price=1.3, amount=130.0)
+    assert e.type == "TradeRecorded"
+    try:
+        e.side = "sell"          # type: ignore[misc]
+    except Exception:
+        pass
+    else:
+        raise AssertionError("事件必须不可变 —— 它是「已经发生的事」")
+    rec = e.to_record()
+    assert rec["type"] == "TradeRecorded"
+    assert rec["code"] == "515180"
+
+
+def test_event_stream_counts_and_summary():
+    s = events.EventStream()
+    s.record(events.PositionValued(date="2026-10-23", code="1"))
+    s.record(events.PositionValued(date="2026-10-23", code="2"))
+    s.record(events.RebalanceTriggered(date="2026-10-23"))
+    assert len(s) == 3
+    assert s.counts() == {"PositionValued": 2, "RebalanceTriggered": 1}
+    assert len(s.of_type(events.PositionValued)) == 2
+    assert "PositionValued×2" in s.summary_line()
+
+
+def test_ledger_emits_trade_and_cash_events():
+    trades = [
+        {"date": "2026-10-12", "side": "deposit_rebalance", "amount": 1000.0},
+        {"date": "2026-10-12", "side": "buy", "code": "515180",
+         "shares": 100.0, "price": 1.5, "fee": 0.0},
+        {"date": "2026-10-13", "side": "transfer_to_grid", "amount": 100.0},
+        {"date": "2026-10-14", "side": "sell", "code": "515180",
+         "shares": 50.0, "price": 1.6, "fee": 0.0},
+    ]
+    stream = events.EventStream()
+    ledger.rebuild_holdings_from_trades(trades, events=stream)
+    assert [e.type for e in stream] == [
+        "CashTransferred", "TradeRecorded", "CashTransferred", "TradeRecorded"]
+    dep, xfer = stream.of_type(events.CashTransferred)
+    assert (dep.from_pool, dep.to_pool, dep.amount) == ("external", "rebalance", 1000.0)
+    assert (xfer.from_pool, xfer.to_pool) == ("rebalance", "grid")
+    buy, sell = stream.of_type(events.TradeRecorded)
+    assert (buy.side, buy.code, buy.shares, buy.price) == ("buy", "515180", 100.0, 1.5)
+    assert buy.amount == pytest_approx(150.0)
+    assert sell.amount == pytest_approx(80.0)
+
+
+def test_ledger_emits_nothing_without_a_stream():
+    """事件是**可选**的 —— 老调用方一行不用改。"""
+    trades = [{"date": "2026-10-12", "side": "deposit_rebalance", "amount": 100.0}]
+    a = ledger.rebuild_holdings_from_trades(trades)
+    b = ledger.rebuild_holdings_from_trades(trades, events=None)
+    assert a == b
+
+
+def test_ledger_cannot_record_simulated_shares():
+    """I9: 账本上下文里**没有**能写模拟份额的入口。"""
+    state = {"cash_rebalance": 0.0, "cash_grid": 0.0, "positions": {}}
+    for bad in ("merge", "merged_shares", "grid_merge"):
+        try:
+            ledger.apply_trade(state, {"side": bad, "code": "515180",
+                                       "shares": 10.0, "price": 1.0})
+        except ValueError:
+            continue
+        raise AssertionError(f"账本不该接受 side={bad!r}")
+    # 八个 side 里没有任何一个是「归并」
+    assert len(list(ledger.TradeSide)) == 8
+    assert not any("merge" in s.value for s in ledger.TradeSide)
+
+
+def test_rebalance_policy_emits_rebalance_triggered():
+    pf = portfolio.Portfolio.from_records([
+        {"name": "A", "code": "1", "shares": 1, "price": 104, "date": "2026-10-23"},
+        {"name": "B", "code": "2", "shares": 1, "price": 96, "date": "2026-10-23"},
+    ])
+    stream = events.EventStream()
+    outcome = policy.RebalancePolicy(threshold_pp=1.0).evaluate(pf, events=stream)
+    assert outcome.triggered
+    evs = stream.of_type(events.RebalanceTriggered)
+    assert len(evs) == 1
+    assert evs[0].date == "2026-10-23"
+    assert evs[0].deviating_asset in ("A", "B")
+    assert evs[0].deviation_pp == pytest_approx(2.0)
+    assert evs[0].target_weight == pytest_approx(0.5)
+    assert len(evs[0].plan) == 2
+
+
+def test_rebalance_policy_emits_nothing_when_not_triggered():
+    pf = portfolio.Portfolio.from_records([
+        {"name": "A", "code": "1", "shares": 1, "price": 100, "date": "2026-10-23"},
+        {"name": "B", "code": "2", "shares": 1, "price": 100, "date": "2026-10-23"},
+    ])
+    stream = events.EventStream()
+    assert not policy.RebalancePolicy(threshold_pp=3.0).evaluate(
+        pf, events=stream).triggered
+    assert stream.of_type(events.RebalanceTriggered) == []
+
+
+def test_grid_manual_op_emits_cycle_events():
+    state = grid_pos.fresh_asset_state()
+
+    s1 = events.EventStream()
+    state = grid_pos.manual_op(state, op="open", today="2026-10-23",
+                                price=1.0, shares=1000.0,
+                                asset="红利ETF易方达", code="515180", events=s1)
+    assert [e.type for e in s1] == ["GridCycleOpened"]
+    opened = s1.of_type(events.GridCycleOpened)[0]
+    assert (opened.asset, opened.code, opened.layer_no) == ("红利ETF易方达", "515180", 1)
+
+    s2 = events.EventStream()
+    state = grid_pos.manual_op(state, op="add", today="2026-10-24",
+                                price=0.97, shares=1000.0,
+                                asset="红利ETF易方达", code="515180", events=s2)
+    assert [e.type for e in s2] == ["GridLayerAdded"]
+    assert s2.of_type(events.GridLayerAdded)[0].layer_no == 2
+
+    s3 = events.EventStream()
+    state = grid_pos.manual_op(state, op="tp", today="2026-10-27",
+                                price=1.03, shares=0.0,
+                                asset="红利ETF易方达", code="515180", events=s3)
+    assert [e.type for e in s3] == ["GridCycleClosed", "MergedSharesTransferred"]
+    closed = s3.of_type(events.GridCycleClosed)[0]
+    assert closed.realized_pnl == pytest_approx(0.0)
+    assert closed.sold_shares > 0
+    xfer = s3.of_type(events.MergedSharesTransferred)[0]
+    assert xfer.provenance == "simulated_grid"
+    assert xfer.shares == pytest_approx(state["merged_shares"])
+    assert xfer.shares > 0
+
+
+def test_merged_share_transfers_match_the_grid_state():
+    """走事件通路吸收出来的份额 == 以前直接读状态 —— 换通路不改数字。"""
+    state = {
+        "红利ETF易方达": {"in_cycle": False, "entries": [], "last_prices": [],
+                          "cum_realized": 0.0, "ops": [], "merged_shares": 123.45},
+        "黄金ETF博时": {"in_cycle": False, "entries": [], "last_prices": [],
+                        "cum_realized": 0.0, "ops": [], "merged_shares": 0.0},
+    }
+    transfers = grid_pos.merged_share_transfers(state)
+    assert len(transfers) == 1
+    by_code = portfolio.merged_by_code_from_transfers(transfers)
+    assert by_code == portfolio.merged_shares_by_code(state)
+    assert by_code == {"515180": 123.45}
+
+
+def test_valuation_emits_position_valued():
+    stream = events.EventStream()
+    positions, total, errors = valuation_mod.value_positions(
+        [{"name": "红利ETF易方达", "code": "515180", "shares": 100.0}],
+        lambda code: (1.5, "2026-10-23"), events=stream)
+    assert not errors
+    assert total == pytest_approx(150.0)
+    assert len(positions) == 1
+    evs = stream.of_type(events.PositionValued)
+    assert len(evs) == 1
+    assert evs[0].code == "515180"
+    assert evs[0].value == pytest_approx(150.0)
+    assert evs[0].date == "2026-10-23"
+
+
+def test_domain_events_module_is_stdlib_only():
+    """领域事件不许拉起 pandas/akshare —— 网格链路要能在裸环境里 import。"""
+    heavy = ("pandas", "numpy", "akshare", "requests")
+    p = ROOT / "src" / "domain" / "events" / "domain_events.py"
+    text = p.read_text(encoding="utf-8")
+    bad = [m for m in heavy if f"import {m}" in text]
+    assert not bad, f"domain/events 必须 stdlib-only: {bad}"
 
 
 def test_main():

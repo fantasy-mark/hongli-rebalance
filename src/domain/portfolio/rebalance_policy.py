@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
+from ..events.domain_events import EventStream, RebalanceTriggered
 from ..shared.money import DeviationPP, Money
 from .portfolio import Portfolio
 
@@ -81,7 +82,8 @@ class RebalancePolicy:
     threshold_pp: float = 3.0
     target: TargetWeightPolicy = field(default_factory=TargetWeightPolicy)
 
-    def evaluate(self, portfolio: Portfolio) -> RebalanceOutcome:
+    def evaluate(self, portfolio: Portfolio,
+                 events: Optional[EventStream] = None) -> RebalanceOutcome:
         """Judge `portfolio` against this policy.
 
         The grid pool is part of the portfolio (so weights and the trigger
@@ -91,6 +93,9 @@ class RebalancePolicy:
         The portfolio must already include the grid's merged shares — they
         are portfolio holdings now, so they have to be in the value the
         weights are computed on.
+
+        `events` (optional) — 触发了就发一个 `RebalanceTriggered` 事件,
+        载荷含偏离最大的资产、偏离多少个百分点、目标权重与回正方案。
         """
         total = portfolio.total
         weights = [p.value / total if total > 0 else 0
@@ -109,8 +114,29 @@ class RebalancePolicy:
                     "target_value": Money(target_value),
                     "delta_value": Money(target_value - p.value),
                 })
+        if events is not None and triggered:
+            events.record(RebalanceTriggered(
+                date=portfolio.as_of_date,
+                deviating_asset=_deviating_asset(portfolio, weights, target_w),
+                deviation_pp=max_deviation_pp(weights, target_w),
+                target_weight=target_w,
+                plan=list(plan),
+            ))
         return RebalanceOutcome(total=total, weights=weights,
                                 triggered=triggered, plan=plan)
+
+
+def _deviating_asset(portfolio: Portfolio, weights: Sequence[float],
+                     target_w: float) -> str:
+    """偏离目标权重最远的那**一个**资产的名字 (触发时是谁把篮子拉歪的)。"""
+    best_name = ""
+    best_dev = -1.0
+    for p, w in zip(portfolio.positions, weights):
+        dev = abs(w - target_w) * 100
+        if dev > best_dev:
+            best_dev = dev
+            best_name = p.name
+    return best_name
 
 
 def evaluate(positions: list[dict], cash_rebalance: float, cash_grid: float,

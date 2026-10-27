@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime
 from typing import Callable, Optional, Protocol, Sequence, Tuple
 
+from ..events.domain_events import EventStream, PositionValued
 from ..shared.money import Money, Price
 from .asset_universe import ETF_DEFS
 
@@ -37,6 +38,7 @@ def value_positions(
     holdings: Sequence[dict],
     price_provider: PriceProvider,
     universe: Optional[dict] = None,
+    events: Optional[EventStream] = None,
 ) -> Tuple[list[dict], float, list[Tuple[str, str]]]:
     """Value every holding at the latest price.
 
@@ -47,6 +49,8 @@ def value_positions(
             into `data/history.json` and the page reads these keys.
       - `etf_total` — Σ value of the priced positions
       - `errors`     — [(code, reason)] for holdings we couldn't price
+
+    `events` (optional) — 每个成功估值的持仓发一个 `PositionValued`。
     """
     universe = ETF_DEFS if universe is None else universe
     positions: list[dict] = []
@@ -70,6 +74,15 @@ def value_positions(
                 "date": as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of),
                 "value": Money(value),
             })
+            if events is not None:
+                events.record(PositionValued(
+                    date=positions[-1]["date"],
+                    code=code,
+                    name=str(h.get("name", "")),
+                    price=price,
+                    shares=float(h.get("shares", 0.0) or 0.0),
+                    value=float(positions[-1]["value"]),
+                ))
         except Exception as ex:
             errors.append((code, str(ex)))
     return positions, etf_total, errors

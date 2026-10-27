@@ -51,6 +51,7 @@ GRID_STATE = ROOT / "data" / "grid_state.json"
 # workflow 不需要装 pandas/akshare。
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from src.domain.events.domain_events import EventStream  # noqa: E402
 from src.domain.grid.exit_policy import ExitAtCost, cost_only_exit  # noqa: E402,F401
 from src.domain.grid.grid_position import manual_op, split_take_profit  # noqa: E402,F401
 from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402
@@ -87,7 +88,8 @@ def fail(msg: str) -> None:
 
 def inline_manual_op(state: dict, op: str, today: str,
                      price: float, shares: float,
-                     note: str = "") -> tuple[dict, float]:
+                     note: str = "", asset: str = "", code: str = "",
+                     events: EventStream | None = None) -> tuple[dict, float]:
     """Apply a manual grid operation. Returns (new_state, pnl_delta).
 
     Thin wrapper over `src.domain.grid.grid_position.manual_op` — **单一实现**, 不再复制规则。
@@ -99,10 +101,14 @@ def inline_manual_op(state: dict, op: str, today: str,
     (`merged_shares`). It is negative only if the user exits BELOW cost,
     where we sell out and book the loss. For `open`/`add` it is 0.
 
+    `events` (optional, Phase 5b) — 顺带发出 `GridCycleOpened` /
+    `GridLayerAdded` / `GridCycleClosed` / `MergedSharesTransferred`。
+
     Raises ValueError on precondition failure.
     """
     new_state = manual_op(state, op=op, today=today, price=price,
-                          shares=shares, note=note)
+                          shares=shares, note=note, asset=asset, code=code,
+                          events=events)
     pnl_delta = 0.0
     if op == "tp":
         pnl_delta = float(new_state["ops"][-1].get("pnl", 0.0))
@@ -223,6 +229,7 @@ def main() -> None:
     # Note: multiple ops in one batch for the same asset are applied
     # sequentially — the second op sees the state left by the first.
     summary: list[dict] = []
+    events = EventStream()
     for o in cleaned:
         name = CODE_TO_NAME[o["code"]]
         # Fresh asset if missing
@@ -245,7 +252,7 @@ def main() -> None:
             new_asset_state, pnl_delta = inline_manual_op(
                 state[name], op=o["op"], today=o["date"],
                 price=o["price"], shares=o.get("shares", 0.0),
-                note=o["note"],
+                note=o["note"], asset=name, code=o["code"], events=events,
             )
         except ValueError as ex:
             fail(f"op {len(summary)} ({o['op']} {o['code']}): {ex}")
@@ -284,6 +291,12 @@ def main() -> None:
                   f"CNY {s['price']:.4f} x {s['shares']:.0f}  "
                   f"in_cycle={s['after_in_cycle']}  entries={s['num_entries_after']}  "
                   f"note={s['note']!r}")
+    # 领域事件摘要 (Phase 5b) —— 「这一批操作到底改了什么」。
+    print(f"  events: {events.summary_line()}")
+    for e in events:
+        if e.type == "MergedSharesTransferred":
+            print(f"    ↳ 归并移交 {e.code} {e.shares:,.2f} 份 "
+                  f"(provenance={e.provenance})")
 
 
 if __name__ == "__main__":

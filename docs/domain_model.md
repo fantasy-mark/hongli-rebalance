@@ -12,7 +12,7 @@
 > **重构进度**（§11.2 有各阶段的详细记录）：
 > Phase 0 ✅ 立柱 · Phase 1 ✅ 值对象 · Phase 2 ✅ 网格聚合显式化 ·
 > Phase 3 ✅ 触发规则去重 · Phase 4 ✅ 组合聚合与来源标注 ·
-> Phase 5 🔄 事件化 + 应用层瘦身（5a 配置对象 ✅，5b 事件化 / 5c 应用层瘦身 ⬜）。
+> Phase 5 🔄 事件化 + 应用层瘦身（5a 配置对象 ✅ · 5b 领域事件 ✅ · 5c 应用层瘦身 ⬜）。
 > 各阶段的「落地情况」见 §11.1.1 ~ §11.1.7。
 
 ---
@@ -474,6 +474,26 @@ TriggerPolicy
 > 然后才把结果写进 dict。事件模型要求反过来：**先发事件，再由事件驱动状态变更**。
 > 这是重构中最能提升可测试性的一步。
 
+> ✅ **Phase 5b 已落地**（2026-10-27）—— 事件在 `src/domain/events/domain_events.py`。
+> 九个事件全部有类型，每个会改状态的领域函数都接受一个**可选**的
+> `events: EventStream | None = None`：
+>
+> | 事件 | 谁发 | 什么时候发 |
+> |---|---|---|
+> | `TradeRecorded` / `CashTransferred` | `ledger.apply_trade` | 每一笔真实成交 / 每一笔现金划转 |
+> | `PositionValued` | `portfolio.valuation.value_positions` | 每个成功估值的持仓 |
+> | `RebalanceTriggered` | `RebalancePolicy.evaluate` | 3pp 触发时（**只**最终那次评估发） |
+> | `GridCycleOpened` / `GridLayerAdded` / `GridCycleClosed` | `grid.manual_op` | 手动 open / add / tp |
+> | `MergedSharesTransferred` | `grid.manual_op` + `grid.merged_share_transfers` | 出场有归并时 / 每日从状态宣告 |
+> | `DailySnapshotProduced` | `daily_snapshot.main` | 快照产出后 |
+>
+> ⚠️ **不是事件溯源**（§11.3 明确不做）—— 事实源仍然是 JSON 文件，
+> Git 提交历史就是最好的事件溯源。事件是**运行时的通知**。
+>
+> 唯一**承重**的事件通路是 `MergedSharesTransferred`：组合现在**只**从事件
+> 吸收归并份额（`Portfolio.merged_by_code_from_transfers`），不再直接读网格
+> 状态。这是 I9 的形状。
+
 ---
 
 ## 9. 上下文映射与口径鸿沟
@@ -573,7 +593,7 @@ total      (归并后)  → 写进快照 + 3pp 判阈
 | I6 | 一个周期 = N 买 + 1 卖 | `grid.py:668 manual_op` | `GridPosition` 状态机 |
 | I7 | 正常回本出场的已实现盈亏 ≡ 0 | `grid.py:108` | `CostOnlyExitPolicy` |
 | I8 | 网格资金占用 = 仅周期内的层市值 | `grid.py:614 asset_snapshot` | `GridPosition.capital_tied_up` |
-| I9 | 归并份额**不写** `trades.json` | 靠"没人写"这个事实 | `MergedSharesTransferred` 事件 + 无写权限 |
+| I9 | 归并份额**不写** `trades.json` | 靠"没人写"这个事实 | ✅ `MergedSharesTransferred` 事件 + 账本侧**无写入口**（Phase 5b）—— 组合只从事件吸收归并份额；八个 `TradeSide` 里没有任何一个是「归并」，`apply_trade` 遇到未知 side 直接抛错 |
 | I10 | 引擎**永不**改仓位/层数/盈亏/归并份额 | `grid.py:539` + 单测 | ✅ `GridAdvisor` 返回**不可变** `GridSuggestion`（Phase 2b） |
 | I11 | 网格状态只由固定 6 个 key 构成 | ⚠ 隐含在 `grid.py:599` / `grid.py:702` 的字面量 | ✅ 显式 dataclass + 显式序列化（Phase 2a） |
 | I12 | 目标权重 = 1/持仓数（动态篮子） | `record.py:449` | ✅ `TargetWeightPolicy`（Phase 4） |
@@ -1279,7 +1299,41 @@ class GridConfig:
 
 ##### (b) 5b —— 领域事件
 
-（见下）
+九个事件落在 `src/domain/events/domain_events.py`（**stdlib-only**），
+外加一个 `EventStream` 收集器。
+
+**三个设计决定：**
+
+1. **事件是可选的。** 每个会改状态的领域函数都多一个
+   `events: EventStream | None = None` 参数 —— 传 `None` 就什么都不发。
+   老调用方**一行不用改**，行为逐位不变（已用 sha256 回归证明）。
+2. **事件不可变，载荷是具名字段**（不是 dict）。「这个事件带什么」由
+   **类型**回答 —— 不用翻文档。`type` 属性就是类名，与 §8 的表一一对应。
+3. **唯一承重的事件通路是 `MergedSharesTransferred`。** 组合现在**只**从
+   事件吸收归并份额：
+
+   ```python
+   transfers = grid_mod.merged_share_transfers(state)   # 网格宣告
+   events.extend(transfers)
+   merged_before = merged_by_code_from_transfers(transfers)   # 组合吸收
+   ```
+
+   载荷里的 `shares` 是**累计**量（不是增量）—— 组合每次重建时吸收的是网格
+   **当前**持有的归并份额，所以同一资产多条声明时**最后一条**说了算。
+   `test_merged_share_transfers_match_the_grid_state` 钉住「新通路 == 旧读法」。
+
+   这就是 I9（归并份额不写 `trades.json`）的形状：模拟份额进组合的**唯一**
+   通路就是这条事件；而账本那边，八个 `TradeSide` 里没有任何一个是「归并」，
+   `apply_trade` 遇到未知 side 直接抛错 ——
+   `test_ledger_cannot_record_simulated_shares` 钉住这条。
+
+**验证**
+
+| 检查 | 结果 |
+|---|---|
+| 逐字节回归 | **逐字节相同** —— 改动前后记录 sha256 均为 `8cac6576e…`（7260 字节） |
+| `python -X utf8 -m tests.test_record` | **168/168 通过**（新增 11 个 Phase 5b 测试） |
+| `src/domain/grid/*` + `src/domain/events/*` 仍 **stdlib-only** | ✓ —— `scripts/apply_grid.py` 在不装 pandas/akshare 的 job 里 import 这条链路 |
 
 ##### (c) 5c —— 应用层瘦身
 
@@ -1355,6 +1409,9 @@ class GridConfig:
 - ✅ **5a 已落地**（2026-10-27）：配置对象收口 —— `GridConfig` / `AppConfig`，
   模块级别名改为投影，`from_config` / `config=` / `threshold_pp=` 让多套策略
   并存。详见 §11.1.7 (a)。
+- ✅ **5b 已落地**（2026-10-27）：九个领域事件 + `EventStream`；
+  `MergedSharesTransferred` 成为组合吸收归并份额的**唯一**通路（I9 落地）。
+  详见 §11.1.7 (b)。
 
 ### 11.3 明确**不要**做的
 
@@ -1394,7 +1451,7 @@ class GridConfig:
 - [ ] 「一个周期 N 买 1 卖」在哪里保证？→ `GridPosition` 状态机的合法边
 - [x] 「出场只卖成本额」在哪里保证？→ `cost_only_exit` 唯一实现（Phase 2a ✅）
 - [x] 「什么算触发只有一份规则」在哪里保证？→ `TriggerPolicy.levels` 是生产路径与回测路径**唯一**的判定来源（Phase 3 ✅）；`test_simulator_has_no_inline_trigger_arithmetic` 静态挡住内联算术回流
-- [ ] 「归并份额不写 trades.json」在哪里保证？→ `MergedSharesTransferred` 事件，账本上下文无写权限
+- [x] 「归并份额不写 trades.json」在哪里保证？→ `MergedSharesTransferred` 事件，账本上下文无写权限（Phase 5b ✅）—— 组合**只**从事件吸收归并份额；八个 `TradeSide` 里没有「归并」这一档，`apply_trade` 遇到未知 side 直接抛错
 - [x] 「模拟不是实盘」在哪里保证？→ `ExecutedOp` / `SimulatedOp` 分型（Phase 2b ✅）；`Provenance` 落在 `PositionLot` 上、`Position.simulated_shares` 是求和出来的（Phase 4 ✅）；**呈现层的披露**待 Phase 5
 - [x] 「目标权重 = 1/n」在哪里保证？→ `TargetWeightPolicy`（Phase 4 ✅）—— 类里只有这一处实现；UI 从 `Portfolio` / 记录推导而非硬编码（Phase 4 ✅，`app.js` 里手抄的清单已删）
 - [x] 「持仓市值不会被抄错」在哪里保证？→ `Position.value` 是 `total_shares × price` **推出来的**，`Position.to_record()` 是它的输出（Phase 4 ✅）；`test_position_value_is_derived_from_lots_not_copied` 钉住这条

@@ -67,6 +67,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from typing import Optional
 
+from ..events.domain_events import (
+    EventStream,
+    GridCycleClosed,
+    GridCycleOpened,
+    GridLayerAdded,
+    MergedSharesTransferred,
+)
 from ..shared.money import Money, Price, ShareCount
 from .advisor import GridAdvisor, GridSuggestion
 from .config import DEFAULT_GRID_CONFIG
@@ -417,7 +424,9 @@ def asset_snapshot(state: dict, current_price: float) -> dict:
 # -----------------------------------------------------------------------------
 
 def manual_op(state: dict, op: str, today: str,
-              price: float, shares: float, note: str = "") -> dict:
+              price: float, shares: float, note: str = "",
+              asset: str = "", code: str = "",
+              events: EventStream | None = None) -> dict:
     """Apply a manual grid operation. Returns a NEW state dict (does not mutate).
 
     ⚠️ 这是**唯一的实盘网格入口** —— 引擎不再自动交易, 所有 open/add/tp
@@ -434,6 +443,11 @@ def manual_op(state: dict, op: str, today: str,
         (cost_only_exit): sell back exactly the principal, merge the
         remainder into the rebalance portfolio, set in_cycle=False,
         clear entries. `last_prices` is NOT touched.
+
+    **Phase 5 (2026-10-27)**: 可以顺带发领域事件 (`GridCycleOpened` /
+    `GridLayerAdded` / `GridCycleClosed` / `MergedSharesTransferred`)。
+    `asset` 是这个资产的显示名 (网格状态就是按名字建的 key) —— 事件里
+    带上它, 收件人才知道「谁变了」。
     """
     if op not in ("open", "add", "tp"):
         raise ValueError(f"unknown op: {op!r}")
@@ -463,6 +477,17 @@ def manual_op(state: dict, op: str, today: str,
             date=today, op=OpKind(op), source=OpSource.MANUAL,
             price=float(price), shares=float(shares), note=note,
         ))
+        if events is not None:
+            layer_no = len(position.entries)
+            if op == "open":
+                events.record(GridCycleOpened(
+                    date=today, asset=asset, code=code,
+                    price=float(price), shares=float(shares),
+                    layer_no=layer_no))
+            else:
+                events.record(GridLayerAdded(
+                    date=today, asset=asset, code=code, layer_no=layer_no,
+                    price=float(price), shares=float(shares)))
     else:  # tp
         entries = position.entries
         total_shares = sum(e["shares"] for e in entries)
@@ -484,5 +509,50 @@ def manual_op(state: dict, op: str, today: str,
         position.cum_realized += split.pnl
         position.entries = []
         position.in_cycle = False
+        if events is not None:
+            events.record(GridCycleClosed(
+                date=today, asset=asset, code=code,
+                exit_price=float(price),
+                sold_shares=float(split.shares_sold),
+                merged_shares=float(split.merged_shares),
+                realized_pnl=float(split.pnl),
+            ))
+            if split.merged_shares > 0:
+                # ⚠️ 载荷里的 `shares` 是**累计**移交量 (网格状态里的
+                # `merged_shares`) —— 组合每次重建时吸收的是当前持有量。
+                events.record(MergedSharesTransferred(
+                    date=today, asset=asset, code=code,
+                    shares=float(position.merged_shares),
+                ))
 
     return position.to_state()
+
+
+def merged_share_transfers(state: dict) -> list[MergedSharesTransferred]:
+    """网格状态 → 移交声明 (BC-C → BC-B 的边界)。
+
+    每个「有归并份额」的资产发一条 `MergedSharesTransferred` —— 载荷里的
+    `shares` 是**累计**量 (不是增量): 组合每次重建时吸收的是网格**当前**
+    持有的归并份额, 所以同一资产多条声明时**最后一条**说了算。
+
+    这是不变量 **I9**（归并份额不写 `trades.json`）的形状: 归并份额只有
+    这一条通路进组合, 而账本上下文里根本没有能写模拟份额的入口。
+    """
+    from ..portfolio.asset_universe import NAME_TO_CODE
+
+    out: list[MergedSharesTransferred] = []
+    for name, asset in (state or {}).items():
+        if not isinstance(asset, dict):
+            continue
+        shares = float(asset.get("merged_shares", 0.0) or 0.0)
+        if shares <= 0:
+            continue
+        out.append(MergedSharesTransferred(
+            # 网格状态里没有「归并发生日」这一项 (6 key 固定形状) ——
+            # 日期由发出事件的那一刻 (manual_op) 负责。
+            date="",
+            asset=name,
+            code=NAME_TO_CODE.get(name, ""),
+            shares=shares,
+        ))
+    return out
