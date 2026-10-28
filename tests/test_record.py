@@ -4735,6 +4735,67 @@ def test_the_dispatch_script_refuses_to_run_without_a_token():
         os.environ.update(old_env)
 
 
+# -----------------------------------------------------------------------------
+# §10.1 的对照表 —— 让它**不能开始说谎**
+# -----------------------------------------------------------------------------
+# 文档里的「不变量 → 代码 → 测试」表是**会过期**的: 代码挪一行、测试改名,
+# 表就开始指错地方。这条用例把表**当代码验** —— 引用的文件必须在、行号必须在
+# 范围内、测试名必须真的存在、15 条不变量一条都不能少。
+#
+# 判据跟 §13 的验收清单是同一条: 不变量要能被**代码结构**回答。
+
+def _invariant_table_section() -> str:
+    """§10.1 对照表的原文 (从标题到下一个小节之前)。"""
+    doc = (ROOT / "docs" / "domain_model.md").read_text(encoding="utf-8")
+    start = doc.index("### 10.1 不变量")
+    end = doc.index("#### 10.1.1", start)
+    return doc[start:end]
+
+
+def test_the_invariant_table_points_at_code_that_exists():
+    """表里的每一处 `文件:行号` 都得是真的。"""
+    import re
+
+    section = _invariant_table_section()
+    refs = re.findall(r"`((?:src|scripts)/[\w/]+\.py):(\d+)`", section)
+    assert refs, "§10.1 里一处代码引用都没有 —— 表空了?"
+    bad = []
+    for rel, num in refs:
+        f = ROOT / rel
+        if not f.exists():
+            bad.append(f"{rel}: 文件不存在")
+            continue
+        lines = f.read_text(encoding="utf-8").split("\n")
+        n = int(num)
+        if n < 1 or n > len(lines):
+            bad.append(f"{rel}:{num} 越界 (文件只有 {len(lines)} 行)")
+    assert not bad, f"§10.1 的代码引用指错了地方: {bad}"
+
+
+def test_the_invariant_table_points_at_tests_that_exist():
+    """表里的每一个测试名都得是真的 —— 否则「钉住」是空话。"""
+    import re
+
+    section = _invariant_table_section()
+    named = set(re.findall(r"\b(test_[a-z0-9_]+)\b", section))
+    assert named, "§10.1 里一个测试名都没有"
+    source = (ROOT / "tests" / "test_record.py").read_text(encoding="utf-8")
+    missing = sorted(n for n in named if f"def {n}(" not in source)
+    assert not missing, f"§10.1 引用了不存在的测试: {missing}"
+
+
+def test_the_invariant_table_covers_all_fifteen_invariants():
+    """15 条不变量一条都不能漏 —— 漏一条 = 有一条没人守着。"""
+    import re
+
+    section = _invariant_table_section()
+    covered = set(re.findall(r"^\|\s*(I\d+)\s*\|", section, re.M))
+    expected = {f"I{i}" for i in range(1, 16)}
+    assert covered == expected, (
+        f"§10.1 少了几条不变量: {sorted(expected - covered)}"
+        f" / 多出来的: {sorted(covered - expected)}")
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]

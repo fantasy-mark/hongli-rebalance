@@ -452,7 +452,7 @@ ROOT = Path(__file__).resolve().parent.parent   # 现在指向 <repo>/src ——
 cd C:\Users\Administrator\project\hongli-rebalance
 pip install -r requirements.txt        # akshare pandas openpyxl requests matplotlib
 
-# 跑单测 (无网络, 227 个测试)
+# 跑单测 (无网络, 230 个测试)
 python -X utf8 -m tests.test_record
 
 # 跑一次每日快照 (会拉真实价格, 需要网络; 写 history.json + grid_state.json + grid_chart.png)

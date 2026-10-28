@@ -19,6 +19,9 @@
 > D4 ✅ 资金管理与 badge 口径对齐 · D1 ✅ 120 日窗口带日期 ·
 > D12 ✅ GitHub Actions 契约提取 · D13 ✅ 仓库路径单一真源。
 > 各阶段的「落地情况」见 §11.1.1 ~ §11.1.15。
+>
+> **导航**：上下文地图与整合关系见 §9.1 / §9.1.1；**15 条不变量 → 代码 → 测试**
+> 的逐条对照表见 §10.1（2026-10-28 核对）。
 
 ---
 
@@ -534,6 +537,37 @@ TriggerPolicy
    └───────────────────┘
 ```
 
+#### 9.1.1 关系模式（DDD 的整合关系，这里用到五种）
+
+DDD 有一组现成的「上下文之间怎么说话」的模式。本项目的关系逐条对号入座：
+
+| 关系 | 模式 | 谁 → 谁 | 在代码里的形状 |
+|---|---|---|---|
+| 行情 → 网格 / 组合 | **ACL**（防腐层） | BC-D → BC-C / BC-B | `src/infrastructure/quote_providers.py` —— akshare 的 DataFrame **停在基础设施层**；领域层只见 `Price` / `list[float]`，不知道「东财」「新浪」这些词 |
+| 回测 → 网格 | **ACL** | BC-E → BC-C | `src/simulation/grid_simulator.py` —— 只产出 `SimulatedOp`；写盘只经 `merge_backtest_ops`，**绝不覆盖 live op** |
+| 账本 → 组合 | **Conformist**（遵奉者） | BC-A → BC-B | 组合**接受**账本的形状，不改造它：`project_ledger` 的 `LedgerProjection` 就是组合的输入，`Portfolio.from_holdings` 直接吃它 |
+| 网格 → 组合 | **Published Language**（已发布的语言） | BC-C → BC-B | 跨上下文的**唯一**通路是 `MergedSharesTransferred` 事件 —— 它就是「已发布的语言」；组合用 `Provenance.SIMULATED_GRID` 翻译它 |
+| 编排 → 全部 | **Customer-Supplier**（客户/供应商） | BC-G → A/B/C/F | `src/application/` 只调公开用例（`project_ledger` / `RebalancePolicy.evaluate` / `GridAdvisor.suggest`），不碰任何内部实现 |
+
+**为什么 BC-A → BC-B 是「遵奉者」而不是防腐层**：账本是这个项目的**事实源**，它的形状（`positions` / `cash_rebalance` / `grid_budget`）没有第二种合理解释，翻译它只会制造两套真相。组合接受它，是刻意的选择。
+
+#### 9.1.2 三处「不许直接说话」
+
+| 谁不许直接跟谁说 | 挡在中间的东西 | 不这么做会怎样 |
+|---|---|---|
+| 领域层 ↔ 行情源 | `quote_providers.py` | 领域里出现「东财的 f43 字段」—— 换个行情源，规则全部要重写 |
+| 领域层 ↔ GitHub Actions | `src/infrastructure/github_actions/`（D12 ✅） | 业务代码里散落 `GITHUB_OUTPUT` / `GITHUB_RUN_ID` 字面量（D12 的原样） |
+| 模拟份额 ↔ 真实账本 | `Provenance` + `MergedSharesTransferred` 事件 | 模拟的持仓混进 `trades.json`，账本不再是「真实成交」的记录（I9） |
+
+**依赖方向是单向的**：`domain` 不知道 `infrastructure` 存在，所以外层可以随时换 —— 今天 akshare，明天别的行情源，`src/domain/` 一行不用改。
+
+> 这条依赖方向是被**测试**钉住的：`test_domain_grid_stays_stdlib_only`、
+> `test_domain_events_module_is_stdlib_only`、
+> `test_write_path_modules_stay_stdlib_only`、
+> `test_the_actions_adapter_is_stdlib_only`。
+> 理由很实际 —— `scripts/apply_grid.py` 在一个**不装** pandas/akshare 的
+> GitHub Actions job 里 import 领域层；领域层偷偷 import 第三方，那个 job 就挂。
+
 ### 9.2 三个必须设防腐层的口径鸿沟
 
 #### ① 回测 vs 实盘（最严重）
@@ -592,6 +626,8 @@ total      (归并后)  → 写进快照 + 3pp 判阈
 ## 10. 不变量清单（Invariants）
 
 每条都标出**当前在哪里被强制**、**重构后应该在哪被强制**。
+**重构已全部落地** —— 每条今天真实由哪一行代码强制、哪条测试钉着，见
+**§10.1 的对照表**。
 
 | # | 不变量 | 现状 | 重构后 |
 |---|---|---|---|
@@ -622,6 +658,53 @@ total      (归并后)  → 写进快照 + 3pp 判阈
 
 → 重构后 `GridPosition` 应该是 dataclass，序列化由专门的 mapper 负责，
 新增字段时**忘记迁移会立刻报错**而不是静默丢数据。
+
+---
+
+### 10.1 不变量 → 代码 → 测试 对照表（2026-10-28 逐条核对）
+
+§10 的表写的是「现状 / 重构后应该在哪」。重构做完了，这一节把每条不变量
+落到**今天真实存在的那一行代码**和**钉住它的那条测试**上。
+
+判据：**每条不变量都要能被代码结构回答，而不是靠注释或 code review。**
+
+| # | 不变量 | 在代码里由谁强制 | 钉住它的测试 |
+|---|---|---|---|
+| I1 | 现金池不得为负 | `src/domain/ledger/ledger.py:130` —— 草稿算完后两个池任一为负就抛错，**不提交** | `test_apply_trade_withdraw_grid_rejects_insufficient` · `test_apply_trade_transfer_to_grid_rejects_insufficient_rebalance` · `test_apply_holdings_rejects_negative_cash` |
+| I2 | 卖不得超持 | `src/domain/ledger/ledger.py:120` —— `held < sh - 1e-9` 直接抛错 | `test_apply_trade_sell_rejects_oversell_raises` · `test_apply_holdings_rejects_oversell` |
+| I3 | 账本只追加、不改写 | `src/application/apply_trade.py:196 assign_ids` + `:218 apply_batch`（`merged = existing + new`，**只追加**）；`src/infrastructure/json_repositories.py:236 read_trades` —— **严格读**，文件坏了抛错而不是当空账本 | `test_apply_trade_rejects_a_ledger_the_daily_snapshot_would_crash_on`（拒掉之后原文件**行数不变**）· `test_the_write_path_scripts_are_thin_shims` |
+| I4 | 持仓/现金 = 账本重放的投影 | `src/domain/ledger/projection.py:42 project_ledger` —— **唯一一份**重放实现，每日快照与写路径调同一个 | `test_write_path_and_daily_path_replay_the_ledger_identically` · `test_the_ledger_projection_is_a_named_value` |
+| I5 | 一个资产同时最多一个周期 | `src/domain/grid/state_machine.py:52 LEGAL_TRANSITIONS` —— `from_in_cycle` 是**表里的一列** | `test_grid_state_machine_has_exactly_three_legal_edges` · `test_manual_op_rejects_the_edges_the_state_machine_forbids` |
+| I6 | 一个周期 = N 买 + 1 卖 | 同一张表 —— 回到 Idle 的**唯一**一条边是 `tp`，而 `in_cycle` 只有 `open` 会置真 | `test_a_cycle_is_n_buys_and_exactly_one_exit` |
+| I7 | 正常回本出场的已实现盈亏 ≡ 0 | `src/domain/grid/exit_policy.py:74-75` —— `proceeds = total_invested`、`pnl = 0.0` | `test_manual_op_tp_sells_cost_only` · `test_ops_from_cycles_tp_reports_zero_cost_transfer` · `test_cost_only_exit_matches_legacy_dict_shape` |
+| I8 | 网格资金占用 = 仅周期内的层市值 | `src/domain/grid/grid_position.py:388 asset_snapshot` —— 不在周期 → `current_value = 0.0`（`:431`） | `test_asset_snapshot_out_of_cycle_reports_merged_but_no_capital` · `test_grid_capital_drops_to_zero_after_exit_while_merged_survives` |
+| I9 | 归并份额**不写** `trades.json` | 账本侧**没有入口**：`src/domain/ledger/trade_side.py:18`（八个 side 里没有「归并」）+ `src/domain/ledger/ledger.py:126`（未知 side 直接抛错）；组合侧只从事件吸收：`src/domain/portfolio/portfolio.py:345 merged_by_code_from_transfers` | `test_ledger_cannot_record_simulated_shares` · `test_merged_shares_never_leak_into_the_real_trade_ledger` |
+| I10 | 引擎**永不**改仓位/层数/盈亏/归并份额 | `src/domain/grid/advisor.py:42 GridSuggestion` 是 `frozen=True` —— **类型上装不下 state**；`src/domain/grid/grid_position.py:343 advance_one_day` 只滚窗口 | `test_advance_one_day_never_mutates_position_fields` · `test_advance_all_grids_returns_suggestions_not_trades` · `test_suggestion_and_executed_op_are_different_types` |
+| I11 | 网格状态只由固定 6 个 key 构成 | `src/domain/grid/grid_position.py:153 _STATE_KEYS` + `:221 to_state` / `:248 from_state` —— 新增字段忘了写 mapper **立刻抛错** | `test_grid_state_json_format_stays_six_keys` · `test_grid_position_mapper_rejects_unknown_keys` |
+| I12 | 目标权重 = 1/持仓数（动态篮子） | `src/domain/portfolio/rebalance_policy.py:35 TargetWeightPolicy` —— 类里**只有这一处**实现 | `test_target_weight_policy_is_dynamic` |
+| I13 | 偏离 > 3pp 才触发 + 全额快照回正 | `src/domain/portfolio/rebalance_policy.py:87 evaluate` —— 阈值是**实例状态**，不是模块级环境变量 | `test_three_pp_equal_weight_no_trigger` · `test_three_pp_drastic_drift_triggers` · `test_trigger_policy_from_config_carries_the_parameters` |
+| I14 | 一批网格操作 all-or-nothing | `src/application/apply_grid_op.py:165 validate_batch`（整批先校验）+ `:191 apply_batch`（顺序应用，任一条抛错则整批不写）+ `:247 apply_grid_ops`（**写盘是最后一步**） | `test_apply_grid_ops_rejects_the_whole_batch_and_writes_nothing` |
+| I15 | 页面/邮件不得把模拟说成实盘 | **类型侧**：`src/domain/grid/grid_op.py:161 ExecutedOp` / `:178 SimulatedOp` + `src/domain/shared/provenance.py:25` + `src/domain/portfolio/portfolio.py:34 PositionLot`；**披露侧**：`src/presentation/digest.py:149-164`（「真实持仓」与「归并」分两栏 + 一行口径说明） | `test_the_disclosure_splits_real_holdings_from_merged_shares` · `test_the_page_and_the_email_disclose_the_same_two_numbers` · `test_simulated_op_rejects_non_backtest_source` |
+
+#### 10.1.1 读这张表的三个要点
+
+**① 「不变量」在这里不是一句承诺，是一处 `raise`。** 举 I1 为例 ——
+「现金池不得为负」在 `ledger.py:130` 就是三行代码；测试不是「检查负数被拦住了」
+而是**检查抛错时状态没被动过**。规则的强度等于它被强制的方式。
+
+**② 同一个不变量往往有**类型**和**数据**两层保险。** I9 最典型：
+账本侧靠「**根本没有那个 side**」（类型/词表层），组合侧靠「**只从事件吸收**」
+（通路层）。任何一层单独都会被绕过，两层一起就没有绕过的缝。
+
+**③ I14 / I15 的强制点在**边界**，不在领域层。** all-or-nothing 是**写盘前**的性质，
+所以它住在写路径（`apply_grid_op.py`）；披露是**呈现**的性质，所以它住在
+`presentation/digest.py` + `app.js`。这不违反「不变量在领域层」的教条 ——
+**分层说的是依赖方向，不是强制点的位置**。领域层仍然被所有层依赖。
+
+> ⚠️ **别把这张表当成免检证明**。表格里写的是「今天这一行在强制这条规则」，
+> 不是「以后改动不会破坏它」。表格本身会过期 —— 改动不变量时，**这张表要一起改**，
+> 否则它会开始说谎（这是 §13 验收清单的同一件事：不变量要能被**代码结构**回答，
+> 而代码结构会变）。
 
 ---
 
@@ -2173,6 +2256,7 @@ if produced != declared:
 - [x] 「窗口里的每一根 K 线是哪一天？」在哪里保证？→ `PriceWindow` / `WindowBar`（D1 ✅）—— 窗口的每一根都带日期；`PriceWindow.record()` 是**唯一**的写入口，同一天是**覆盖**（留更低的那个）而不是追加 ⇒ 窗口深度只由**交易日**决定；老数据读得进来（迁成无日期的 bar，因为前复权让历史日期不可恢复）
 - [x] 「坏掉的账本不会被当成空账本」在哪里保证？→ 写路径走 `json_repositories.read_trades()` / `read_grid_state()`（Phase 5c-2 ✅）—— **严格读**：文件坏了就抛错（整批不写盘）；每日快照仍走宽松的 `load_trades()`（跑砸了只是今天的记录没出来，宁可少一天也别静默清空持仓）
 - [x] 「GitHub Actions 的环境变量名在哪里？」→ `src/infrastructure/github_actions/`（D12 ✅）—— `$GITHUB_OUTPUT` / `$GITHUB_STEP_SUMMARY` / `GITHUB_RUN_ID` / `::error::` 的**字面量**只出现在这个包里（`test_the_actions_adapter_owns_the_github_contract` 钉住）; step output 的名字（`date` / `total` / `trigger`）也在那儿 —— 它是 workflow 的**契约**, 不该散在调用方
+- [x] 「15 条不变量各自在哪一行代码里被强制？」→ **§10.1 的对照表**（2026-10-28 逐条核对）—— 每条不变量都指到 `文件:行号` + 钉住它的测试名；表里的 21 处代码引用与 32 个测试名已逐条核过。⚠️ **表会过期** —— 代码挪一行、测试改名，它就开始指错地方 ⇒ 三个自检用例把它**当代码验**：`test_the_invariant_table_points_at_code_that_exists`（文件必须在、行号必须在范围内）、`test_the_invariant_table_points_at_tests_that_exist`（测试名必须真的存在）、`test_the_invariant_table_covers_all_fifteen_invariants`（I1~I15 一条都不能漏）
 - [x] 「仓库根在哪？」→ `src/infrastructure/paths.py`（D13 ✅）—— `src/` 下只有它算 `parent.parent`（`test_the_repo_root_has_one_home` 钉住）; 「读不到记录」不再被当成「没有记录」而是**抛错**（`test_the_digest_never_silently_skips_a_missing_record`）; 「邮件发不出去」也不再是**绿的**
 
 ---
