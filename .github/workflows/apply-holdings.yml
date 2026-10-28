@@ -62,20 +62,14 @@ jobs:
 
       - name: Re-trigger daily record
         # Re-run record.py so the email digest & history.json reflect the
-        # new holdings within ~1 minute of the edit.
+        # new grid state within ~1 minute of the edit.
         #
-        # Authorization: GITHUB_TOKEN isn't auto-injected into curl; the
-        # /dispatches endpoint requires a Bearer token. Without auth the
-        # request silently 401s. Failures propagate via `::error::` + exit 1
-        # so the Actions UI shows red and subscribed emails fire — previously
-        # these failures were swallowed by `|| echo "WARN"` and only visible
-        # via the page lag (no commit for the re-record).
-        run: |
-          curl -fsS -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            -H "User-Agent: apply-holdings-bot" \
-            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
-            -d '{"event_type":"trigger"}' \
-            && echo "triggered daily re-record" \
-            || (echo "::error::failed to re-trigger daily.yml from apply-holdings"; exit 1)
+        # The dispatch call lives in scripts/trigger_daily.py (D12) -- the
+        # two apply-*.yml workflows used to carry their own copy of the same
+        # curl, and the error handling was buried in a shell `||`, so an
+        # expired/missing token showed up as "nothing happened" instead of
+        # a 401. The script turns it into a readable error + ::error::
+        # annotation.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -X utf8 scripts/trigger_daily.py

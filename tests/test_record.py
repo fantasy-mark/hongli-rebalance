@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import sys
 import tempfile
 import traceback
@@ -45,6 +46,13 @@ from src.domain.portfolio import portfolio, rebalance_policy as policy
 from src.domain.portfolio import valuation as valuation_mod
 from src.domain.shared.provenance import Provenance
 from src.infrastructure import json_repositories as repos
+
+#: 真实的数据文件路径 —— 用例跑之前把 `repos.*` 拨回它们。
+#: (有些老用例会临时改写 `repos.HOLDINGS` / `repos.TRADES` 且**不恢复**,
+#:  用例之间会互相污染 —— 这就是顺序依赖的来源。)
+_REAL_REPOS_PATHS = {k: getattr(repos, k) for k in
+                     ("HOLDINGS", "TRADES", "HISTORY",
+                      "GRID_STATE", "GRID_CHART")}
 from src.presentation import notify_failure as nf
 from src.simulation import equal_weight_backtest as three_pp
 from src.simulation import grid_simulator as grid_sim
@@ -4418,11 +4426,324 @@ def test_the_migration_script_is_idempotent():
     assert again == window
 
 
+# -----------------------------------------------------------------------------
+# D12 / D13 —— GitHub Actions 契约与仓库路径: 各有**一个**家
+#
+# D13 的由来: 2026-10-26 的结构重构把 `src/notify.py` 挪到
+# `src/presentation/digest.py` (下了一层), 但里面的
+# `ROOT = Path(__file__).resolve().parent.parent` 没跟着改 ——
+# `HISTORY` 指向 `<repo>/src/data/history.json`, 找不到 → 邮件**静默**
+# 不发, 而 workflow 那一步**照样是绿的** (退出码 0)。
+# 同一个错也让图表少画了网格仓位 (`chart_renderer._load_grid_state_safe`)。
+#
+# D12 的由来: GitHub Actions 的痕迹散在三个地方 —— 应用层 (`$GITHUB_OUTPUT`)、
+# 呈现层 (`GITHUB_RUN_ID`)、脚本 (`::error::`)。现在收进
+# `src/infrastructure/github_actions/` 这一个适配器。
+# -----------------------------------------------------------------------------
+
+#: GitHub Actions 的环境变量名 —— 只该出现在适配器里。
+GITHUB_ENV_NAMES = (
+    "GITHUB_OUTPUT",
+    "GITHUB_STEP_SUMMARY",
+    "GITHUB_RUN_ID",
+    "GITHUB_REPOSITORY",
+    "GITHUB_SERVER_URL",
+    "GITHUB_WORKSPACE",
+    "GITHUB_API_URL",
+    "GITHUB_TOKEN",
+)
+
+
+def test_the_repo_root_has_one_home():
+    """D13: `src/` 下只有 `paths.py` 知道仓库根在哪。
+
+    这条要钉死, 因为「模块挪了一层 → 路径少了一层」是**静默**的:
+    读不到文件 ≠ 报错, 很多时候只是「没有数据」。
+    """
+    allowed = "src/infrastructure/paths.py"
+    offenders = []
+    for p in sorted((ROOT / "src").rglob("*.py")):
+        rel = p.relative_to(ROOT).as_posix()
+        if rel == allowed:
+            continue
+        if "parent.parent" in p.read_text(encoding="utf-8"):
+            offenders.append(rel)
+    assert not offenders, \
+        f"这些模块自己算仓库根 —— 路径只有 paths.py 一个家: {offenders}"
+
+
+def test_the_repo_root_points_at_the_real_data_directory():
+    """D13: `paths.ROOT` 就是仓库根, `data/` 在它下面。"""
+    from src.infrastructure import paths
+
+    assert paths.ROOT == ROOT, (paths.ROOT, ROOT)
+    assert paths.DATA_DIR == ROOT / "data", paths.DATA_DIR
+    assert paths.HISTORY_FILE == ROOT / "data" / "history.json"
+    assert paths.HISTORY_FILE.exists(), paths.HISTORY_FILE
+    assert paths.GRID_STATE_FILE.exists(), paths.GRID_STATE_FILE
+    assert paths.GRID_CHART_FILE.name == "grid_chart.png"
+
+
+def test_the_data_repositories_use_the_same_paths():
+    """D13: `json_repositories` 与 `paths` 说的是同一批文件。"""
+    from src.infrastructure import json_repositories as repos
+    from src.infrastructure import paths
+
+    assert repos.ROOT == paths.ROOT
+    assert repos.HISTORY == paths.HISTORY_FILE
+    assert repos.GRID_STATE == paths.GRID_STATE_FILE
+    assert repos.HOLDINGS == paths.HOLDINGS_FILE
+    assert repos.TRADES == paths.TRADES_FILE
+    assert repos.GRID_CHART == paths.GRID_CHART_FILE
+
+
+def test_the_digest_reads_the_real_history_file():
+    """D13: 邮件读的是**真的** history.json —— 修好之前这里读不到。"""
+    from src.infrastructure import paths
+    from src.presentation import digest
+
+    assert digest.HISTORY == paths.HISTORY_FILE
+    assert digest.HISTORY.exists(), digest.HISTORY
+    record = digest.latest_record()
+    assert record is not None, "history.json 里至少要有一条记录"
+    assert record.get("date"), record
+
+
+def test_the_digest_never_silently_skips_a_missing_record():
+    """发不出就说发不出 —— 以前是 print + return (退出码 0, 步骤是绿的)。"""
+    from src.presentation import digest
+
+    with tempfile.TemporaryDirectory() as td:
+        empty = Path(td) / "history.json"
+        empty.write_text("[]", encoding="utf-8")
+        old = digest.HISTORY
+        digest.HISTORY = empty
+        try:
+            assert digest.latest_record() is None
+            try:
+                digest.main()
+            except Exception as ex:
+                assert "没有可用记录" in str(ex), ex
+            else:
+                raise AssertionError("没有记录时必须抛错 —— 不能静默跳过")
+        finally:
+            digest.HISTORY = old
+
+
+def test_the_digest_refuses_to_send_without_a_recipient():
+    """MAIL_TO 空 → 不发 (而不是给 SMTP 递一个空列表)。"""
+    from src.presentation import digest
+
+    old_env = dict(os.environ)
+    try:
+        os.environ.update({"SMTP_HOST": "h", "SMTP_PORT": "465",
+                           "SMTP_USER": "u", "SMTP_PASS": "p",
+                           "MAIL_TO": "  ,  "})
+        try:
+            digest.send("s", "h", "t")
+        except RuntimeError as ex:
+            assert "MAIL_TO" in str(ex), ex
+        else:
+            raise AssertionError("没有收件人时必须抛错")
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
+
+
+def test_the_digest_reports_refused_recipients():
+    """`sendmail()` 的返回值 (被拒的收件人) 以前被丢掉了 —— 现在要炸。"""
+    from src.presentation import digest
+
+    class _FakeSMTP:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def login(self, user, pwd):
+            pass
+
+        def sendmail(self, sender, to, msg):
+            return {to[0]: (550, b"no such user")}
+
+    old_env = dict(os.environ)
+    old_smtp = digest.smtplib.SMTP_SSL
+    try:
+        os.environ.update({"SMTP_HOST": "h", "SMTP_PORT": "465",
+                           "SMTP_USER": "u", "SMTP_PASS": "p",
+                           "MAIL_TO": "a@example.com"})
+        digest.smtplib.SMTP_SSL = _FakeSMTP
+        try:
+            digest.send("s", "h", "t")
+        except RuntimeError as ex:
+            assert "拒收" in str(ex), ex
+        else:
+            raise AssertionError("收件人被拒收时必须抛错")
+    finally:
+        digest.smtplib.SMTP_SSL = old_smtp
+        os.environ.clear()
+        os.environ.update(old_env)
+
+
+def test_the_actions_adapter_owns_the_github_contract():
+    """D12: `GITHUB_*` 的**字面量**只出现在适配器里。
+
+    判据是「带引号的字面量」—— 文档里提一嘴 `GITHUB_OUTPUT` 无妨,
+    但代码里读它就意味着「这个模块知道了 Actions 的环境变量名」。
+    """
+    offenders = []
+    for base in (ROOT / "src", ROOT / "scripts"):
+        for p in sorted(base.rglob("*.py")):
+            rel = p.relative_to(ROOT).as_posix()
+            if rel.startswith("src/infrastructure/github_actions/"):
+                continue
+            text = p.read_text(encoding="utf-8")
+            for name in GITHUB_ENV_NAMES:
+                if f'"{name}"' in text or f"'{name}'" in text:
+                    offenders.append(f"{rel}: {name}")
+    assert not offenders, \
+        f"GitHub Actions 的环境变量只该住在适配器里: {offenders}"
+
+
+def test_the_actions_adapter_is_stdlib_only():
+    """apply-grid / apply-holdings 两个 job 不装任何依赖。"""
+    from src.infrastructure import github_actions  # noqa: F401
+
+    heavy = ("pandas", "numpy", "akshare", "requests", "matplotlib")
+    bad = []
+    for p in sorted((ROOT / "src" / "infrastructure" / "github_actions").glob("*.py")):
+        text = p.read_text(encoding="utf-8")
+        for mod in heavy:
+            if f"import {mod}" in text:
+                bad.append(f"{p.name}: {mod}")
+    assert not bad, f"GitHub Actions 适配器必须 stdlib-only: {bad}"
+
+
+def test_the_step_outputs_are_published_to_the_output_file():
+    """`$GITHUB_OUTPUT` 的写法与输出名字都在适配器里。"""
+    from src.infrastructure import github_actions as ga
+
+    with tempfile.TemporaryDirectory() as td:
+        out_file = Path(td) / "gh_output.txt"
+        env = {"GITHUB_OUTPUT": str(out_file)}
+        assert ga.set_output("date", "2026-10-28", env=env) is True
+        assert ga.publish_snapshot_outputs(date="2026-10-28", total=170806.0,
+                                          triggered=True, env=env) is True
+        text = out_file.read_text(encoding="utf-8")
+        assert "date=2026-10-28" in text, text
+        assert "total=170806.00" in text, text
+        assert "trigger=yes" in text, text
+    # 不在 Actions 里 → 什么都不做, 但也不报错
+    assert ga.set_output("date", "x", env={}) is False
+
+
+def test_the_run_context_knows_where_it_is():
+    """`current_context()` 回答「这次 run 是谁」。"""
+    from src.infrastructure.github_actions import current_context
+
+    ctx = current_context({
+        "GITHUB_SERVER_URL": "https://github.com/",
+        "GITHUB_REPOSITORY": "fantasy-mark/hongli-rebalance",
+        "GITHUB_RUN_ID": "42",
+        "GITHUB_WORKSPACE": "/tmp/ws",
+    })
+    assert ctx.is_actions
+    assert ctx.run_url == ("https://github.com/fantasy-mark/hongli-rebalance"
+                           "/actions/runs/42"), ctx.run_url
+    assert ctx.workspace == Path("/tmp/ws")
+
+    # 不在 Actions 里 → 没有 run 链接 (而不是一个半截的 URL)
+    empty = current_context({})
+    assert not empty.is_actions
+    assert empty.run_url == ""
+
+
+def test_the_annotations_are_escaped():
+    """annotation 里的逗号 / 百分号 / 换行必须转义 —— 否则 Actions 直接忽略。"""
+    import io
+
+    from src.infrastructure.github_actions import annotate
+
+    buf = io.StringIO()
+    out = annotate("error", "a, b%c\nsecond", file="x.py", line=3,
+                   title="t,1", stream=buf)
+    assert out.startswith("::error "), out
+    # 属性值: 逗号/冒号要转义 (否则属性被切断, annotation 被 Actions 忽略)
+    assert "title=t%2C1" in out, out
+    assert "file=x.py,line=3" in out, out
+    # 消息: 百分号与换行要转义 —— 但**逗号是安全的**, 不转义
+    assert "%25" in out and "%0A" in out, out
+    assert "a, b%25c%0Asecond" in out, out
+    assert "\n" not in out, out
+    assert buf.getvalue().strip() == out
+
+
+def test_the_daily_workflow_commits_the_snapshot_even_if_the_email_fails():
+    """邮件发不出去 **不能** 把当天的快照一起扣住。"""
+    yml = (ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8")
+    commit_at = yml.index("- name: Commit data files")
+    email_at = yml.index("- name: Send email digest")
+    assert email_at > commit_at, "邮件步骤要排在提交**之后**"
+    block = yml[commit_at:email_at]
+    if_lines = [ln.strip() for ln in block.splitlines()
+                if ln.strip().startswith("if:")]
+    assert if_lines == ["if: steps.record.outcome == 'success'"], if_lines
+
+
+def test_the_email_step_knows_where_the_page_lives():
+    """邮件页脚的「在线查看」链接需要 PAGES_URL。"""
+    yml = (ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8")
+    email_at = yml.index("- name: Send email digest")
+    block = yml[email_at:]
+    assert "PAGES_URL:" in block, "邮件步骤没传 PAGES_URL —— 链接是空的"
+
+
+def test_the_apply_workflows_share_one_dispatch_script():
+    """两份 workflow 里的同一段 curl → 一份脚本。"""
+    for wf in ("apply-grid.yml", "apply-holdings.yml"):
+        text = (ROOT / ".github" / "workflows" / wf).read_text(encoding="utf-8")
+        assert "scripts/trigger_daily.py" in text, wf
+        assert "/dispatches" not in text, f"{wf} 里还有自己那份 curl"
+
+
+def test_the_dispatch_script_refuses_to_run_without_a_token():
+    """少一个必填的环境变量 → 明确报错 (而不是静默 401)。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "trigger_daily", ROOT / "scripts" / "trigger_daily.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.EVENT_TYPE == "trigger"
+
+    old_env = dict(os.environ)
+    try:
+        os.environ.pop("GITHUB_TOKEN", None)
+        os.environ["GITHUB_REPOSITORY"] = "owner/repo"
+        try:
+            mod.main()
+        except SystemExit as ex:
+            assert "GITHUB_TOKEN" in str(ex), ex
+        else:
+            raise AssertionError("没有令牌时必须退出并报错")
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]
     fails = 0
     for fn in fns:
+        # 某些老用例把 `json_repositories` 的路径指向临时文件且**不恢复** ——
+        # 每个用例跑之前拨回真实路径, 免得用例之间互相污染 (顺序依赖)。
+        for _k, _v in _REAL_REPOS_PATHS.items():
+            setattr(repos, _k, _v)
         try:
             fn()
             print(f"  PASS  {fn.__name__}")

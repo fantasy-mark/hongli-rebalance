@@ -9,18 +9,25 @@ Body covers TWO strategies:
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import smtplib
 import ssl
 import sys
+import time
 import traceback
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-HISTORY = ROOT / "data" / "history.json"
+# The repo root has exactly ONE home (D13) -- src/infrastructure/paths.py.
+#
+# This module used to compute its own, ONE LEVEL TOO SHALLOW: it pointed at
+# <repo>/src/data/history.json, found nothing, and skipped the mail with
+# exit code 0 -- so every "Send email digest" step was GREEN while not a
+# single mail went out (2026-10-26 .. 2026-10-28).
+from ..infrastructure.github_actions import append_summary
+from ..infrastructure.paths import HISTORY_FILE as HISTORY, ROOT
 
 # ---- shared style constants (also used by notify_failure.py) ----
 COLOR_OK = "#2c7a2c"
@@ -558,12 +565,24 @@ def build_subject(r: dict) -> str:
     return f"[{tag}] 稳健再平衡 {r['date']} 总市值 {fmt_money(r['total'])}"
 
 
-def send(subject: str, html: str, text: str) -> None:
+def send(subject: str, html: str, text: str, *, attempts: int = 3,
+         backoff: float = 5.0) -> None:
+    """把邮件发出去 —— **发不出就抛错**, 绝不静默。
+
+    ⚠️ `sendmail()` 返回的是「**被拒收的收件人**」字典: 部分收件人被拒时
+    Python **不抛异常**, 只是把它放进返回值里 —— 以前这个返回值被丢掉了,
+    于是「邮件没到」可以是绿的。现在它被检查了。
+
+    重试: SMTP 偶发断连/超时在 Actions 的容器里很常见。重试只覆盖
+    **瞬时**故障 (SMTPException / OSError); 收件人被拒是确定性的, 直接炸。
+    """
     host = os.environ["SMTP_HOST"]
     port = int(os.environ.get("SMTP_PORT", "465"))
     user = os.environ["SMTP_USER"]
     pwd = os.environ["SMTP_PASS"]
     to = [a.strip() for a in os.environ["MAIL_TO"].split(",") if a.strip()]
+    if not to:
+        raise RuntimeError("MAIL_TO 是空的 —— 没有收件人, 不发")
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -572,23 +591,51 @@ def send(subject: str, html: str, text: str) -> None:
     msg.attach(MIMEText(text, "plain", "utf-8"))
     msg.attach(MIMEText(html, "html", "utf-8"))
 
-    ctx = ssl.create_default_context()
-    with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as s:
-        s.login(user, pwd)
-        s.sendmail(user, to, msg.as_string())
+    last_exc: Exception | None = None
+    for attempt in range(1, max(1, int(attempts)) + 1):
+        try:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as s:
+                s.login(user, pwd)
+                refused = s.sendmail(user, to, msg.as_string())
+            if refused:
+                raise RuntimeError(f"收件人被拒收: {refused}")
+            return
+        except (smtplib.SMTPException, OSError) as exc:
+            last_exc = exc
+            if attempt >= max(1, int(attempts)):
+                break
+            wait = backoff * attempt
+            print(f"WARN SMTP 第 {attempt}/{attempts} 次失败 ({exc}) —— "
+                  f"{wait:.0f}s 后重试", file=sys.stderr)
+            time.sleep(wait)
+    raise RuntimeError(f"SMTP 发送失败 ({attempts} 次): {last_exc}")
 
 
 def main() -> None:
     r = latest_record()
     if not r:
-        print("WARN no history.json; skipping email", file=sys.stderr)
-        return
+        # ⚠️ D13: 以前这里是 print + return —— 退出码 0, workflow 那一格是绿的,
+        # 而邮件**一封都没发**。发不出就说发不出 (抛错 → 这一步红)。
+        raise RuntimeError(f"{HISTORY} 里没有可用记录 —— 不发空邮件")
     pages_url = os.environ.get("PAGES_URL", "")
     subject = build_subject(r)
     text = build_text(r)
     html = build_html(r, pages_url)
     send(subject, html, text)
-    print(f"sent: {subject!r} → {os.environ.get('MAIL_TO', '?')}")
+
+    today = datetime.date.today().isoformat()
+    record_day = str(r.get("date", "?"))
+    recipient = os.environ.get("MAIL_TO", "?")
+    print(f"sent: {subject!r} → {recipient}")
+    # 摘要面板留一份痕迹 —— 不用翻日志就知道邮件发没发、是哪天的记录。
+    append_summary(
+        "### ✅ 邮件已发送\n"
+        "\n"
+        f"- 主题: `{subject}`\n"
+        f"- 收件人: `{recipient}`\n"
+        f"- 记录日期: **{record_day}** (今天 {today})"
+    )
 
 
 if __name__ == "__main__":

@@ -26,12 +26,17 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-HOLDINGS = ROOT / "data" / "holdings.json"   # v2: derived cache of trades.json
-TRADES = ROOT / "data" / "trades.json"       # canonical trade ledger
-HISTORY = ROOT / "data" / "history.json"
-GRID_STATE = ROOT / "data" / "grid_state.json"
-GRID_CHART = ROOT / "data" / "grid_chart.png"
+# The repo root has exactly ONE home (D13) -- src/infrastructure/paths.py.
+# Never recompute it here: a module that moved one level down would
+# silently point at <repo>/src/data/... and read nothing.
+from .paths import (  # noqa: E402
+    GRID_CHART_FILE as GRID_CHART,
+    GRID_STATE_FILE as GRID_STATE,
+    HISTORY_FILE as HISTORY,
+    HOLDINGS_FILE as HOLDINGS,
+    ROOT,
+    TRADES_FILE as TRADES,
+)
 
 
 # -----------------------------------------------------------------------------

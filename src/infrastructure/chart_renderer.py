@@ -47,10 +47,16 @@ for _n in ("akshare", "urllib3", "requests", "matplotlib"):
     import logging
     logging.getLogger(_n).setLevel(logging.ERROR)
 
-ROOT = Path(__file__).resolve().parent.parent
-HISTORY = ROOT / "data" / "history.json"
-GRID_STATE = ROOT / "data" / "grid_state.json"
-OUT_PNG = ROOT / "data" / "grid_chart.png"
+# The repo root has exactly ONE home (D13) -- src/infrastructure/paths.py.
+# This module used to compute its own, one level too shallow: it pointed at
+# <repo>/src/data/... and therefore drew the chart with NO grid state.
+from .paths import (  # noqa: E402
+    GRID_CHART_FILE as OUT_PNG,
+    GRID_STATE_FILE as GRID_STATE,
+    HISTORY_FILE as HISTORY,
+    ROOT,
+)
+
 START = "2020-11-05"     # 纳斯达克ETF 上市日, 4 资产公共起点 (3 rebalance + 1 grid-only)
 END_FALLBACK = pd.Timestamp.today().strftime("%Y-%m-%d")
 

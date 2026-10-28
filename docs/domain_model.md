@@ -16,8 +16,9 @@
 > —— 5c-1 每日快照 · 5c-2 写路径）· Phase 6 ✅ 状态机显式化 ·
 > Phase 7 ✅ 账本读侧拆成投影 · D6 ✅ 披露侧（真实持仓 / 归并 分栏）·
 > D11 ✅ 图表读实际持仓 · D3 ✅ 虚拟预算改 `GridBudget` ·
-> D4 ✅ 资金管理与 badge 口径对齐 · D1 ✅ 120 日窗口带日期。
-> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.14。
+> D4 ✅ 资金管理与 badge 口径对齐 · D1 ✅ 120 日窗口带日期 ·
+> D12 ✅ GitHub Actions 契约提取 · D13 ✅ 仓库路径单一真源。
+> 各阶段的「落地情况」见 §11.1.1 ~ §11.1.15。
 
 ---
 
@@ -52,6 +53,11 @@ dict 的形状、函数名、注释和 README 文案里，而不是体现在类�
 | E | **虚拟盘回测 + 图表生成** | `src/chart.py`（534 行）, `src/three_pp.py:63`, `src/grid.py:116` | 每日 Action（`record.py:812`） | `data/grid_chart.png` |
 | F | **通知/呈现** | `src/notify.py`（589 行）, `app.js`（1356 行） | 每日 Action / 页面 | `data/history.json`（只读） |
 | G | **编排** | `src/record.py:640`（`main()` 848 行）, `.github/workflows/*` | GitHub Actions | — |
+
+> **注（2026-10-28 补）**：BC-G 的**上游系统**就是 GitHub Actions。它的契约
+> （`$GITHUB_OUTPUT` / `::error::` / `GITHUB_RUN_ID` …）原先散在应用层、
+> 呈现层和脚本里，现已收进 `src/infrastructure/github_actions/`（防腐层）——
+> 详见 §11.1.15 的 D12。
 
 ### 2.2 一次每日运行的数据流（现状）
 
@@ -657,9 +663,15 @@ src/
     apply_trade.py             # ← apply_holdings.py 的领域部分
     apply_grid_op.py           # ← apply_grid.py 的领域部分
   infrastructure/              # 适配器
+    paths.py                   # 仓库路径 —— **唯一真源** (D13)
     json_repositories.py       # 4 个 JSON 文件的读写（原子写）
     quote_providers.py         # sina/eastmoney/tencent/akshare 防腐层
     chart_renderer.py          # ← chart.py
+    github_actions/            # GitHub Actions 防腐层 (D12)
+      context.py               # RunContext —— 这次 run 是谁
+      outputs.py               # $GITHUB_OUTPUT —— step outputs 的唯一写入口
+      annotations.py           # ::error:: / ::warning:: / ::notice::
+      summary.py               # $GITHUB_STEP_SUMMARY —— run summary 面板
   simulation/                  # BC-E 独立上下文
     grid_simulator.py          # ← run_compound_grid
     equal_weight_backtest.py   # ← three_pp.py
@@ -725,10 +737,17 @@ src/
     apply_grid_op.py            ✅ Phase 5c-2 —— 复合网格写路径的用例
                                 （校验 → 应用 → 写盘）
   infrastructure/              ✅ 适配器
+    paths.py                    ✅ D13 —— 仓库路径的**唯一真源**（Phase 0 搬家时
+                                忘了改 `parent.parent` ⇒ 邮件静默不发，见 §11.1.15）
     json_repositories.py        ✅ 4 个 JSON 文件的读写（原子写）+ 写路径的
                                 严格读 (read_trades / read_grid_state)
     quote_providers.py          ✅ sina/eastmoney/tencent/akshare 防腐层
     chart_renderer.py           ✅ ← chart.py
+    github_actions/             ✅ D12 —— GitHub Actions 防腐层
+      context.py                ✅ RunContext —— 这次 run 是谁
+      outputs.py                ✅ $GITHUB_OUTPUT —— step outputs
+      annotations.py            ✅ ::error:: / ::warning:: / ::notice::
+      summary.py                ✅ $GITHUB_STEP_SUMMARY —— run summary 面板
   simulation/                  ✅ BC-E 独立上下文
     grid_simulator.py           ✅ ← run_compound_grid（依赖 domain，不碰写仓储）
     equal_weight_backtest.py    ✅ ← three_pp.py
@@ -1521,6 +1540,141 @@ position.in_cycle = edge.to_in_cycle
 | 合法边只有一份 | ✓ —— `test_the_legal_edges_are_written_only_in_the_state_machine_table` 静态钉住 `manual_op` 里没有内联的状态判断 |
 | 状态机仍 stdlib-only | ✓ —— `test_the_state_machine_stays_stdlib_only` |
 
+#### 11.1.15 D12 + D13 落地情况（2026-10-28）
+
+这一节记的是**两件事**，都是 2026-10-28 用户报「今天的邮件没发过来」时挖出来的：
+
+- **D13** —— 仓库根算错一层 ⇒ 邮件**静默**不发（绿的步骤，零封邮件）
+- **D12** —— GitHub Actions 的契约散落在三个地方 ⇒ 收进一个适配器
+
+##### (a) D13: 原来错在哪
+
+2026-10-26 的结构重构（Phase 0）把 `src/notify.py` 挪到
+`src/presentation/digest.py`、把 `src/chart.py` 挪到
+`src/infrastructure/chart_renderer.py` —— 两处都**下了一层**。但文件里的
+
+```python
+ROOT = Path(__file__).resolve().parent.parent
+```
+
+**没跟着改**：
+
+| 文件 | `parent.parent` 指向 | 对不对 |
+|---|---|---|
+| `src/notify.py`（重构前） | 仓库根 | ✓ |
+| `src/presentation/digest.py`（重构后） | `src/` | ✗ |
+| `src/infrastructure/chart_renderer.py` | `src/` | ✗ |
+
+于是 `HISTORY` 指向 `<repo>/src/data/history.json` —— **不存在**。
+
+##### (b) 为什么「邮件没发」是**绿的**
+
+`digest.main()` 原来是：
+
+```python
+r = latest_record()
+if not r:
+    print("WARN no history.json; skipping email", file=sys.stderr)
+    return          # ← 退出码 0
+```
+
+`latest_record()` 返回 `None` → 打一行 WARN → **正常返回** → 退出码 0 →
+workflow 那一格是 ✅ → Actions 界面上「Send email digest」全是绿的，
+**一封邮件都没发出去**。
+
+从 2026-10-26 到 2026-10-28，**三天，一封邮件都没有**。
+
+`chart_renderer` 是同一个错的另一半：`_load_grid_state_safe()` 读不到
+`grid_state.json` → 图表**少画了网格仓位**。
+
+##### (c) 改法：路径只有一个家
+
+新增 `src/infrastructure/paths.py`（stdlib-only）：
+
+```python
+ROOT = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = ROOT / "data"
+HISTORY_FILE = DATA_DIR / "history.json"
+GRID_STATE_FILE = DATA_DIR / "grid_state.json"
+HOLDINGS_FILE = DATA_DIR / "holdings.json"
+TRADES_FILE = DATA_DIR / "trades.json"
+GRID_CHART_FILE = DATA_DIR / "grid_chart.png"
+```
+
+`json_repositories` / `chart_renderer` / `digest` 全部从这里取。
+
+**并且把「不发邮件」改成「发不出就报错」** —— `digest.main()` 现在在没有
+可用记录时**抛错**（退出码 1 ⇒ 那一步红）。同样，`send()` 现在检查
+`sendmail()` 的返回值：**部分**收件人被拒时 Python **不抛异常**，只是把
+被拒的人放进返回值里 —— 以前那个返回值被丢掉了。
+
+再叠两层：SMTP 瞬时故障重试 3 次（5s / 10s 退避），以及 run summary 面板
+留痕（不用翻日志就知道邮件发没发、是哪天的记录）。
+
+##### (d) D12: GitHub Actions 契约散在三个地方
+
+| 痕迹 | 原先住在 |
+|---|---|
+| `$GITHUB_OUTPUT`（step outputs） | `src/application/daily_snapshot.py:write_github_output` |
+| `::error::` annotation | `scripts/apply_grid.py:fail` |
+| `GITHUB_RUN_ID` / `GITHUB_REPOSITORY` / `GITHUB_SERVER_URL` / `GITHUB_WORKSPACE` | `src/presentation/notify_failure.py` |
+
+应用层（用例编排）不该知道 workflow 的环境变量名；呈现层也不该。
+
+新增 `src/infrastructure/github_actions/` —— GitHub Actions 的**防腐层**：
+
+```
+src/infrastructure/github_actions/
+    __init__.py     # 对外的全部词汇
+    context.py      # RunContext —— 这次 run 是谁（仓库 / run id / 工作区 / API 根）
+    outputs.py      # $GITHUB_OUTPUT —— step outputs 的唯一写入口
+    annotations.py  # ::error:: / ::warning:: / ::notice::（带转义）
+    summary.py      # $GITHUB_STEP_SUMMARY —— run summary 面板
+```
+
+`daily_snapshot` 只说「我要发布这三个输出」，`notify_failure` 只问
+「这次 run 的链接是什么」，脚本只调 `annotate_error(msg)`。
+step output 的**名字**（`date` / `total` / `trigger`）也住在这里 —— 它是
+workflow 的契约，不该散在调用方。
+
+顺带：两个 `apply-*.yml` 里**各抄了一份**同样的 `curl .../dispatches`
+（而且 `curl -fsS` 在 401 上是**静默**的 —— 令牌没注入时看到的是
+「没反应」而不是「401」）。现在收进 `scripts/trigger_daily.py`，
+一处实现，失败时抛错 + 打 `::error::` annotation。
+
+##### (e) 顺带修的 workflow 顺序
+
+`daily.yml` 的「Commit data files」原来是 `if: success()`，而邮件步骤
+排在它**前面** —— 于是**发邮件失败会顺带把当天的快照扣住**。
+
+现在：
+
+```yaml
+- name: Commit data files
+  if: steps.record.outcome == 'success'     # 只看快照那一步
+...
+- name: Send email digest                    # 邮件在提交**之后**
+  if: always()
+```
+
+邮件出问题不再丢数据；而邮件发出去时，快照已经推上去了（页脚的
+「在线查看」链接才不是空的 —— `PAGES_URL` 之前**根本没传**）。
+
+##### (f) 验证
+
+- `test_the_repo_root_has_one_home` —— `src/` 下只有 `paths.py` 算仓库根
+- `test_the_repo_root_points_at_the_real_data_directory` / `test_the_data_repositories_use_the_same_paths`
+- `test_the_digest_reads_the_real_history_file`
+- `test_the_digest_never_silently_skips_a_missing_record`
+- `test_the_digest_reports_refused_recipients` / `test_the_digest_refuses_to_send_without_a_recipient`
+- `test_the_actions_adapter_owns_the_github_contract` —— `GITHUB_*` 的字面量只在适配器里
+- `test_the_actions_adapter_is_stdlib_only`
+- `test_the_step_outputs_are_published_to_the_output_file`
+- `test_the_run_context_knows_where_it_is` / `test_the_annotations_are_escaped`
+- `test_the_daily_workflow_commits_the_snapshot_even_if_the_email_fails`
+- `test_the_email_step_knows_where_the_page_lives`
+- `test_the_apply_workflows_share_one_dispatch_script` / `test_the_dispatch_script_refuses_to_run_without_a_token`
+
 ### 11.2 分阶段（每阶段都可独立交付、独立验证）
 
 #### Phase 0 — 立柱（不改行为，1 次提交）
@@ -1989,6 +2143,8 @@ if produced != declared:
 | D9 | `evaluate()` 的两段式求值是隐式近似 | ✅ **已解决**（Phase 5c）—— `SnapshotRun.layer_sizing_basis` / `SnapshotRun.snapshot_basis` 各有名字：层额定尺用前者，记录用后者 | 恢复自动行为时会有偏差 | ✅ 已解决（§11.1.7 c）—— `test_size_grid_layer_uses_the_layer_sizing_basis_total` 钉住「层额用的是层额定尺那个数」 |
 | D10 | 规则参数在 `src/domain/grid/grid_position.py` 与 `scripts/apply_grid.py` 各有一份 | ✅ **已解决**（Phase 5c-2）—— 写路径的 `VALID_OPS` 现在是 `TriggerLevel` 的**投影**，`VALID_SIDES` 是 `TradeSide` 的投影；两份脚本里手抄的词表删掉了 | 改一处漏一处 | ✅ 已解决（§11.1.7 d）—— `test_write_path_vocabularies_come_from_the_domain` 静态钉住 |
 | D11 | 图表永远用完整 `ETF_DEFS`，读不到用户实际持仓 | `src/infrastructure/chart_renderer.py:_load_chart_assets()` 里 `holdings, _ = read_holdings()` —— `read_holdings()` 返回 **3** 个值，解包抛 `ValueError`，被 `except Exception` 吞掉后走 fallback 分支 | 换仓/减仓后图表仍画全部 4 个品种 | ✅ **已解决** —— `holdings, _cash_rebalance, _grid_budget = read_holdings()`；兜底分支**只在文件读不到时**才走（详见 §11.1.11）|
+| D12 | GitHub Actions 的契约散落在三个地方 | `$GITHUB_OUTPUT` 在 `src/application/daily_snapshot.py`; `::error::` 在 `scripts/apply_grid.py`; `GITHUB_RUN_ID` 在 `src/presentation/notify_failure.py`; 两份 `apply-*.yml` 各抄了一份 `/dispatches` 的 curl | 应用层/呈现层知道了 workflow 的内部; 改一处漏一处; 401 是**静默**的 | ✅ **已解决** —— `src/infrastructure/github_actions/`（防腐层：context / outputs / annotations / summary）+ `scripts/trigger_daily.py` 收编派发（详见 §11.1.15）|
+| D13 | 仓库根在结构重构后算错一层 ⇒ 邮件**静默**不发送 | `src/presentation/digest.py` / `src/infrastructure/chart_renderer.py` 的 `parent.parent` 指向 `src/`（下了一层但没跟着改） | 2026-10-26 起**三天一封邮件都没发**，而 workflow 那一步**是绿的**（`print(WARN)` + `return`，退出码 0）; 图表少画网格仓位 | ✅ **已解决** —— `src/infrastructure/paths.py` 单一真源; 「没有记录」改成**抛错**; `sendmail()` 的拒收返回值不再被丢（详见 §11.1.15）|
 
 ---
 
@@ -2016,6 +2172,8 @@ if produced != declared:
 - [x] 「资金管理表的『合计』和顶部 badge 的『总市值』是同一个数吗？」→ `CashPoolBreakdown.total == Portfolio.total`（D4 ✅）—— 规则在 `src/domain/portfolio/cash_pools.py`，不是注释；记录的 `cash_total` 从同一个对象出；页面那一行的公式写在页脚
 - [x] 「窗口里的每一根 K 线是哪一天？」在哪里保证？→ `PriceWindow` / `WindowBar`（D1 ✅）—— 窗口的每一根都带日期；`PriceWindow.record()` 是**唯一**的写入口，同一天是**覆盖**（留更低的那个）而不是追加 ⇒ 窗口深度只由**交易日**决定；老数据读得进来（迁成无日期的 bar，因为前复权让历史日期不可恢复）
 - [x] 「坏掉的账本不会被当成空账本」在哪里保证？→ 写路径走 `json_repositories.read_trades()` / `read_grid_state()`（Phase 5c-2 ✅）—— **严格读**：文件坏了就抛错（整批不写盘）；每日快照仍走宽松的 `load_trades()`（跑砸了只是今天的记录没出来，宁可少一天也别静默清空持仓）
+- [x] 「GitHub Actions 的环境变量名在哪里？」→ `src/infrastructure/github_actions/`（D12 ✅）—— `$GITHUB_OUTPUT` / `$GITHUB_STEP_SUMMARY` / `GITHUB_RUN_ID` / `::error::` 的**字面量**只出现在这个包里（`test_the_actions_adapter_owns_the_github_contract` 钉住）; step output 的名字（`date` / `total` / `trigger`）也在那儿 —— 它是 workflow 的**契约**, 不该散在调用方
+- [x] 「仓库根在哪？」→ `src/infrastructure/paths.py`（D13 ✅）—— `src/` 下只有它算 `parent.parent`（`test_the_repo_root_has_one_home` 钉住）; 「读不到记录」不再被当成「没有记录」而是**抛错**（`test_the_digest_never_silently_skips_a_missing_record`）; 「邮件发不出去」也不再是**绿的**
 
 ---
 

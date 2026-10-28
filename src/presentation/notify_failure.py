@@ -37,6 +37,7 @@ import traceback
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from ..infrastructure.github_actions import current_context
 from .digest import build_html, build_text, send
 
 # 北京时间 (UTC+8) 用于邮件显示
@@ -61,7 +62,10 @@ def diagnose_steps(env: dict | None = None, workspace: str | Path | None = None)
     `env` + `workspace` explicitly so tests can drive it without Actions.
     """
     env = os.environ if env is None else env
-    ws = Path(workspace or env.get("GITHUB_WORKSPACE") or ".")
+    # The workspace path comes from the GitHub Actions adapter (D12) --
+    # this module no longer knows the GITHUB_* variable names.
+    ws = (Path(workspace) if workspace
+          else (current_context(env).workspace or Path(".")))
     steps = []
     for prefix, sid, label, tail_file in INSTRUMENTED_STEPS:
         outcome = (env.get(f"{prefix}_OUTCOME") or "").strip() or "unknown"
@@ -190,13 +194,8 @@ def append_failure_extras(text: str, html: str, run_url: str,
 
 
 def main() -> None:
-    server = os.environ.get("GITHUB_SERVER_URL", "")
-    repo = os.environ.get("GITHUB_REPOSITORY", "")
-    run_id = os.environ.get("GITHUB_RUN_ID", "")
-    run_url = (
-        f"{server}/{repo}/actions/runs/{run_id}"
-        if (server and repo and run_id) else "(unavailable)"
-    )
+    # The run link is GitHub Actions' business (D12) -- ask the adapter.
+    run_url = current_context().run_url or "(unavailable)"
 
     steps = diagnose_steps()
     bad_desc = ", ".join(f"{s['id']}={s['outcome']}" for s in failing_steps(steps)) or "无"

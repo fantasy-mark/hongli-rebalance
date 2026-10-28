@@ -76,6 +76,25 @@ jobs:
         # 调试: commit 之前看一眼 data/ 真实状态 (history / grid_state / chart 是否都在)
         run: ls -la data/
 
+      - name: Commit data files
+        # ⚠️ **不能**写成 `if: success()` —— 那会让**发邮件失败**顺带把
+        # 当天的快照也扣住 (邮件在提交之前跑)。邮件出问题不该丢数据。
+        # 提交只取决于「快照那一步有没有成」, 邮件在**之后**发。
+        if: steps.record.outcome == 'success'
+        # 直接用 git add/commit/push, 避免 git-auto-commit 的"没东西就静默跳过"行为
+        # (那个行为之前让 grid_chart.png 连续 7 天没被提交, Pages 一直 404)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/history.json data/grid_state.json data/grid_chart.png 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "::warning::no staged changes in data/ — chart may have failed, see ls -la output above"
+          else
+            git commit -m "auto: snapshot ${{ steps.record.outputs.date }}"
+            git push
+            echo "committed and pushed"
+          fi
+
       - name: Send email digest
         # 即使 record 失败也尝试发邮件 (说明性)
         #
@@ -89,6 +108,8 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO:   ${{ secrets.MAIL_TO }}
+          # 邮件页脚的「在线查看」链接 —— 之前根本没传, 邮件里的链接是空的。
+          PAGES_URL: https://fantasy-mark.github.io/hongli-rebalance
           FONT_OUTCOME:   ${{ steps.font.outcome }}
           FONT_RC:        ${{ steps.font.outputs.rc }}
           RECORD_OUTCOME: ${{ steps.record.outcome }}
@@ -99,20 +120,4 @@ jobs:
           else
             echo "::warning::record step did not succeed (outcome=${{ steps.record.outcome }}); sending failure notice"
             python -m src.presentation.notify_failure
-          fi
-
-      - name: Commit data files
-        if: success()
-        # 直接用 git add/commit/push, 避免 git-auto-commit 的"没东西就静默跳过"行为
-        # (那个行为之前让 grid_chart.png 连续 7 天没被提交, Pages 一直 404)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/history.json data/grid_state.json data/grid_chart.png 2>/dev/null || true
-          if git diff --staged --quiet; then
-            echo "::warning::no staged changes in data/ — chart may have failed, see ls -la output above"
-          else
-            git commit -m "auto: snapshot ${{ steps.record.outputs.date }}"
-            git push
-            echo "committed and pushed"
           fi

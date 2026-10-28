@@ -35,6 +35,8 @@ hongli-rebalance/
 │   ├── application/              # 用例编排 (薄)
 │   │   └── daily_snapshot.py     # 每日快照: 读账本 → 定价 → 3pp → 推进网格 → 落盘
 │   ├── infrastructure/           # 适配器
+│   │   ├── paths.py              # 仓库路径的**唯一真源** (谁想找根目录都问它)
+│   │   ├── github_actions/       # GitHub Actions 防腐层 (outputs / annotations / summary)
 │   │   ├── json_repositories.py  # 4 个 JSON 文件的读写 (原子写)
 │   │   ├── quote_providers.py    # akshare Sina 价格拉取 (含腾讯 K 线 fallback)
 │   │   └── chart_renderer.py     # matplotlib 渲染 grid_chart.png
@@ -50,6 +52,10 @@ hongli-rebalance/
 │   ├── history.json              # ← Action 自动追加 (每日总市值 + 网格信号)
 │   ├── grid_state.json           # ← Action 自动维护 (网格 per-asset 虚拟状态)
 │   └── grid_chart.png            # ← Action 自动渲染 (策略全景图, 嵌入 Pages)
+├── scripts/
+│   ├── apply_grid.py             # 复合网格手动操作 (唯一的实盘网格入口)
+│   ├── apply_holdings.py         # 交易记录 → 账本 → 持仓
+│   └── trigger_daily.py          # 派发 repository_dispatch (两个 apply workflow 共用一份)
 ├── index.html / app.js / style.css  # GitHub Pages (Pages Source: / (root))
 ├── tests/test_record.py          # 纯函数单测 (domain + application + simulation)
 ├── docs/
@@ -410,6 +416,34 @@ last_prices: [8.35, 8.29, ...]  →  [["2026-10-27", 8.35], ["2026-10-28", 8.29]
 
 一次性迁移脚本：`python -X utf8 scripts/migrate_grid_window.py`（幂等）。
 
+### ✅ 已修复：邮件「静默」不发（2026-10-26 ~ 10-28 漏了三天）
+
+**现象**：workflow 那一步是**绿的**，但一封邮件都没收到。
+
+**根因**：2026-10-26 的结构重构把模块搬进了 `src/`，而
+`src/presentation/digest.py` / `src/infrastructure/chart_renderer.py` 里
+的仓库根还是按老位置算的：
+
+```python
+ROOT = Path(__file__).resolve().parent.parent   # 现在指向 <repo>/src —— 少了一层
+```
+
+于是 `data/history.json` 变成了 `<repo>/src/data/history.json`（不存在）→
+`latest_record()` 返回 `None` → `main()` 打个 `WARN` 就 `return` → **退出码 0**
+→ 那一步在 Actions 上显示 **success**。三天，一封没发，日志里还写着 WARN。
+
+**改法**：
+
+- 仓库根只有一个家 —— `src/infrastructure/paths.py`。`src/` 下**只有它**
+  算 `parent.parent`（`test_the_repo_root_has_one_home` 钉住）。
+- 「没有记录」不再被当成「今天没数据」—— 现在**抛错**，那一步会**红**。
+- `SMTP.sendmail()` 的**返回值**（被拒收的收件人）以前被丢掉了 → 现在拒收
+  任何一个人都会失败重试，而不是「以为发出去了」。
+- 邮件这一步挪到 **commit 之后**：发邮件失败**不再**挡住当天的快照入库
+  （`if: steps.record.outcome == 'success'`）。
+
+图表也一并修好了 —— 它读不到 `grid_state.json`，等于**少画了网格仓位**。
+
 ---
 
 ## 本地开发
@@ -418,7 +452,7 @@ last_prices: [8.35, 8.29, ...]  →  [["2026-10-27", 8.35], ["2026-10-28", 8.29]
 cd C:\Users\Administrator\project\hongli-rebalance
 pip install -r requirements.txt        # akshare pandas openpyxl requests matplotlib
 
-# 跑单测 (无网络, 211 个测试)
+# 跑单测 (无网络, 227 个测试)
 python -X utf8 -m tests.test_record
 
 # 跑一次每日快照 (会拉真实价格, 需要网络; 写 history.json + grid_state.json + grid_chart.png)

@@ -79,6 +79,7 @@ from ..domain.shared.money import (
     ShareCount,
     Weight,
 )
+from ..infrastructure.github_actions import publish_snapshot_outputs
 from ..infrastructure.json_repositories import (
     GRID_CHART,
     load_grid_state,
@@ -197,19 +198,17 @@ def advance_all_grids(state: dict, today: str, prices_by_name: dict[str, float],
 # -----------------------------------------------------------------------------
 
 def write_github_output(date_str: str, total: float, triggered: bool) -> None:
-    """Write the `date` / `total` / `trigger` step outputs.
+    """Publish the `date` / `total` / `trigger` step outputs.
 
-    ⚠️ `trigger=yes` now means "需人工关注" —— either the 3pp rebalance
-    fired, or the grid engine has a **suggestion** pending (the engine
-    never trades by itself). Only `outputs.date` is consumed downstream.
+    ⚠️ `trigger=yes` means "需人工关注" -- either the 3pp rebalance fired,
+    or the grid engine has a **suggestion** pending (the engine never trades
+    by itself). Only `outputs.date` is consumed downstream.
+
+    The **mechanism** (how to write `$GITHUB_OUTPUT`) lives in the GitHub
+    Actions adapter (D12) -- the application layer no longer knows the
+    environment variable name.
     """
-    out = os.environ.get("GITHUB_OUTPUT")
-    if not out:
-        return
-    with open(out, "a", encoding="utf-8") as f:
-        f.write(f"date={date_str}\n")
-        f.write(f"total={total:.2f}\n")
-        f.write(f"trigger={'yes' if triggered else 'no'}\n")
+    publish_snapshot_outputs(date=date_str, total=total, triggered=triggered)
 
 
 def build_record(today: str, positions: list[dict],

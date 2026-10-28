@@ -45,7 +45,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GRID_STATE = ROOT / "data" / "grid_state.json"
 
 # 用例层 + 领域层都是 stdlib-only (pandas 是 run_compound_grid 里的局部 import)
 # → workflow 不需要装 pandas/akshare。
@@ -64,6 +63,11 @@ from src.domain.events.domain_events import EventStream  # noqa: E402,F401
 from src.domain.grid.exit_policy import ExitAtCost, cost_only_exit  # noqa: E402,F401
 from src.domain.grid.grid_position import manual_op, split_take_profit  # noqa: E402,F401
 from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402,F401
+# GitHub Actions 的写法 (::error:: annotation) 住在适配器里 (D12) --
+# 这个脚本不再自己拼 workflow command。
+from src.infrastructure.github_actions import error as annotate_error  # noqa: E402
+# 数据文件的路径只有一个来源 (D13) -- src/infrastructure/paths.py。
+from src.infrastructure.paths import GRID_STATE_FILE as GRID_STATE  # noqa: E402
 # cost_only_exit / ExitAtCost 是出场规则的**本体** (src/domain/grid/exit_policy.py);
 # split_take_profit 是兼容别名 (返回旧版的 dict 形状), 保留是为了既有 import 不断。
 # AssetCode / TradingDate 是**代码格式与日期格式的唯一实现** (以前这里跟
@@ -85,7 +89,7 @@ def fail(msg: str) -> None:
     print(f"ERROR {msg}", file=sys.stderr)
     # ::error:: 让失败原因直接显示在 Actions UI 和失败通知里 ——
     # 否则用户只在页面看到"已提交"却找不到哪里错了。
-    print(f"::error::{msg}")
+    annotate_error(msg)
     sys.exit(1)
 
 

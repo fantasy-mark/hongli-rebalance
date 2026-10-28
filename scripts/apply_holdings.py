@@ -43,8 +43,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TRADES = ROOT / "data" / "trades.json"
-HOLDINGS = ROOT / "data" / "holdings.json"
 
 # 用例层 + 领域层都是 stdlib-only → 这个 job 不装任何依赖也能跑。
 if str(ROOT) not in sys.path:
@@ -60,6 +58,14 @@ from src.application.apply_trade import (  # noqa: E402
     apply_trades,
 )
 from src.domain.shared.identifiers import AssetCode, TradingDate  # noqa: E402,F401
+# GitHub Actions 的写法 (::error:: annotation) 住在适配器里 (D12) --
+# 这个脚本不再自己拼 workflow command。
+from src.infrastructure.github_actions import error as annotate_error  # noqa: E402
+# 数据文件的路径只有一个来源 (D13) -- src/infrastructure/paths.py。
+from src.infrastructure.paths import (  # noqa: E402
+    HOLDINGS_FILE as HOLDINGS,
+    TRADES_FILE as TRADES,
+)
 # AssetCode / TradingDate 是**代码格式与日期格式的唯一实现** (以前这里跟
 # apply_grid.py 各带一份正则, 改一处漏一处)。
 
@@ -78,6 +84,9 @@ NAME_LOOKUP = ALLOWED_CODES  # 6-digit code → Chinese display name
 
 def fail(msg: str) -> None:
     print(f"ERROR {msg}", file=sys.stderr)
+    # ::error:: 让失败原因直接显示在 Actions UI 和失败通知里 ——
+    # apply_grid.py 一直有, apply_holdings.py 没有 (D12: 现在两边一致)。
+    annotate_error(msg)
     sys.exit(1)
 
 
