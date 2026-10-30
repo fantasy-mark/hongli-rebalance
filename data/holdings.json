@@ -1,7 +1,7 @@
 {
   "_schema": "v2",
   "_comment": "REBUILT from data/trades.json. 双池: cash_rebalance (真实现金, ETF买卖用) + cash_grid (虚拟预算, 网格记账用). 编辑持仓请用页面交易表单 (会同时更新 trades.json); 直接改这个文件会被下一次 apply-holdings 覆盖.",
-  "cash_rebalance": 5165.0,
+  "cash_rebalance": 328.4,
   "cash_grid": 15000.0,
   "positions": [
     {
@@ -22,7 +22,7 @@
     {
       "name": "纳斯达克ETF华夏",
       "code": "513300",
-      "shares": 14400
+      "shares": 16200
     }
   ]
 }
