@@ -5926,11 +5926,11 @@
   },
   {
     "date": "2026-10-30",
-    "total": 187974.6,
-    "etf_value": 167809.6,
-    "cash_rebalance": 5165.0,
+    "total": 187951.2,
+    "etf_value": 172622.8,
+    "cash_rebalance": 328.4,
     "cash_grid": 15000.0,
-    "cash_total": 20165.0,
+    "cash_total": 15328.4,
     "positions": [
       {
         "name": "红利ETF易方达",
@@ -5968,10 +5968,10 @@
       {
         "name": "纳斯达克ETF华夏",
         "code": "513300",
-        "shares": 14400.0,
+        "shares": 16200.0,
         "price": 2.674,
         "date": "2026-10-30",
-        "value": 38505.6,
+        "value": 43318.8,
         "premium": {
           "code": "513300",
           "price": 2.674,
@@ -5982,54 +5982,25 @@
           "source": "tencent+fund.eastmoney"
         },
         "merged_shares": 0.0,
-        "total_shares": 14400.0,
+        "total_shares": 16200.0,
         "merged_value": 0.0
       }
     ],
     "weights": [
-      0.2354,
+      0.2355,
       0.2238,
-      0.2286,
-      0.2048
+      0.2287,
+      0.2305
     ],
     "target_w": 0.25,
     "threshold_pp": 3.0,
-    "triggered": true,
-    "plan": [
-      {
-        "name": "红利ETF易方达",
-        "code": "515180",
-        "current_value": 44256.0,
-        "target_value": 46993.65,
-        "delta_value": 2737.65
-      },
-      {
-        "name": "黄金ETF博时",
-        "code": "159937",
-        "current_value": 42068.0,
-        "target_value": 46993.65,
-        "delta_value": 4925.65
-      },
-      {
-        "name": "可转债ETF博时",
-        "code": "511380",
-        "current_value": 42980.0,
-        "target_value": 46993.65,
-        "delta_value": 4013.65
-      },
-      {
-        "name": "纳斯达克ETF华夏",
-        "code": "513300",
-        "current_value": 38505.6,
-        "target_value": 46993.65,
-        "delta_value": 8488.05
-      }
-    ],
+    "triggered": false,
+    "plan": [],
     "grid_signals": [
       {
         "name": "红利ETF易方达",
         "price": 1.36,
-        "layer_yuan": 11000.0,
+        "layer_yuan": 10962.28,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -6053,7 +6024,7 @@
       {
         "name": "黄金ETF博时",
         "price": 8.09,
-        "layer_yuan": 11000.0,
+        "layer_yuan": 10962.28,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -6077,7 +6048,7 @@
       {
         "name": "可转债ETF博时",
         "price": 12.28,
-        "layer_yuan": 11000.0,
+        "layer_yuan": 10962.28,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
@@ -6101,7 +6072,7 @@
       {
         "name": "纳斯达克ETF华夏",
         "price": 2.671,
-        "layer_yuan": 11000.0,
+        "layer_yuan": 10962.28,
         "signal": null,
         "in_cycle": false,
         "num_buys": 0,
