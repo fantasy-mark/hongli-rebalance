@@ -98,6 +98,20 @@
       "price": 2.748,
       "fee": 0.0,
       "id": "2026-10-20-buy-001"
+    },
+    {
+      "side": "deposit_rebalance",
+      "date": "2026-10-30",
+      "note": "",
+      "amount": 5000.0,
+      "id": "2026-10-30-deposit_rebalance-001"
+    },
+    {
+      "side": "deposit_grid",
+      "date": "2026-10-30",
+      "note": "",
+      "amount": 15000.0,
+      "id": "2026-10-30-deposit_grid-001"
     }
   ]
 }
