@@ -74,7 +74,9 @@ function renderStatus(rec) {
   // older than the pool-split migration.
   const cashReb = Number(rec.cash_rebalance ?? rec.cash ?? 0);
   const cashGr  = Number(rec.cash_grid ?? 0);
-  const cashTotal = Number(rec.cash_total ?? cashReb + cashGr);
+  // 「总市值」= **3pp再平衡口径** (ETF 市值 + 真实现金) —— 网格那一池是
+  // **虚拟预算**, 不进这个数 (它单列在下面, 标着「虚拟」)。
+  const cashTotal = Number(rec.cash_total ?? cashReb);
   const badge = document.getElementById('status-badge');
   badge.className = cls;
   badge.innerHTML =
@@ -86,8 +88,8 @@ function renderStatus(rec) {
     `<div class="status-breakdown">` +
       `ETF ¥${Math.round(rec.etf_value).toLocaleString()}` +
       ` + 现金 ¥${Math.round(cashTotal).toLocaleString()}` +
-      ` <span class="status-pool">(3pp再平衡 ¥${Math.round(cashReb).toLocaleString()} + ` +
-      `复合网格(虚拟) ¥${Math.round(cashGr).toLocaleString()})</span>` +
+      ` <span class="status-pool">(3pp再平衡口径 · 复合网格(虚拟) ` +
+      `¥${Math.round(cashGr).toLocaleString()} 不计入总市值)</span>` +
     `</div>`;
 }
 
@@ -250,7 +252,7 @@ function renderLatest(rec) {
       </thead>
       <tbody>${rows}</tbody>
     </table>
-    <p class="muted" style="font-size:12px;">真实持仓 = 账本里的真实成交份额 · 归并 = 网格归并进来的份额(模拟口径, 虚拟策略) · 市值 = (真实持仓 + 归并) × 价格 · 权重与偏离按含归并口径</p>
+    <p class="muted" style="font-size:12px;">真实持仓 = 账本里的真实成交份额 · 归并 = 网格归并进来的份额(模拟口径, 虚拟策略) · 市值 = (真实持仓 + 归并) × 价格 · 权重与偏离按含归并口径 · 权重 = 各资产市值 ÷ 总市值 (3pp再平衡口径 = ETF市值 + 真实现金, 不含网格虚拟预算)</p>
 
     ${grid.length ? `
     <h3 style="margin-top:1.5em;">复合网格 <span class="muted" style="font-size:12px;font-weight:normal;">(引擎只给建议, 不会自动下单 · 单层金额 ¥${layer.toLocaleString()})</span></h3>
@@ -478,17 +480,18 @@ function renderCashPoolSummary(latestRec, holdings) {
   // 真钱。数字本身**不藏**: 虚拟不等于该被藏起来, 只等于必须被标出来。
   setHTML('cash-grid-market', `${money(gridMarket)}<span class="muted"> 虚拟</span>`);
   setHTML('cash-grid-balance', `${money(cashGr)}<span class="muted"> 虚拟</span>`);
-  // ⚠️ D4 —— 合计市值**不含**复合网格的虚拟资金占用:
+  // ⚠️ D4 —— 合计里**每一分钱都是真钱**:
   //       合计市值 + 合计余额 == 顶部 badge 的「总市值」
-  //   badge 的总市值 = etf_value + cash_rebalance + cash_grid, 本来就**不含**
-  //   网格的虚拟占用 —— 合计市值要是含了它, 两张表说的就不是同一件事, 用户
-  //   只能靠猜那个差额去哪了。规则见 domain/portfolio/cash_pools.py。
+  //   badge 的总市值 = etf_value + cash_rebalance (3pp再平衡口径), 网格那一
+  //   池的**虚拟占用与虚拟现金都不进** —— 它们单列在「复合网格」那一行,
+  //   标着「虚拟」。合计要是含了它们, 两张表说的就不是同一件事, 用户只能
+  //   靠猜那个差额去哪了。规则见 domain/portfolio/cash_pools.py。
   setText('cash-total-market', money(rebalanceMarket));
-  setText('cash-total-balance', money(cashReb + cashGr));
+  setText('cash-total-balance', money(cashReb));
   setTitle('cash-total-market',
     '合计市值 = 3pp再平衡的 ETF 持仓市值 (不含复合网格的虚拟资金占用)');
   setTitle('cash-total-balance',
-    '合计余额 = 真实现金 + 虚拟现金; 合计市值 + 合计余额 = 顶部「总市值」');
+    '合计余额 = 真实现金 (网格的虚拟现金单列在上一行, 不进合计); 合计市值 + 合计余额 = 顶部「总市值」');
   setHTML('cash-rebalance-assets',
     rebalanceCodes(latestRec)
       .map(c => `<span class="asset-tag">${escapeHtml(nameForCode(c, latestRec))}</span>`)

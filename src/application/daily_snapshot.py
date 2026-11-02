@@ -242,8 +242,9 @@ def build_record(today: str, positions: list[dict],
     merged_value_total = sum(float(p.get("merged_value", 0.0) or 0.0)
                              for p in positions)
     # ⚠️ D4: 「合计」的口径由 `CashPoolBreakdown` 定死 —— 合计市值**不含**
-    # 网格的虚拟资金占用, 合计余额 = 真实现金 + 虚拟现金。记录里的
-    # `cash_total` 从这里出, 于是页面/邮件/记录说的是同一个数。
+    # 网格的虚拟资金占用, 合计余额 = **真实现金** (虚拟现金也不进合计 ——
+    # 它单列在「复合网格」那一行, 标着「虚拟」)。记录里的 `cash_total`
+    # 从这里出, 于是页面/邮件/记录说的是同一个数。
     pools = CashPoolBreakdown(
         rebalance_market=etf_total,
         rebalance_balance=cash_rebalance,
@@ -252,6 +253,9 @@ def build_record(today: str, positions: list[dict],
     )
     return {
         "date": today,
+        # ⚠️ `total` = **3pp 再平衡口径的资本基数** (ETF 市值 + 真实现金;
+        #    网格的虚拟预算不进)。权重 / 偏离 / 回正方案都跟它对齐 ——
+        #    页面顶部那个「总市值」也是它。
         "total": Money(total),
         "etf_value": Money(etf_total),
         "cash_rebalance": Money(cash_rebalance),
@@ -423,8 +427,9 @@ def absorb_merged_shares(run: SnapshotRun, grid_state: dict) -> None:
 def size_grid_layer(run: SnapshotRun) -> None:
     """算网格层额 —— 用 `layer_sizing_basis` 那次评估的 total 当池子。
 
-    池子 = history 里每天的 total + 今天这个 total; 取最近
-    `floating_window` 天的**最小值**当 `recent_min`。层额由
+    池子 = **3pp 组合**的总市值 (真钱口径 —— 网格的虚拟预算**不进**这个
+    池子, 见 `Portfolio.total`); = history 里每天的 total + 今天这个
+    total; 取最近 `floating_window` 天的**最小值**当 `recent_min`。层额由
     `LayerSizingPolicy` 算 (BASE + max(pool − recent_min, 0) × 5%)。
     """
     history = load_history()
@@ -523,7 +528,9 @@ def report_snapshot(run: SnapshotRun) -> None:
     positions = run.positions
     any_signal = triggered_3pp or any(s["signal"] for s in run.grid_signals)
     run.any_signal = any_signal
-    dyn_target = 1.0 / len(positions) if positions else 1.0 / 3
+    # ⚠️ 目标权重只有**一个**实现 (TargetWeightPolicy) —— 别在这儿再抄一遍
+    # `1/n`, 抄的那份还带着过时的「空篮子按 3 只算」兜底。
+    dyn_target = TARGET_WEIGHT_POLICY.target_weight(len(positions))
     print(f"DATE={run.today} TOTAL={total:.2f} STATUS={'TRIGGER' if any_signal else 'ok'}")
     print(f"  3pp: {'⚠ TRIGGERED' if triggered_3pp else 'ok'} (max Δ {max(abs(w - dyn_target) * 100 for w in weights):.2f}pp)")
     for p, w in zip(positions, weights):

@@ -12,15 +12,18 @@
 本模块把规则写死成**代码**:
 
     合计市值 = 只含 3pp再平衡 的 ETF 持仓市值 (网格的虚拟占用**不计入**)
-    合计余额 = 真实现金 + 虚拟现金
+    合计余额 = **真实现金** (网格的虚拟现金**不计入**)
     ⇒ 合计市值 + 合计余额 == 顶部 badge 的「总市值」  ← 恒等式
 
-⚠️ 网格那一行的「市值」**没有被藏起来** —— 它还在表里, 只是被标成「虚拟」
-并且不参与合计。**虚拟不等于该被藏起来, 只等于必须被标出来** (D3: 领域侧
-标类型; D4: 呈现侧标「虚拟」)。
+⚠️ 网格那一行的「市值 / 余额」**没有被藏起来** —— 它还在表里, 只是被标成
+「虚拟」并且不参与合计。**虚拟不等于该被藏起来, 只等于必须被标出来**
+(D3: 领域侧标类型; D4: 呈现侧标「虚拟」)。
 
-⚠️ **规则一个字没改**: `grid_budget` (虚拟预算) 仍然计入 `total` —— 它是
-策略的资本基数 (3pp 判阈与层额定尺都用它)。这里改的只是**呈现时怎么分栏**。
+⚠️ **规则改过** (2026-11-02): `grid_budget` (虚拟预算) **不再计入 `total`**
+—— 3pp 的资本基数只算真钱 (`etf_value + cash_rebalance`)。虚拟预算进分母
+= 稀释每个真实持仓的权重 = 制造假的「偏离」, 而且回正方案会要求买入根本
+不存在的那笔钱 (2026-11-02: 虚拟 ¥15,000 把黄金的偏离从 1.09pp 顶到
+3.01pp, 方案要买 ¥15,328 而真实现金只有 ¥328)。
 
 **stdlib-only** —— 与 `domain/shared/money.py` 同样的理由。
 """
@@ -85,28 +88,31 @@ class CashPoolBreakdown:
         """合计市值 —— **不含**网格的虚拟资金占用。
 
         ⚠️ 这一条就是 D4 的全部: 顶部 badge 的「总市值」= `etf_value +
-        cash_rebalance + cash_grid`, **不含**网格的虚拟占用。所以「合计市值」
-        也必须不含, 两者才能对上 (见 `total`)。
+        cash_rebalance`, **不含**网格的虚拟占用**与虚拟现金**。所以「合计
+        市值」也必须不含, 两者才能对上 (见 `total`)。
         """
         return self.rebalance_market
 
     @property
     def total_balance(self) -> float:
-        """合计余额 —— 真实现金 + 虚拟现金。
+        """合计余额 —— **真实现金** (3pp 再平衡那一池的余额)。
 
-        ⚠️ 网格的虚拟余额**计入** —— badge 的「总市值」里就有它
-        (`cash_grid`, D3 的 `GridBudget`)。要是对称地把它踢出去, 那张表
-        就和 badge 对不上了 —— 那才是真的自相矛盾。
+        ⚠️ 网格的虚拟余额**不计入** —— badge 的「总市值」就是
+        `etf_value + cash_rebalance` (虚拟预算不进 3pp 的资本基数, 见
+        `Portfolio.total`)。所以「合计」这一行里**每一分钱都是真钱** ——
+        虚拟的钱单列在「复合网格」那一行, 标着「虚拟」。
+
+        ⚠️ 加法的**顺序**是 `market + reb` —— float 加法不满足结合律, 而
+        `Portfolio.total` 算的就是 `etf + cr`。两边顺序一致, 数字才逐位相同。
         """
-        return self.rebalance_balance + self.grid_balance
+        return self.rebalance_balance
 
     @property
     def total(self) -> float:
         """合计市值 + 合计余额 —— **恒等于**顶部 badge 的「总市值」。
 
-        ⚠️ 加法的**顺序**是 `market + (reb + grid)` —— float 加法不满足结合
-        律, 而 `Portfolio.total` 算的就是 `etf + (cr + gb)`。两边顺序一致,
-        数字才逐位相同。
+        ⚠️ 加法的**顺序**是 `market + reb` —— float 加法不满足结合律, 而
+        `Portfolio.total` 算的就是 `etf + cr`。两边顺序一致, 数字才逐位相同。
         """
         return self.total_market + self.total_balance
 

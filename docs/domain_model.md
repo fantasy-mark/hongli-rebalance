@@ -299,7 +299,7 @@ advance_one_day` 只滚窗口 + 算建议；`grid.py:668 manual_op` 是唯一实
 | `source: manual` | `ExecutedOp` | 页面提交的真实操作 |
 | `source: backtest` | `SimulatedOp` | 历史重放 |
 | `source: auto` | （已废弃） | 2026-10-25 迁移删除，保留兜底映射 |
-| `total` | `PortfolioValue` | = ETF 市值 + 两个池 |
+| `total` | `PortfolioValue` | = ETF 市值 + **真实现金**（3pp 口径的资本基数；**不含**网格的虚拟预算 —— 那是另一个池子，见 §12 D3）|
 | `history.json` 的一条 | `DailySnapshot` | 每天一份的不可变快照 |
 | `qfq` / 前复权 | `AdjustedPrice` | 所有 ETF 收盘价用前复权 |
 
@@ -313,6 +313,8 @@ advance_one_day` 只滚窗口 + 算建议；`grid.py:668 manual_op` 是唯一实
 4. 一个周期 = N 笔买入 + 1 笔止盈；买入份数 − 止盈卖出份数 = 归并份额
 5. 存量自动开仓周期清空，从零开始（2026-10-25 迁移）
 6. 复合网格的 h3 资金占用列 = 唯一权威口径
+7. **3pp 的资本基数只算真钱** —— 网格那一池的**虚拟预算**不进权重 / 判阈 /
+   回正方案 / 层额池子（2026-11-02；理由见 §12 D3）→ `rebalance-capital-base`
 
 ---
 
@@ -682,7 +684,7 @@ total      (归并后)  → 写进快照 + 3pp 判阈
 | I10 | 引擎**永不**改仓位/层数/盈亏/归并份额 | `src/domain/grid/advisor.py:42 GridSuggestion` 是 `frozen=True` —— **类型上装不下 state**；`src/domain/grid/grid_position.py:343 advance_one_day` 只滚窗口 | `test_advance_one_day_never_mutates_position_fields` · `test_advance_all_grids_returns_suggestions_not_trades` · `test_suggestion_and_executed_op_are_different_types` |
 | I11 | 网格状态只由固定 6 个 key 构成 | `src/domain/grid/grid_position.py:153 _STATE_KEYS` + `:221 to_state` / `:248 from_state` —— 新增字段忘了写 mapper **立刻抛错** | `test_grid_state_json_format_stays_six_keys` · `test_grid_position_mapper_rejects_unknown_keys` |
 | I12 | 目标权重 = 1/持仓数（动态篮子） | `src/domain/portfolio/rebalance_policy.py:35 TargetWeightPolicy` —— 类里**只有这一处**实现 | `test_target_weight_policy_is_dynamic` |
-| I13 | 偏离 > 3pp 才触发 + 全额快照回正 | `src/domain/portfolio/rebalance_policy.py:87 evaluate` —— 阈值是**实例状态**，不是模块级环境变量 | `test_three_pp_equal_weight_no_trigger` · `test_three_pp_drastic_drift_triggers` · `test_trigger_policy_from_config_carries_the_parameters` |
+| I13 | 偏离 > 3pp 才触发 + 全额快照回正 | `src/domain/portfolio/rebalance_policy.py:91 evaluate` —— 阈值是**实例状态**，不是模块级环境变量；判阈跑在 **3pp 口径的资本基数**上（`src/domain/portfolio/portfolio.py:300` `Portfolio.total` = ETF 市值 + **真实现金**，**不含**网格的虚拟预算）| `test_three_pp_equal_weight_no_trigger` · `test_three_pp_drastic_drift_triggers` · `test_trigger_policy_from_config_carries_the_parameters` · `test_the_virtual_budget_cannot_fake_a_rebalance_trigger` · `test_the_plan_never_asks_for_money_that_is_not_there` |
 | I14 | 一批网格操作 all-or-nothing | `src/application/apply_grid_op.py:165 validate_batch`（整批先校验）+ `:191 apply_batch`（顺序应用，任一条抛错则整批不写）+ `:247 apply_grid_ops`（**写盘是最后一步**） | `test_apply_grid_ops_rejects_the_whole_batch_and_writes_nothing` |
 | I15 | 页面/邮件不得把模拟说成实盘 | **类型侧**：`src/domain/grid/grid_op.py:161 ExecutedOp` / `:178 SimulatedOp` + `src/domain/shared/provenance.py:25` + `src/domain/portfolio/portfolio.py:34 PositionLot`；**披露侧**：`src/presentation/digest.py:149-164`（「真实持仓」与「归并」分两栏 + 一行口径说明） | `test_the_disclosure_splits_real_holdings_from_merged_shares` · `test_the_page_and_the_email_disclose_the_same_two_numbers` · `test_simulated_op_rejects_non_backtest_source` |
 
@@ -2217,8 +2219,8 @@ if produced != declared:
 |---|---|---|---|---|
 | D1 | 同一天重复运行会让 120 日窗口少一天深度 | `apply-grid.yml` 提交后 re-trigger `daily.yml`；窗口尾部有重复值（黄金 `[8.35, 8.29, 8.12, 8.12]`） | 窗口是**唯一**的距开仓依据 | ✅ **已解决** —— `PriceWindow`（`src/domain/grid/price_window.py`）把窗口改成一等公民：`WindowBar(day, price)` 带日期，同一天是**覆盖**（留更低的那个）而不是追加；老数据迁成无日期的 bar（日期不可恢复 —— 前复权会重新基准化）。**JSON 键仍是 `last_prices`**（committed artifact），只改值的格式（详见 §11.1.14）|
 | D2 | `ops` 混装执行日志与模拟日志 | `src/domain/grid/grid_position.py:manual_op` 写 `source:"manual"`；`src/simulation/grid_simulator.py:ops_from_cycles` 写 `source:"backtest"` | 容易被误读成"真实成交记录" | ✅ **已解决**（Phase 2b，详见 §11.1.4）—— `GridOp` 基类 + `ExecutedOp`（`source="manual"`）/ `SimulatedOp`（`source="backtest"`）两个子类；`GridOp.from_dict` 按 `source` **分型**，`SimulatedOp` 拒绝 `source!="backtest"` |
-| D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | ✅ **已解决**（领域侧，详见 §11.1.12）—— 改名 `GridBudget` / `grid_budget`（`src/domain/shared/money.py`），`Portfolio.__post_init__` 保证类型；**规则不变**，虚拟预算仍然计入 `total` |
-| D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | ✅ **已解决** —— `CashPoolBreakdown`（`src/domain/portfolio/cash_pools.py`）把「合计」口径写成代码：合计市值**不含**网格虚拟占用、合计余额含虚拟余额 ⇒ 合计市值 + 合计余额 = badge 总市值；网格那一行标「虚拟」（详见 §11.1.13）|
+| D3 | `cash_grid` 是虚拟预算，却被 `evaluate()` 当现金计入 `total` | `src/domain/portfolio/rebalance_policy.py:evaluate` | `total` 同时是 3pp 判阈和 `layer_yuan` 的输入 | ✅ **已解决** —— **两件事都做了**: ① 领域侧改名 `GridBudget` / `grid_budget`（`src/domain/shared/money.py`），`Portfolio.__post_init__` 保证类型；② **2026-11-02 把规则也改了**: 虚拟预算**不再计入** `total` —— 3pp 的资本基数 = `etf_value + cash_rebalance`（`src/domain/portfolio/portfolio.py:300`）。理由：虚拟预算进分母 = 稀释每个真实持仓的权重 = 造出**假的「偏离」**（2026-11-02: 黄金真实偏离 1.09pp，加上虚拟的 ¥15,000 变成 3.01pp → 凭空一次「⚠ 触发调仓」，回正方案要买 ¥15,328 而真实现金只有 ¥328）。虚拟的钱**没有被藏起来** —— 资金管理表里「复合网格」那一行单列着，标着「虚拟」|
+| D4 | 资金管理「合计市值」与 badge「总市值」口径不一致 | 网格虚拟占用被计入合计 | 页面自相矛盾 | ✅ **已解决** —— `CashPoolBreakdown`（`src/domain/portfolio/cash_pools.py`）把「合计」口径写成代码：合计市值**不含**网格虚拟占用、合计余额**只含真实现金** ⇒ 合计市值 + 合计余额 = badge 总市值；网格那一行标「虚拟」。**2026-11-02 收紧**: 合计余额也不再含虚拟现金 —— 「合计」这一行里**每一分钱都是真钱**（详见 §11.1.13）|
 | D5 | `holdings.json` 同时扮演事实源 / 派生缓存 / 资产宇宙 | ✅ **已解决**（Phase 4）—— 资产清单独立成 `AssetUniverse` 注册表（`src/domain/portfolio/asset_universe.py`），`holdings.json` 只剩持仓 | 职责混乱 | ✅ 已解决（§11.1.6） |
 | D6 | 归并份额（模拟）推着真实组合触发调仓 | `src/domain/portfolio/portfolio.py:Portfolio.from_holdings` + `RebalancePolicy.evaluate` | 模拟影响真实 | ✅ **已解决**（Phase 4 标注 + Phase 5d 披露）—— 标注侧：`Provenance` 落在 `PositionLot` 上，`Position.simulated_shares` 是**求和出来的**；披露侧：页面/邮件/日志都把「**真实持仓**」与「**归并**」分成两栏显示，口径写在各自脚注里（详见 §11.1.10）。**规则本身不改** —— 归并仍计入权重，那是用户 2026-10-25 拍板的 |
 | D7 | 网格规则两套实现 | ✅ **已解决**（Phase 3）—— `src/domain/grid/trigger_policy.py:TriggerPolicy` 现在是**生产 + 回测**两条路径**唯一**的判定来源 | 改参数会静默分叉 | ✅ 已解决（§11.1.5）—— `run_compound_grid` 调用 `policy.levels(...)`，并有静态测试防止内联算术回流 |

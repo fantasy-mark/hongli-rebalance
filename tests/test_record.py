@@ -4143,17 +4143,22 @@ def test_the_grid_pool_is_a_type_not_just_a_name():
     assert isinstance(pf2.grid_budget, GridBudget), type(pf2.grid_budget)
 
 
-def test_the_virtual_budget_still_counts_towards_the_total():
-    """D3 **只改名字与标注**, 不改规则 —— 虚拟预算仍然计入 `total`。"""
+def test_the_virtual_budget_does_not_count_towards_the_total():
+    """D3 **续** —— 虚拟预算**不进** 3pp 的资本基数。
+
+    ⚠️ 规则 2026-11-02 改过 (D3 原本是「只改名字与标注」): 虚拟预算进分母 =
+    稀释每个真实持仓的权重 = 制造**假的「偏离」**, 回正方案还要去买那一池
+    根本不存在的钱。规则写在 `Portfolio.total` 的 docstring 里。
+    """
     from src.domain.portfolio.portfolio import Portfolio
 
     records = [{"name": "黄金ETF博时", "code": "159937", "shares": 100.0,
                 "price": 10.0, "value": 1000.0}]
     pf = Portfolio.from_records(records, cash_rebalance=100.0, grid_budget=500.0)
-    # 1000 (持仓) + 100 (真实现金) + 500 (虚拟预算)
-    assert pf.total == 1600.0, pf.total
-    # 加法顺序仍然是 `etf + (cr + gb)` —— 浮点不结合, 老代码怎么算就怎么算
-    assert pf.total == 1000.0 + (100.0 + 500.0)
+    # 1000 (持仓) + 100 (真实现金) —— 500 (虚拟预算) **不进**
+    assert pf.total == 1100.0, pf.total
+    # 虚拟预算还是**看得见**的 (资金管理表里那一行) —— 不进基数 ≠ 被藏起来
+    assert pf.grid_budget == 500.0, pf.grid_budget
 
 
 def test_the_ledger_rejects_the_legacy_grid_cash_key():
@@ -4219,10 +4224,13 @@ def test_the_two_tables_tell_the_same_story():
     pools = CashPoolBreakdown.from_portfolio(pf, grid_market=10000.0)
     # 合计市值 = ETF 持仓市值 —— 网格的虚拟占用**不计入**
     assert pools.total_market == 1000.0, pools
-    # 合计余额 = 真实现金 + 虚拟现金 (虚拟的**余额**要计入 —— badge 就是这么算的)
-    assert pools.total_balance == 600.0, pools
+    # 合计余额 = **真实现金** —— 虚拟现金也不进 (它单列在网格那一行, 标「虚拟」)
+    assert pools.total_balance == 100.0, pools
+    # 虚拟的那两格**看得见** —— 只是不进合计
+    assert pools.grid_balance == 500.0, pools
+    assert pools.grid_market == 10000.0, pools
     # 两张表说的同一个数
-    assert pools.total == pf.total == 1600.0, (pools.total, pf.total)
+    assert pools.total == pf.total == 1100.0, (pools.total, pf.total)
 
 
 def test_the_virtual_occupancy_is_shown_but_not_counted():
@@ -4257,14 +4265,91 @@ def test_the_record_and_the_badge_agree_on_the_total():
     r = snapshot.build_record(
         today="2026-10-27", positions=positions,
         cash_rebalance=100.0, grid_budget=500.0,
-        total=1600.0, weights=[1.0], triggered_3pp=False, plan=[],
+        total=1100.0, weights=[1.0], triggered_3pp=False, plan=[],
         grid_signals=grid_signals, grid_state={},
     )
     pools = CashPoolBreakdown.from_record(r)
     assert pools.total_market == r["etf_value"] == 1000.0, pools
-    assert pools.total_balance == r["cash_total"] == 600.0, pools
+    assert pools.total_balance == r["cash_total"] == 100.0, pools
     assert pools.grid_market == 10000.0, pools
-    assert pools.total == r["total"] == 1600.0, (pools.total, r["total"])
+    assert pools.total == r["total"] == 1100.0, (pools.total, r["total"])
+
+
+def test_the_virtual_budget_cannot_fake_a_rebalance_trigger():
+    """2026-11-02 那场假警报 —— 现在钉死。
+
+    虚拟预算 ¥15,000 进分母 = 每个真实持仓的权重被稀释 = 黄金的偏离从
+    1.09pp 变成 3.01pp = 凭空一次「⚠ 触发调仓」, 回正方案还要买 ¥15,328
+    (真实现金只有 ¥328)。
+
+    真实持仓 (2026-11-02 的记录): 红利 32,000@1.383 / 黄金 5,200@7.924 /
+    可转债 3,500@12.320 / 纳指 16,200@2.681, 再平衡现金 ¥328.40。
+    """
+    from src.domain.portfolio.portfolio import Portfolio
+
+    holdings = [
+        {"name": "红利ETF易方达", "code": "515180", "shares": 32000.0,
+         "price": 1.383},
+        {"name": "黄金ETF博时", "code": "159937", "shares": 5200.0,
+         "price": 7.924},
+        {"name": "可转债ETF博时", "code": "511380", "shares": 3500.0,
+         "price": 12.32},
+        {"name": "纳斯达克ETF华夏", "code": "513300", "shares": 16200.0,
+         "price": 2.681},
+    ]
+    pf = Portfolio.from_holdings(holdings, cash_rebalance=328.4,
+                                 grid_budget=15000.0)
+    out = policy.RebalancePolicy().evaluate(pf)
+    # 资本基数 = ETF 市值 + 真实现金 —— 虚拟预算**不进**
+    assert out.total == pytest_approx(172341.4), out.total
+    # 真实偏离最大 1.09pp < 3pp —— **不触发**
+    assert not out.triggered, out.weights
+    assert out.plan == [], out.plan
+    # 有没有那 ¥15,000, 结论必须**一模一样** (权重也不许动)
+    pf_no_grid = Portfolio.from_holdings(holdings, cash_rebalance=328.4,
+                                         grid_budget=0.0)
+    out_no_grid = policy.RebalancePolicy().evaluate(pf_no_grid)
+    assert out.weights == out_no_grid.weights
+    assert out.triggered == out_no_grid.triggered
+
+
+def test_the_plan_never_asks_for_money_that_is_not_there():
+    """回正方案要花的钱 = **真实现金**, 不是「真实现金 + 虚拟预算」。
+
+    Σdelta ≡ total − etf_value ≡ cash_rebalance (虚拟预算不进基数)。
+    """
+    from src.domain.portfolio.portfolio import Portfolio
+
+    holdings = [
+        {"name": "A", "code": "1", "shares": 3000.0, "price": 1.0},
+        {"name": "B", "code": "2", "shares": 1000.0, "price": 1.0},
+        {"name": "C", "code": "3", "shares": 1000.0, "price": 1.0},
+        {"name": "D", "code": "4", "shares": 1000.0, "price": 1.0},
+    ]
+    pf = Portfolio.from_holdings(holdings, cash_rebalance=500.0,
+                                 grid_budget=5000.0)
+    out = policy.RebalancePolicy().evaluate(pf)
+    assert out.triggered, out.weights
+    total_delta = sum(p["delta_value"] for p in out.plan)
+    # 要买的钱 = 真实现金 ¥500 —— 不是 ¥5,500
+    assert total_delta == pytest_approx(500.0), total_delta
+
+
+def test_the_virtual_budget_does_not_inflate_the_grid_layer_pool():
+    """层额的池子 = 3pp 组合的总市值 —— 虚拟预算**不进**。
+
+    2026-11-02: 池子 187,341 (含虚拟 ¥15,000) → 层额 ¥10,931.80;
+    真钱口径 172,341 → 层额 ¥10,181.80。
+    """
+    from src.domain.portfolio.portfolio import Portfolio
+
+    holdings = [{"name": "A", "code": "1", "shares": 172341.4, "price": 1.0}]
+    pf = Portfolio.from_holdings(holdings, cash_rebalance=0.0,
+                                 grid_budget=15000.0)
+    pool = policy.RebalancePolicy().evaluate(pf).total
+    assert pool == pytest_approx(172341.4), pool
+    layer = layer_sizing.LayerSizingPolicy().layer_yuan(pool, 168705.5)
+    assert layer == pytest_approx(10000.0 + (172341.4 - 168705.5) * 0.05), layer
 
 
 def test_the_page_labels_the_virtual_pool_and_reconciles_the_totals():
@@ -4272,15 +4357,18 @@ def test_the_page_labels_the_virtual_pool_and_reconciles_the_totals():
     html = (ROOT / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "app.js").read_text(encoding="utf-8")
 
-    # 网格那一行标了「虚拟」; 合计那一行说明了它不含什么
+    # 网格那一行标了「虚拟」; 合计那一行说明了它只含真钱
     assert "复合网格<span" in html, html
-    assert "不含网格虚拟占用" in html, html
+    assert "只含真钱" in html, html
     # 网格那两个格子挂着「虚拟」标记
     assert "'cash-grid-market', `${money(gridMarket)}<span class=\"muted\"> 虚拟</span>`" in js, js
     assert "'cash-grid-balance', `${money(cashGr)}<span class=\"muted\"> 虚拟</span>`" in js, js
-    # ⚠️ 合计市值**不含**网格的虚拟占用 —— app.js 里不能再把 gridMarket 加进去
+    # ⚠️ 合计市值**不含**网格的虚拟占用, 合计余额**不含**虚拟现金 ——
+    #    app.js 里不能再把 gridMarket / cashGr 加进去
     assert "setText('cash-total-market', money(rebalanceMarket))" in js, js
+    assert "setText('cash-total-balance', money(cashReb))" in js, js
     assert "rebalanceMarket + gridMarket" not in js, js
+    assert "money(cashReb + cashGr)" not in js, js
     # 公式写在页脚 —— 用户不用猜差额去哪了
     assert "合计市值 + 合计余额 = 顶部 badge 的「总市值」" in html, html
 
@@ -4424,6 +4512,120 @@ def test_the_migration_script_is_idempotent():
     again, changed2 = mod.migrate_window(window)
     assert changed2 is False, "已经是新格式就不该再动"
     assert again == window
+
+
+def test_the_capital_base_migration_script_is_idempotent():
+    """迁移脚本: 跑两遍 = 跑一遍, 而且**只碰**被新规则改到的那些记录。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "migrate_history_capital_base",
+        ROOT / "scripts" / "migrate_history_capital_base.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    positions = [
+        {"name": "红利ETF易方达", "code": "515180", "shares": 32000.0,
+         "price": 1.383, "date": "2026-11-02", "value": 44256.0},
+        {"name": "黄金ETF博时", "code": "159937", "shares": 5200.0,
+         "price": 7.924, "date": "2026-11-02", "value": 41204.8},
+        {"name": "可转债ETF博时", "code": "511380", "shares": 3500.0,
+         "price": 12.32, "date": "2026-11-02", "value": 43120.0},
+        {"name": "纳斯达克ETF华夏", "code": "513300", "shares": 16200.0,
+         "price": 2.681, "date": "2026-11-02", "value": 43432.2},
+    ]
+    record = {
+        "date": "2026-11-02",
+        "total": 187341.4, "etf_value": 172013.0,
+        "cash_rebalance": 328.4, "cash_grid": 15000.0,
+        "cash_total": 15328.4,
+        "positions": positions,
+        "weights": [0.2362, 0.2199, 0.2302, 0.2318],
+        "target_w": 0.25, "threshold_pp": 3.0,
+        "triggered": True,
+        "plan": [{"name": "黄金ETF博时", "code": "159937",
+                  "current_value": 41204.8, "target_value": 46835.35,
+                  "delta_value": 5630.55}],
+    }
+    # 只有 `cash_grid > 0` 的记录才需要迁 —— 别的本来就是真钱口径
+    assert mod.needs_migration(record) is True
+    assert mod.needs_migration({**record, "cash_grid": 0.0}) is False
+
+    new, changed = mod.migrate_record(record)
+    assert changed is True
+    assert new["total"] == pytest_approx(172341.4), new["total"]
+    assert new["cash_total"] == pytest_approx(328.4), new["cash_total"]
+    assert new["triggered"] is False, "真实的偏离只有 1.09pp —— 不该触发"
+    assert new["plan"] == [], new["plan"]
+    # 事实一个字节都没动
+    assert new["positions"] == positions
+    assert new["cash_grid"] == 15000.0
+
+    again, changed2 = mod.migrate_record(new)
+    assert changed2 is False, "已经是新口径了就不该再动"
+    assert again == new
+
+
+def test_the_migration_refreshes_the_grid_layer_too():
+    """层额的**池子**就是 3pp 总市值 —— 池子口径改了, 层额跟着改。
+
+    ⚠️ 层额也是**派生**的: `daily_snapshot.size_grid_layer` 把
+    `Portfolio.total` 当池子传给 `LayerSizingPolicy.layer_yuan`。池子从
+    「含虚拟预算」改成「只算真钱」, 层额不改的话, 页面上的「单层金额」还是
+    按旧池子算的 (2026-11-02: ¥10,931.8 → ¥10,181.8)。
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "migrate_history_capital_base",
+        ROOT / "scripts" / "migrate_history_capital_base.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    positions = [
+        {"name": "红利ETF易方达", "code": "515180", "shares": 32000.0,
+         "price": 1.383, "date": "2026-11-02", "value": 44256.0},
+        {"name": "黄金ETF博时", "code": "159937", "shares": 5200.0,
+         "price": 7.924, "date": "2026-11-02", "value": 41204.8},
+        {"name": "可转债ETF博时", "code": "511380", "shares": 3500.0,
+         "price": 12.32, "date": "2026-11-02", "value": 43120.0},
+        {"name": "纳斯达克ETF华夏", "code": "513300", "shares": 16200.0,
+         "price": 2.681, "date": "2026-11-02", "value": 43432.2},
+    ]
+    record = {
+        "date": "2026-11-02",
+        "total": 187341.4, "etf_value": 172013.0,
+        "cash_rebalance": 328.4, "cash_grid": 15000.0,
+        "cash_total": 15328.4,
+        "positions": positions,
+        "weights": [0.2362, 0.2199, 0.2302, 0.2318],
+        "target_w": 0.25, "threshold_pp": 3.0,
+        "triggered": True,
+        "plan": [{"name": "黄金ETF博时", "code": "159937",
+                  "current_value": 41204.8, "target_value": 46835.35,
+                  "delta_value": 5630.55}],
+        "grid_signals": [
+            {"name": "红利ETF易方达", "price": 1.38, "layer_yuan": 10931.8,
+             "signal": None, "suggest_amount": 0.0, "suggest_shares": 0.0},
+            {"name": "黄金ETF博时", "price": 7.92, "layer_yuan": 10931.8,
+             "signal": None, "suggest_amount": 0.0, "suggest_shares": 0.0},
+        ],
+    }
+    # 池子序列 (截至前一天) —— 最近最低 = 168705.5 (2026-10-23 那天的 total)
+    prior = [173424.0, 168705.5]
+    assert mod.recent_min_of(prior + [172341.4], 757) == pytest_approx(168705.5)
+
+    new, changed = mod.migrate_record(record, prior_series=prior)
+    assert changed is True
+    # 层额 = 10000 + (172341.4 − 168705.5) × 5% = 10181.795 → 10181.8
+    for s in new["grid_signals"]:
+        assert s["layer_yuan"] == pytest_approx(10181.8), s
+    # 事实一个字节都没动
+    assert new["positions"] == positions
+    assert new["cash_grid"] == 15000.0
+    # 不给池子序列 = 只重算那五个字段, 不碰层额
+    plain, _ = mod.migrate_record(record)
+    assert plain["grid_signals"][0]["layer_yuan"] == 10931.8
 
 
 # -----------------------------------------------------------------------------

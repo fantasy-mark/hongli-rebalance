@@ -298,20 +298,20 @@ class Portfolio:
 
     @property
     def total(self) -> float:
-        """`etf_value + cash_rebalance + grid_budget`.
+        """**3pp 再平衡口径的资本基数** = `etf_value + cash_rebalance`。
 
-        ⚠️ `grid_budget` 是**虚拟预算** (`GridBudget` 类型) —— 但它**确实**
-        计入 `total`: `total` 是**策略的资本基数** (3pp 判阈与层额定尺都用
-        它), 两个池子的钱在同一个池子里算。**规则一个字没改** —— 虚拟不等于
-        该被藏起来, 只等于**必须被标出来** (D3: 领域侧标类型, D4: 呈现侧标
-        「虚拟」)。
+        ⚠️ **不含 `grid_budget`** —— 网格那一池是**虚拟预算** (D3), 不是这
+        几只 ETF 的钱。它进分母 = 稀释每个真实持仓的权重, 制造**假的偏离**:
+        2026-11-02 就是这么误报了一次「⚠ 触发调仓」—— 虚拟的 ¥15,000 把
+        黄金的偏离从 1.09pp 顶到 3.01pp (真实偏离根本没到阈值), 回正方案
+        还要凭空要求买入 ¥15,328 (真实现金只有 ¥328)。
 
-        ⚠️ The addition order is `etf + (cr + gb)` — float addition isn't
-        associative, and the old code computed exactly that. Keep the
-        parentheses as they are.
+        两条口径各司其职, 别混:
+          - `total`  3pp 组合的资本基数 (权重 / 判阈 / 回正方案 / 层额定尺)
+          - 网格那一池的钱**不进 `total`** —— 它在资金管理表里单列一行, 标着
+            「虚拟」。虚拟不等于该被藏起来, 只等于必须被标出来 (D3/D4)。
         """
-        cash_total = self.cash_rebalance + self.grid_budget
-        return self.etf_value + cash_total
+        return self.etf_value + self.cash_rebalance
 
     def to_records(self) -> list[dict]:
         """The persistence/presentation shape — see `Position.to_record`."""

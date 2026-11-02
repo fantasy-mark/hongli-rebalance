@@ -131,11 +131,10 @@ def build_text(r: dict) -> str:
         f"稳健再平衡日报 - {r['date']}",
         "=" * 60,
         "",
-        f"总市值:    {fmt_money(r['total']):>16}",
+        f"总市值:    {fmt_money(r['total']):>16}   (3pp再平衡口径)",
         f"ETF 合计:  {fmt_money(r['etf_value']):>16}",
         f"再平衡现金: {fmt_money(r.get('cash_rebalance', 0)):>15}",
-        f"网格现金:   {fmt_money(r.get('cash_grid', 0)):>15}",
-        f"现金合计:   {fmt_money(r.get('cash_total', r.get('cash_rebalance', 0) + r.get('cash_grid', 0))):>15}",
+        f"网格现金:   {fmt_money(r.get('cash_grid', 0)):>15}   (虚拟 · 不计入总市值)",
         f"目标权重:  {fmt_pct(r['target_w'])}    阈值: ±{r['threshold_pp']:.1f}pp",
         "",
         "[3pp 再平衡]",
@@ -162,6 +161,7 @@ def build_text(r: dict) -> str:
         "-" * 74,
         "份额口径: 真实持仓 = 账本里的真实成交 · 归并 = 网格归并进来的(模拟)",
         "  权重与总市值按 (真实持仓 + 归并) 计算",
+        "  权重 = 各资产市值 ÷ 总市值 (3pp再平衡口径 = ETF市值 + 真实现金)",
         "",
         f"3pp 结论: {'⚠ 触发调仓' if r['triggered'] else '✓ 无需调仓'}",
         "",
@@ -493,11 +493,12 @@ def build_html(r: dict, pages_url: str = "") -> str:
           <td style="padding:6px 0;width:25%;vertical-align:top;">
             <div style="font-size:11px;color:#888;text-transform:uppercase;">再平衡</div>
             <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r.get('cash_rebalance', 0))}</div>
-            <div style="font-size:10px;color:#aaa;margin-top:1px;">网格(虚拟) {fmt_money(r.get('cash_grid', 0))}</div>
+            <div style="font-size:10px;color:#aaa;margin-top:1px;">总市值 = ETF + 再平衡现金</div>
           </td>
           <td style="padding:6px 0;width:25%;vertical-align:top;">
-            <div style="font-size:11px;color:#888;text-transform:uppercase;">现金合计</div>
-            <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r.get('cash_total', r.get('cash_rebalance', 0) + r.get('cash_grid', 0)))}</div>
+            <div style="font-size:11px;color:#888;text-transform:uppercase;">网格(虚拟)</div>
+            <div style="font-size:22px;font-weight:bold;margin-top:2px;">{fmt_money(r.get('cash_grid', 0))}</div>
+            <div style="font-size:10px;color:#aaa;margin-top:1px;">虚拟预算 · 不计入总市值</div>
           </td>
         </tr>
       </table>

@@ -2,9 +2,12 @@
 
 Pure domain logic, no I/O, no globals:
 
-  - `total`    = Σ position value + cash_rebalance + grid_budget
-                 (grid_budget 是**虚拟预算** —— D3; 规则没变, 只是
-                  类型上标出来了)
+  - `total`    = Σ position value + cash_rebalance
+                 ← **3pp 口径的资本基数** (权重 / 判阈 / 回正方案 / 层额
+                 定尺都跑在它上面)
+                 ⚠️ **不含** `grid_budget` —— 网格那一池是**虚拟预算**
+                 (D3), 不是这几只 ETF 的钱。虚拟预算进分母 = 稀释真实
+                 持仓的权重 = 制造假的「偏离」。
   - `target_w` = 1 / len(positions)  ← **dynamic basket** (3 / 4 / 5 assets
                  all work without touching the code)
   - `triggered`= ∃ asset : |w − target_w| × 100 > threshold_pp
@@ -55,7 +58,8 @@ class RebalanceOutcome:
     """The result of judging a portfolio against the policy.
 
     Attributes:
-        total:    portfolio total (positions + both cash pools)
+        total:    3pp 口径的资本基数 (positions + 真实现金; **不含**
+                   网格的虚拟预算 —— 见 `Portfolio.total`)
         weights:  each position's weight — **raw floats**, not rounded
                    (rounding happens at the presentation boundary only)
         triggered: does the basket deviate more than the threshold?
@@ -88,9 +92,15 @@ class RebalancePolicy:
                  events: Optional[EventStream] = None) -> RebalanceOutcome:
         """Judge `portfolio` against this policy.
 
-        The grid pool is part of the portfolio (so weights and the trigger
-        check include it), but the grid engine itself is fully virtual and
-        doesn't touch the cash pool — see `domain/grid/grid_position.py`.
+        ⚠️ 权重 / 判阈 / 回正方案都跑在 **3pp 口径**上:
+        `portfolio.total` = ETF 市值 + **真实现金**, **不含**网格的虚拟
+        预算 (`grid_budget`, D3)。虚拟预算进分母 = 稀释每个真实持仓的权重
+        = 制造假的「偏离」, 而且回正方案会去买那一池根本不存在的钱
+        (2026-11-02: 虚拟 ¥15,000 让黄金的偏离从 1.09pp 顶到 3.01pp,
+        方案要买 ¥15,328 而真实现金只有 ¥328)。
+
+        网格引擎本身是完全虚拟的, 不碰现金池 ——
+        见 `domain/grid/grid_position.py`。
 
         The portfolio must already include the grid's merged shares — they
         are portfolio holdings now, so they have to be in the value the
