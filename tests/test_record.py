@@ -5078,6 +5078,126 @@ def test_the_ledger_cost_basis_uses_the_unadjusted_traded_price():
         qp._eastmoney, qp._sina = orig_em, orig_sina
 
 
+# -----------------------------------------------------------------------------
+# 触发口径 + 交易成本 (spread / max_dev, fee model)
+# -----------------------------------------------------------------------------
+
+def _build_4asset_prices(paths: dict[str, list[float]],
+                         start: str = "2026-01-01") -> pd.DataFrame:
+    """4 只 ETF 的价格路径 (每列一份), 短的那条用最后一个值补齐。"""
+    n = max(len(v) for v in paths.values())
+    dates = pd.bdate_range(start, periods=n)
+    data = {}
+    for name, series in paths.items():
+        vals = list(series) + [series[-1]] * (n - len(series))
+        data[name] = vals[:n]
+    return pd.DataFrame(data, index=dates)
+
+
+def _drift_prices() -> pd.DataFrame:
+    """A/B 先涨后跌、C/D 先跌后涨 —— 让权重来回失衡, 触发多次。"""
+    return _build_4asset_prices({
+        "A": [100.0, 120.0, 120.0, 80.0, 80.0, 110.0],
+        "B": [100.0, 120.0, 120.0, 80.0, 80.0, 110.0],
+        "C": [100.0, 80.0, 80.0, 120.0, 120.0, 90.0],
+        "D": [100.0, 80.0, 80.0, 120.0, 120.0, 90.0],
+    })
+
+
+def test_the_spread_rule_triggers_when_no_single_asset_is_off_by_the_threshold():
+    # A/B 涨到 110, C/D 跌到 90 => 权重 27.5/27.5/22.5/22.5
+    #   => 每只偏离 ±2.5pp (max_dev 2.5 < 3) 但极差 5pp > 3
+    prices = _build_4asset_prices({
+        "A": [100.0] + [110.0] * 5,
+        "B": [100.0] + [110.0] * 5,
+        "C": [100.0] + [90.0] * 5,
+        "D": [100.0] + [90.0] * 5,
+    })
+    strict = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                    trigger_rule="max_dev", threshold_pp=3.0)
+    loose = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                   trigger_rule="spread", threshold_pp=3.0)
+    assert strict["n_rebalances"] == 1, strict["n_rebalances"]   # 只有建仓
+    assert loose["n_rebalances"] == 2, loose["n_rebalances"]     # 建仓 + 极差触发
+    r = loose["rebalances"][-1]
+    assert r["max_dev"] < 3.0, r["max_dev"]
+    assert r["spread"] > 3.0, r["spread"]
+
+
+def test_the_spread_rule_still_deploys_from_an_all_cash_start():
+    # 全现金时所有权重都是 0 => 极差 = 0 => 纯极差规则会永远不建仓。
+    # 所以引擎有一条「现金过半先建仓」的特例。
+    prices = _build_4asset_prices({
+        "A": [100.0] * 6, "B": [100.0] * 6,
+        "C": [100.0] * 6, "D": [100.0] * 6,
+    })
+    res = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                 trigger_rule="spread", threshold_pp=3.0)
+    assert res["n_rebalances"] == 1, res["n_rebalances"]
+    assert res["final"] == pytest_approx(300_000.0)
+    legs = res["rebalances"][0]["legs"]
+    assert len(legs) == 4, legs
+    assert all(l["side"] == "buy" for l in legs), legs
+
+
+def test_the_commission_is_deducted_from_the_portfolio():
+    prices = _build_4asset_prices({
+        "A": [100.0] + [110.0] * 5,
+        "B": [100.0] + [110.0] * 5,
+        "C": [100.0] + [90.0] * 5,
+        "D": [100.0] + [90.0] * 5,
+    })
+    gross = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                   trigger_rule="spread", threshold_pp=3.0)
+    net = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                 trigger_rule="spread", threshold_pp=3.0,
+                                 fee_bps=3.0, min_commission=5.0)
+    assert gross["fees"] == 0.0
+    # 建仓 4 条腿 x ¥75,000 => 3bp = ¥22.5 (超过 ¥5 下限, 按费率)
+    # 回正 4 条腿 x ¥7,497 => 3bp 只有 ¥2.25 => 走 ¥5 最低佣金
+    assert net["rebalances"][0]["fee"] == pytest_approx(90.0)
+    assert net["rebalances"][1]["fee"] == pytest_approx(20.0)
+    assert net["fees"] == pytest_approx(110.0), net["fees"]
+    assert net["final"] < gross["final"]
+    assert gross["final"] == pytest_approx(300_000.0)
+
+
+def test_the_spread_is_bounded_by_the_max_deviation_times_n_over_n_minus_one():
+    # 满仓 (Σw = 1 => ΣΔ = 0) => 极差 S ∈ [M·n/(n-1), 2M], n = 4。
+    # 建仓日除外 —— 那天全现金, 所有权重都是 0 (Δ 全是 -25pp, 极差 = 0)。
+    res = three_pp.run_backtest(_drift_prices(), initial_cash=300_000.0,
+                                 trigger_rule="max_dev", threshold_pp=3.0)
+    checked = 0
+    for r in res["rebalances"][1:]:
+        assert r["spread"] >= r["max_dev"] * 4 / 3 - 1e-9, r
+        assert r["spread"] <= 2 * r["max_dev"] + 1e-9, r
+        checked += 1
+    assert checked >= 2, checked
+
+
+def test_the_union_rule_equals_the_pure_spread_rule_at_the_same_threshold():
+    # max_dev > 3 必然 spread > 4 (n=4) ⇒ 并集 ≡ 纯极差 @ 3
+    prices = _drift_prices()
+    union = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                   trigger_rule="max_dev_or_spread",
+                                   threshold_pp=3.0)
+    pure = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                  trigger_rule="spread", threshold_pp=3.0)
+    assert ([r["date"] for r in union["rebalances"]]
+            == [r["date"] for r in pure["rebalances"]])
+
+
+def test_the_default_parameters_still_cost_nothing():
+    # 新增的费用参数默认 0 => 生产路径的行为一点没变
+    prices = _drift_prices()
+    default = three_pp.run_backtest(prices, initial_cash=300_000.0)
+    explicit = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                     fee_bps=0.0, min_commission=0.0)
+    assert default["fees"] == 0.0
+    assert default["final"] == explicit["final"]
+    assert default["n_rebalances"] == explicit["n_rebalances"]
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]
