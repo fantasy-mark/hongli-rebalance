@@ -33,7 +33,6 @@ import pandas as pd
 from ..domain.portfolio.rebalance_policy import RebalancePolicy
 
 CASH = 200_000.0
-TARGET_W = 1.0 / 3
 #: 默认阈值 —— 与生产路径共用**同一个**领域常量 (Phase 5)。
 #: 以前这里是本模块自己读环境变量; 现在环境变量的覆盖点收敛到应用层
 #: (`AppConfig.from_env`), 回测想要别的阈值就**显式传参**。
