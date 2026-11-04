@@ -187,20 +187,42 @@ def _setup_fonts() -> None:
 def _fetch_asset_window(assets: list[tuple[str, str, str]]) -> dict[str, pd.Series]:
     """Fetch the full price history window for the user's N ETFs.
 
+    ⚠️ 口径必须是 **前复权 (qfq)**: 这条线是要画「收益率」的, 而
+    `data/history.json` 的每日市值走的是真实成交价 —— 两者只有在前复权
+    口径下才对得上。用不复权的话, 红利 ETF 六年的分红会被当成亏损
+    (CAGR 从 11.95% 掉到 10.03%), 图表上的「3pp 再平衡」曲线就跟
+    每日快照对不上了。
+
     Args:
         assets: list of (display_name, sina_symbol, eastmoney_code) tuples.
                 Resolved by `_load_chart_assets()` from holdings.xlsx.
 
     Imported lazily so chart rendering can be tested without network.
     """
-    from src.infrastructure.quote_providers import fetch_one
+    from src.infrastructure.quote_providers import (
+        SOURCE_EASTMONEY_QFQ, SOURCE_SINA_UNADJUSTED, fetch_qfq_history_ex,
+    )
     out: dict[str, pd.Series] = {}
+    off_convention: list[str] = []
     for name, sina, em in assets:
-        df = fetch_one(sina, em)
+        df, source = fetch_qfq_history_ex(sina, em)
         df = df[(df.index >= START) & (df.index <= END_FALLBACK)]
         s = df.iloc[:, 0] if isinstance(df, pd.DataFrame) else df
         s.name = name
         out[name] = s
+        if source != SOURCE_EASTMONEY_QFQ:
+            print(f"WARN 图表价格源 {name}: {source}"
+                  + (" —— **不复权**, 曲线跟每日快照口径对不上!"
+                     if source == SOURCE_SINA_UNADJUSTED
+                     else " (窗口比平时短)"),
+                  file=sys.stderr)
+        if source == SOURCE_SINA_UNADJUSTED:
+            off_convention.append(name)
+    if off_convention:
+        # 口径不一致的图比没有图更糟 —— 在 Action 日志里喊出来。
+        print("WARN 图表口径不一致: " + ", ".join(off_convention)
+              + " 走的是新浪不复权价 —— 「3pp 再平衡」曲线跟每日快照对不上",
+              file=sys.stderr)
     return out
 
 

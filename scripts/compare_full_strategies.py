@@ -38,7 +38,7 @@ import pandas as pd
 
 from src.simulation import grid_simulator as grid_mod
 from src.simulation import equal_weight_backtest as three_pp
-from src.infrastructure.quote_providers import fetch_one
+from src.infrastructure.quote_providers import fetch_qfq_history
 # 3 资产 (跟 v3 一致)
 ASSETS = [
     ("黄金ETF博时",   "sz159937", "159937"),
@@ -53,7 +53,7 @@ INITIAL_CAP = 200_000.0
 def fetch_three_etf() -> pd.DataFrame:
     cols = {}
     for name, sina, em in ASSETS:
-        df = fetch_one(sina, em, START, END)
+        df = fetch_qfq_history(sina, em, START, END)
         cols[name] = df["close"]
     out = pd.DataFrame(cols).sort_index().dropna()
     return out

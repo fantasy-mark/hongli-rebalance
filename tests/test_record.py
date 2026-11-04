@@ -4998,6 +4998,86 @@ def test_the_invariant_table_covers_all_fifteen_invariants():
         f" / 多出来的: {sorted(covered - expected)}")
 
 
+def test_the_price_series_uses_qfq_and_reports_its_source():
+    """历史序列必须是**前复权**, 而且必须说得出用的是哪个源。
+
+    ⚠️ 这条钉的是 2026-11-04 修的那个口径不一致: 图表的「3pp 再平衡」
+    曲线之前走新浪**不复权**, 跟 `data/history.json` 的每日市值 (真实成交
+    价) 对不上 —— 红利 ETF 六年的分红被当成亏损, CAGR 从 11.95% 掉到
+    10.03%。取数顺序也钉住: 东财 qfq → 腾讯 qfq → 新浪(不复权, 兜底)。
+    """
+    from src.infrastructure import quote_providers as qp
+
+    calls: list = []
+
+    def fake_em(eastmoney, adjust="qfq"):
+        calls.append(("eastmoney", eastmoney, adjust))
+        if eastmoney == "OK":
+            return pd.DataFrame({"close": [1.0]},
+                                index=pd.to_datetime(["2026-01-02"]))
+        return None
+
+    def fake_tencent(sina):
+        calls.append(("tencent", sina))
+        if sina == "shOK":
+            return pd.DataFrame({"close": [2.0]},
+                                index=pd.to_datetime(["2026-01-02"]))
+        return None
+
+    def fake_sina(sina):
+        calls.append(("sina", sina))
+        return pd.DataFrame({"close": [3.0]},
+                            index=pd.to_datetime(["2026-01-02"]))
+
+    orig = (qp._eastmoney, qp._tencent_qfq, qp._sina)
+    qp._eastmoney, qp._tencent_qfq, qp._sina = fake_em, fake_tencent, fake_sina
+    try:
+        df, source = qp.fetch_qfq_history_ex("shOK", "OK")
+        assert source == qp.SOURCE_EASTMONEY_QFQ, source
+        assert float(df["close"].iloc[-1]) == 1.0
+        assert calls[0][2] == "qfq", "东财那趟必须是 qfq"
+
+        calls.clear()
+        df, source = qp.fetch_qfq_history_ex("shOK", "DEAD")
+        assert source == qp.SOURCE_TENCENT_QFQ, source
+        assert float(df["close"].iloc[-1]) == 2.0
+
+        calls.clear()
+        df, source = qp.fetch_qfq_history_ex("shDEAD", "DEAD")
+        assert source == qp.SOURCE_SINA_UNADJUSTED, source
+        assert float(df["close"].iloc[-1]) == 3.0
+        # 顺序: 东财 → 腾讯 → 新浪, 新浪是**最后**兜底
+        assert [c[0] for c in calls] == ["eastmoney", "tencent", "sina"], calls
+    finally:
+        qp._eastmoney, qp._tencent_qfq, qp._sina = orig
+
+
+def test_the_ledger_cost_basis_uses_the_unadjusted_traded_price():
+    """账本的成本基准 = 当天**真实成交价** (不复权) —— 不是前复权。
+
+    红利 ETF 2026-10-16 除息: 10-12 的前复权价 ¥1.385, 当天真实成交价
+    ¥1.446 (差 ¥0.061/份 = 4.4%)。账本记的是后者 —— 用户当天付的就是
+    那个数, 用 qfq 记等于凭空少记 4.4% 的成本。
+    """
+    from src.infrastructure import quote_providers as qp
+
+    seen: list = []
+
+    def fake_em(eastmoney, adjust="qfq"):
+        seen.append(("eastmoney", eastmoney, adjust))
+        return pd.DataFrame({"close": [1.446]},
+                            index=pd.to_datetime(["2026-10-12"]))
+
+    orig_em, orig_sina = qp._eastmoney, qp._sina
+    qp._eastmoney = fake_em
+    try:
+        px = qp.fetch_traded_close("515180", "2026-10-12")
+        assert px == 1.446, px
+        assert seen[0][2] == "", f"账本那条必须是不复权, 实际 adjust={seen[0][2]!r}"
+    finally:
+        qp._eastmoney, qp._sina = orig_em, orig_sina
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]

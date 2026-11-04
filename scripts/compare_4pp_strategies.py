@@ -29,7 +29,7 @@ import pandas as pd
 
 from src.simulation import grid_simulator as grid_mod
 from src.simulation import equal_weight_backtest as three_pp
-from src.infrastructure.quote_providers import fetch_one
+from src.infrastructure.quote_providers import fetch_qfq_history
 # 3 资产基础 (BASE_3) — 本地常量, 不引用 hongli/
 BASE_3 = [
     ("黄金ETF博时",   "sz159937", "159937"),
@@ -57,10 +57,10 @@ EXTRA_COLORS = {
 def fetch_all_prices() -> dict[str, pd.DataFrame]:
     out = {}
     for name, sina, em in BASE_3:
-        df = fetch_one(sina, em, START, END)
+        df = fetch_qfq_history(sina, em, START, END)
         out[name] = df["close"]
     for name, (sina, em) in EXTRAS.items():
-        df = fetch_one(sina, em, START, END)
+        df = fetch_qfq_history(sina, em, START, END)
         out[name] = df["close"]
     return out
 

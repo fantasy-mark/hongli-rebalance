@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.infrastructure.quote_providers import fetch_one          # noqa: E402
+from src.infrastructure.quote_providers import fetch_traded_close  # noqa: E402
 HOLDINGS = ROOT / "data" / "holdings.json"
 TRADES   = ROOT / "data" / "trades.json"
 
@@ -78,15 +78,19 @@ def read_holdings(path: Path) -> tuple[list[dict], float]:
 
 
 def fetch_close(code: str, date_str: str) -> float:
-    """Fetch the close price for `code` on `date_str`. Raises on failure."""
+    """当日**真实成交价** (不复权) —— 账本的成本基准就是这个数。
+
+    ⚠️ 不能用前复权: qfq 会把「那天之后」的分红倒扣回那天 —— 红利 ETF
+    2026-10-16 除息, 10-12 的 qfq 价是 ¥1.385, 当天真实成交价 ¥1.446
+    (差 ¥0.061/份)。用户当天付的是 ¥1.446, 成本基准必须按那个记。
+    """
     if code not in ETF_DEFS:
         raise SystemExit(f"ERROR code {code!r} not in ETF_DEFS whitelist; "
                          f"add it before running this script.")
-    sina = ETF_DEFS[code]
-    df = fetch_one(sina, code, start=date_str, end=date_str)
-    if df is None or df.empty:
-        raise SystemExit(f"ERROR no price data for {code} on {date_str}")
-    return float(df.iloc[-1]["close"])
+    try:
+        return fetch_traded_close(code, date_str)
+    except Exception as ex:
+        raise SystemExit(f"ERROR no price data for {code} on {date_str}: {ex}")
 
 
 def write_trades_json(path: Path, trades: list[dict]) -> None:

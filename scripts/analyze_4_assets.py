@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 
 from src.simulation import equal_weight_backtest as three_pp
-from src.infrastructure.quote_providers import fetch_one
+from src.infrastructure.quote_providers import fetch_qfq_history
 START = "2020-11-05"
 END = pd.Timestamp.today().strftime("%Y-%m-%d")
 INITIAL_CAP = 200_000.0
@@ -71,7 +71,7 @@ def _setup_fonts() -> None:
 def fetch_all() -> dict[str, pd.Series]:
     out = {}
     for name, sina, em, _ in ASSETS:
-        df = fetch_one(sina, em, START, END)
+        df = fetch_qfq_history(sina, em, START, END)
         out[name] = df["close"]
     return out
 

@@ -33,7 +33,7 @@ import pandas as pd
 
 from src.simulation import grid_simulator as grid_mod
 from src.simulation import equal_weight_backtest as three_pp
-from src.infrastructure.quote_providers import fetch_one
+from src.infrastructure.quote_providers import fetch_qfq_history
 # 3 资产 (跟 v3 一致)
 START = "2020-01-01"
 END = pd.Timestamp.today().strftime("%Y-%m-%d")
@@ -100,7 +100,7 @@ def main() -> None:
     print(f"拉取 3 ETF 历史 ({START} → {END})...")
     cols = {}
     for name, sina, em in ASSETS:
-        df = fetch_one(sina, em, START, END)
+        df = fetch_qfq_history(sina, em, START, END)
         cols[name] = df["close"]
     prices = pd.DataFrame(cols).sort_index().dropna()
     print(f"  对齐 {len(prices)} 行  {prices.index[0].date()} → {prices.index[-1].date()}")

@@ -27,7 +27,7 @@ for _n in ("matplotlib", "akshare", "urllib3", "requests"):
 import pandas as pd
 
 from src.simulation import grid_simulator as grid_mod
-from src.infrastructure.quote_providers import fetch_one
+from src.infrastructure.quote_providers import fetch_qfq_history
 ASSETS = [
     ("黄金ETF博时",   "sz159937", "159937"),
     ("红利ETF易方达", "sh515180", "515180"),
@@ -173,7 +173,7 @@ def main() -> None:
     print(f"拉取 3 ETF 历史 ({START} → {END})...")
     prices = {}
     for name, sina, em in ASSETS:
-        prices[name] = fetch_one(sina, em, START, END)
+        prices[name] = fetch_qfq_history(sina, em, START, END)
         print(f"  {name:<14} ({sina})  {len(prices[name])} 行")
 
     print()

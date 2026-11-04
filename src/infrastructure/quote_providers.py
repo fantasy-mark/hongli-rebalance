@@ -13,12 +13,30 @@ Spot tier order (latest → most stale):
      (representative of "right now"; no apply of historical dividends).
   2. Eastmoney `ak.fund_etf_spot_em` — rich spot table but only
      for stock/currency ETFs; does NOT include 511380. **Unadjusted**.
-  3. Sina daily-close `ak.fund_etf_hist_sina` — only refreshes after
-     the market closes; used as a last-resort historical reference.
-     **Unadjusted** (Sina endpoint has no `adjust` param; for ETFs
-     between ex-dates unadjusted ≡ qfq anyway).
-  4. Eastmoney `ak.fund_etf_hist_em` with `adjust="qfq"` — fallback
-     when Sina fails.  The only source that explicitly returns qfq.
+  3. Eastmoney `ak.fund_etf_hist_em` with `adjust="qfq"` — daily closes,
+     **前复权**, 全历史 (2010 起)。**日线的首选源**。
+  4. Tencent `fqkline` (…,qfq) — 也是前复权, 但**只有最近 ~640 根**日线
+     (实测: count 参数再大也只给 641 根; 带日期区间直接 "param error")。
+  5. Sina daily-close `ak.fund_etf_hist_sina` — **不复权**!  只当最后兜底
+     (Sina 接口没有 adjust 参数), 调用方必须知道口径跟别的源不同。
+
+⚠️ **两条历史序列, 两个口径, 别混用** (2026-11-04 修):
+
+    | 函数                     | 口径     | 用途                             |
+    |--------------------------|----------|----------------------------------|
+    | `fetch_qfq_history`      | 前复权   | 收益率 / 图表 / 多年回测          |
+    | `fetch_traded_close`     | 不复权   | 账本成本基准 (用户当天**付的**价) |
+    | `latest_for_code` (实时) | 不复权   | 今天的市值 (真实成交价)           |
+
+    为什么要分开: 多年回测里用不复权 = 把分红全丢了 —— 红利 ETF 六年累计
+    分红让 CAGR 从 **11.95% (qfq)** 掉到 **10.03% (不复权)**。图表的
+    「3pp 再平衡」曲线正是拿这条线画的, 之前 `fetch_one` 是「新浪优先」
+    → 那条曲线悄悄走了不复权 → 同一张图上, 每日快照 (实时价) 与图表曲线
+    两套口径, 数字对不上。
+
+    反过来, 账本的成本基准必须用**不复权**: 用户当天付的就是那个价,
+    用 qfq 会把「之后」的分红倒扣回那天 (红利 ETF 2026-10-16 除息,
+    10-12 的 qfq 价比当天真实成交价低 ¥0.061/份), 成本就错了。
 
 Note: `ak.fund_etf_hist_sina` is a daily-close endpoint that only
 refreshes after the market closes, so an Action triggered at 9:00
@@ -49,14 +67,16 @@ for _n in ("akshare", "urllib3", "requests"):
 
 
 def _sina(sina: str) -> Optional[pd.DataFrame]:
-    """Try Sina ETF history (unadjusted). Returns DataFrame with date index
+    """Try Sina ETF history (**不复权**). Returns DataFrame with date index
     & 'close' column or None.
 
-    Sina's fund ETF endpoint has no `adjust` parameter; returns unadjusted
-    closes.  For most ETFs unadjusted ≡ qfq between ex-dates, so this
-    matches the Eastmoney qfq fallback for the days we care about.  On
-    ex-dates the unadjusted close drops by the dividend amount while the
-    qfq close is unchanged — for daily tracking this is acceptable.
+    ⚠️ **不复权** —— 这条线跟 qfq 不是一回事: 除息日之后, 新浪的价格是
+    「除息后的真实成交价」, 而 qfq 会把分红倒扣回历史。**多年回测/图表
+    不能用它** (红利 ETF 六年累计分红让 CAGR 从 11.95% 掉到 10.03%)。
+
+    只在两个地方用:
+      1. qfq 两个源都挂了时的**最后兜底** (调用方要警告);
+      2. `fetch_traded_close` —— 账本成本基准要的就是「当天真实成交价」。
     """
     for attempt in range(3):
         try:
@@ -71,12 +91,18 @@ def _sina(sina: str) -> Optional[pd.DataFrame]:
     return None
 
 
-def _eastmoney(eastmoney: str) -> Optional[pd.DataFrame]:
-    """Eastmoney historical fallback. Returns 前复权 (qfq) series."""
+def _eastmoney(eastmoney: str, adjust: str = "qfq") -> Optional[pd.DataFrame]:
+    """Eastmoney daily history. Returns 前复权 (qfq) or 不复权 ("") series.
+
+    Args:
+        eastmoney: 6 位代码 (如 "515180")。
+        adjust: "qfq" = 前复权 (收益率/图表用); "" = 不复权
+            (当天真实成交价, 账本成本基准用)。
+    """
     try:
         raw = ak.fund_etf_hist_em(
             symbol=eastmoney, period="daily",
-            start_date="20100101", end_date="20991231", adjust="qfq",
+            start_date="20100101", end_date="20991231", adjust=adjust,
         )
         if raw is not None and not raw.empty:
             raw["日期"] = pd.to_datetime(raw["日期"])
@@ -84,33 +110,124 @@ def _eastmoney(eastmoney: str) -> Optional[pd.DataFrame]:
             df = raw.set_index("日期").sort_index()[["收盘"]].rename(columns={"收盘": "close"})
             return df[~df["close"].isna()]
     except Exception as ex:
-        log.error("Eastmoney %s failed: %s", eastmoney, ex)
+        log.error("Eastmoney %s failed (adjust=%r): %s", eastmoney, adjust, ex)
     return None
 
 
-def fetch_one(sina: str, eastmoney: str = "",
-              start: str = "", end: str = "") -> pd.DataFrame:
-    """Daily close series. Sina first, Eastmoney fallback.
+def _tencent_qfq(sina: str) -> Optional[pd.DataFrame]:
+    """腾讯 qfq 日线 (只要 close) —— 口径跟东财 qfq 一致。
+
+    ⚠️ 长度限制: 腾讯 `fqkline` 的日线**最多给 ~640 根** (2026-11 实测:
+    count 填 1000 / 1600 / 2000 都只给 641 根; 带日期区间会直接
+    "param error")。够画近两年, 不够画六年 —— 所以它是**第二顺位**。
+
+    Args:
+        sina: 新浪符号 (如 "sh515180") —— 只用它取 6 位代码。
+    """
+    code6 = str(sina)[-6:]
+    df = fetch_kline_history(code6)
+    if df is None or df.empty:
+        return None
+    return df[["close"]]
+
+
+#: 价格源的名字 —— 图表要把「这次到底用的哪个源」写在脸上。
+SOURCE_EASTMONEY_QFQ = "eastmoney_qfq"
+SOURCE_TENCENT_QFQ = "tencent_qfq"
+SOURCE_SINA_UNADJUSTED = "sina_unadjusted"
+
+
+def _fetch_qfq(sina: str, eastmoney: str) -> Tuple[Optional[pd.DataFrame], str]:
+    """按 **前复权** 口径取日线。返回 (df, 源名)。
+
+    顺序: 东财 qfq (全历史) → 腾讯 qfq (~640 根) → 新浪 (**不复权**, 兜底)。
+    """
+    if eastmoney:
+        df = _eastmoney(eastmoney, adjust="qfq")
+        if df is not None and not df.empty:
+            log.info("价格源: 东财 qfq (%s), %d 根", eastmoney, len(df))
+            return df, SOURCE_EASTMONEY_QFQ
+    df = _tencent_qfq(sina)
+    if df is not None and not df.empty:
+        log.info("价格源: 腾讯 qfq (%s), %d 根 (窗口比平时短)", sina, len(df))
+        return df, SOURCE_TENCENT_QFQ
+    df = _sina(sina)
+    if df is not None and not df.empty:
+        # 最后兜底 —— 口径**跟别处不一样**, 调用方要负责警告。
+        log.warning("价格源: 新浪 **不复权** (%s) —— 口径与 qfq 不一致!", sina)
+        return df, SOURCE_SINA_UNADJUSTED
+    return None, "none"
+
+
+def fetch_qfq_history(sina: str, eastmoney: str = "",
+                      start: str = "", end: str = "") -> pd.DataFrame:
+    """Daily close series — **前复权 (qfq)**, 收益率/图表/回测用这一条。
+
+    ⚠️ 要的是「那天真实成交价」(账本成本基准)? 用 `fetch_traded_close`。
 
     Args:
         sina: e.g. "sh515180"
-        eastmoney: e.g. "515180" (optional, for fallback)
+        eastmoney: e.g. "515180" (可选, 但没有它就拿不到全历史 qfq)
         start: optional ISO date filter (e.g. "2020-11-05"); inclusive
         end: optional ISO date filter (e.g. "2026-10-13"); inclusive
 
     Returns:
         DataFrame indexed by date with single 'close' column.
     """
-    df = _sina(sina)
-    if df is None and eastmoney:
-        df = _eastmoney(eastmoney)
+    df, _source = fetch_qfq_history_ex(sina, eastmoney, start, end)
+    return df
+
+
+def fetch_qfq_history_ex(sina: str, eastmoney: str = "",
+                         start: str = "", end: str = ""
+                         ) -> Tuple[pd.DataFrame, str]:
+    """跟 `fetch_qfq_history` 一样, 但**同时返回用了哪个源**。
+
+    图表要靠这个把「这条线不是 qfq」写在脸上 —— 静默的口径不一致比
+    没有图更糟。
+    """
+    df, source = _fetch_qfq(sina, eastmoney)
     if df is None:
         raise RuntimeError(f"no price data for {sina}")
     if start:
         df = df[df.index >= pd.Timestamp(start)]
     if end:
         df = df[df.index <= pd.Timestamp(end)]
-    return df
+    return df, source
+
+
+def fetch_traded_close(code: str, date: str) -> float:
+    """某个交易日的**真实成交价** (不复权) —— 账本的成本基准用它。
+
+    ⚠️ **不要用 qfq**: qfq 会把「那天之后」的分红倒扣回历史价 —— 用户
+    当天付的不是那个数。红利 ETF 2026-10-16 除息: 10-12 的 qfq 价
+    ¥1.385, 当天真实成交价 ¥1.446 (差 ¥0.061/份 = 4.4%)。
+
+    Args:
+        code: 6 位代码 (如 "515180")。
+        date: "YYYY-MM-DD"。
+
+    Raises:
+        RuntimeError: 拿不到那天的价格。
+    """
+    df = _eastmoney(code, adjust="")
+    if df is None or df.empty:
+        from_asset = _sina(_sina_symbol_for(code))
+        df = from_asset
+    if df is None or df.empty:
+        raise RuntimeError(f"no price data for {code} on {date}")
+    day = df[df.index == pd.Timestamp(date)]
+    if day.empty:
+        raise RuntimeError(f"no price for {code} on {date} "
+                           f"(last available {df.index[-1].date()})")
+    return float(day["close"].iloc[-1])
+
+
+def _sina_symbol_for(code: str) -> str:
+    """6 位代码 → 新浪符号 ("515180" → "sh515180")。"""
+    c = str(code).strip().zfill(6)
+    prefix = "sh" if c[0] in ("5", "6", "9") else "sz"
+    return prefix + c
 
 
 # ---------------------------------------------------------------------
@@ -231,8 +348,12 @@ def _eastmoney_etf_spot(code: str) -> Optional[Tuple[float, pd.Timestamp]]:
 
 
 def latest_history(sina: str, eastmoney: str = "") -> Tuple[float, pd.Timestamp]:
-    """Most recent close price from the historical series (Sina → Eastmoney)."""
-    df = fetch_one(sina, eastmoney)
+    """Most recent close price from the **qfq** historical series.
+
+    ⚠️ qfq 的**最后一根** = 当天真实收盘价 (前复权就是拿今天当锚), 所以
+    拿它当「最近收盘价」没问题。
+    """
+    df = fetch_qfq_history(sina, eastmoney)
     return float(df.iloc[-1]["close"]), df.index[-1]
 
 
