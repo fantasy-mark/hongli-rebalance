@@ -134,6 +134,21 @@ def _commission(value: float, fee_bps: float, min_commission: float) -> float:
     return max(min_commission, abs(value) * fee_bps / 10000.0)
 
 
+def _leg_cost(value: float, side: str, fee_bps: float, min_commission: float,
+              stamp_duty_bps: float) -> float:
+    """一条腿的总成本 = 佣金 (+ 卖出腿的印花税)。
+
+    ⚠️ **印花税只在卖出收, 且只对个股收**:
+        - ETF / 基金份额交易 **免印花税** (default 0);
+        - A 股卖出 **0.05%** (5bp, 2023-08-28 起由 0.1% 减半), 买入不收。
+      所以「用个股替换 ETF」不只是换个波动率, 还多一道卖出成本。
+    """
+    cost = _commission(value, fee_bps, min_commission)
+    if stamp_duty_bps and side == "sell":
+        cost += abs(value) * stamp_duty_bps / 10000.0
+    return cost
+
+
 def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
                  target_w: float | None = None,
                  threshold_pp: float = THRESHOLD_PP,
@@ -141,7 +156,8 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
                  rebalance_mode: str = "snap_all",
                  spread_pp: float | None = None,
                  fee_bps: float = DEFAULT_FEE_BPS,
-                 min_commission: float = DEFAULT_MIN_COMMISSION) -> dict:
+                 min_commission: float = DEFAULT_MIN_COMMISSION,
+                 stamp_duty_bps: float = 0.0) -> dict:
     """Full backtest of the equal-weight rebalance strategy on the given price DataFrame.
 
     Args:
@@ -161,6 +177,8 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
                    想让触发变少只能用 trigger_rule="spread"。
         fee_bps: 每边佣金费率 (万分之几)。默认 0 = 不计成本。
         min_commission: 单笔最低佣金 ¥。默认 0 = 不计成本。
+        stamp_duty_bps: 卖出印花税 (万分之几)。默认 0 = ETF 口径 (免印花税);
+                        **个股**卖出按 5bp (0.05%) 传。
 
     Returns:
         Dict with series, rebalances, final, cagr, max_dd, sharpe, n_rebalances,
@@ -231,7 +249,8 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
                          "value": abs(half - values_before[lo])},
                     ]
                     # 佣金从这一对里扣 (先按无佣金的 leg 算成交额, 再扣)
-                    fee = sum(_commission(l["value"], fee_bps, min_commission)
+                    fee = sum(_leg_cost(l["value"], l["side"], fee_bps,
+                                        min_commission, stamp_duty_bps)
                               for l in legs)
                     half = (pair_value - fee) / 2.0
                     shares[hi] = half / row[hi]
@@ -255,7 +274,8 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
                                      "value": abs(delta)})
                 # 佣金**从组合里扣** (ETF 免印花税): 拿 total − fee 建仓,
                 # 这样费用真实地拖慢复利, 而不是事后从净值里减。
-                fee = sum(_commission(l["value"], fee_bps, min_commission)
+                fee = sum(_leg_cost(l["value"], l["side"], fee_bps,
+                                    min_commission, stamp_duty_bps)
                           for l in legs)
                 investable = total - fee
                 for n in asset_names:
@@ -264,7 +284,8 @@ def run_backtest(prices: pd.DataFrame, initial_cash: float = CASH,
                 traded = sum(abs(total * target_w - values_before[n])
                              for n in asset_names)
             for l in legs:
-                l["fee"] = _commission(l["value"], fee_bps, min_commission)
+                l["fee"] = _leg_cost(l["value"], l["side"], fee_bps,
+                                     min_commission, stamp_duty_bps)
             fees += sum(l["fee"] for l in legs)
             turnover += traded
             rebalances.append({

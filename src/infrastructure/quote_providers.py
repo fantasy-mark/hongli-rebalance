@@ -25,6 +25,7 @@ Spot tier order (latest → most stale):
     | 函数                     | 口径     | 用途                             |
     |--------------------------|----------|----------------------------------|
     | `fetch_qfq_history`      | 前复权   | 收益率 / 图表 / 多年回测          |
+    | `fetch_stock_qfq_history`| 前复权   | **个股**日线 (ETF 那条路对个股无效)|
     | `fetch_traded_close`     | 不复权   | 账本成本基准 (用户当天**付的**价) |
     | `latest_for_code` (实时) | 不复权   | 今天的市值 (真实成交价)           |
 
@@ -135,6 +136,7 @@ def _tencent_qfq(sina: str) -> Optional[pd.DataFrame]:
 SOURCE_EASTMONEY_QFQ = "eastmoney_qfq"
 SOURCE_TENCENT_QFQ = "tencent_qfq"
 SOURCE_SINA_UNADJUSTED = "sina_unadjusted"
+SOURCE_EASTMONEY_STOCK_QFQ = "eastmoney_stock_qfq"
 
 
 def _fetch_qfq(sina: str, eastmoney: str) -> Tuple[Optional[pd.DataFrame], str]:
@@ -194,6 +196,45 @@ def fetch_qfq_history_ex(sina: str, eastmoney: str = "",
     if end:
         df = df[df.index <= pd.Timestamp(end)]
     return df, source
+
+
+def fetch_stock_qfq_history(code: str, start: str = "", end: str = "",
+                           ) -> Tuple[pd.DataFrame, str]:
+    """**个股**日线 (前复权) —— 东财 `stock_zh_a_hist`。
+
+    ⚠️ ETF 那条线 (`ak.fund_etf_hist_em`) 对个股无效, 个股要用这个接口。
+
+    口径与 ETF 的 qfq **完全一致** (东财前复权): 最新价 = 真实收盘价,
+    历史价扣掉之后的分红送转 ⇒ 收益率序列可以跟 ETF 直接拼在一张表里比。
+
+    Args:
+        code: 6 位代码 (如 "000887" = 中鼎股份)。
+        start / end: 可选 ISO 日期过滤 (含端点)。
+
+    Returns:
+        (DataFrame indexed by date with 'close' column, 源名)
+    """
+    try:
+        raw = ak.stock_zh_a_hist(
+            symbol=code, period="daily",
+            start_date="19900101", end_date="20991231", adjust="qfq",
+        )
+        if raw is not None and not raw.empty:
+            raw["日期"] = pd.to_datetime(raw["日期"])
+            raw["收盘"] = pd.to_numeric(raw["收盘"], errors="coerce")
+            df = (raw.set_index("日期").sort_index()[["收盘"]]
+                    .rename(columns={"收盘": "close"}))
+            df = df[~df["close"].isna()]
+            if start:
+                df = df[df.index >= pd.Timestamp(start)]
+            if end:
+                df = df[df.index <= pd.Timestamp(end)]
+            if not df.empty:
+                log.info("价格源: 东财个股 qfq (%s), %d 根", code, len(df))
+                return df, SOURCE_EASTMONEY_STOCK_QFQ
+    except Exception as ex:
+        log.error("Eastmoney stock %s failed: %s", code, ex)
+    raise RuntimeError(f"no price data for stock {code}")
 
 
 def fetch_traded_close(code: str, date: str) -> float:

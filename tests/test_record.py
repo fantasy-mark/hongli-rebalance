@@ -5198,6 +5198,52 @@ def test_the_default_parameters_still_cost_nothing():
     assert default["n_rebalances"] == explicit["n_rebalances"]
 
 
+def test_the_stamp_duty_is_charged_on_the_sell_legs_only():
+    # ETF 免印花税; 个股卖出 0.05% (5bp), 买入不收。
+    prices = _build_4asset_prices({
+        "A": [100.0] + [110.0] * 5,
+        "B": [100.0] + [110.0] * 5,
+        "C": [100.0] + [90.0] * 5,
+        "D": [100.0] + [90.0] * 5,
+    })
+    etf = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                 trigger_rule="spread", threshold_pp=3.0,
+                                 fee_bps=3.0, min_commission=5.0)
+    stock = three_pp.run_backtest(prices, initial_cash=300_000.0,
+                                  trigger_rule="spread", threshold_pp=3.0,
+                                  fee_bps=3.0, min_commission=5.0,
+                                  stamp_duty_bps=5.0)
+    assert stock["fees"] > etf["fees"]
+    # 建仓 4 条**买入**腿 => 印花税 0; 回正有 2 条卖腿 => 2 × 7497.75 × 5bp ≈ 7.5
+    sell_value = sum(l["value"] for l in stock["rebalances"][1]["legs"]
+                     if l["side"] == "sell")
+    assert stock["rebalances"][0]["fee"] == pytest_approx(90.0)     # 只有佣金
+    assert stock["rebalances"][1]["fee"] == pytest_approx(20.0 + sell_value * 5 / 10000)
+    assert stock["final"] < etf["final"]
+
+
+def test_the_stock_price_source_uses_the_forward_adjusted_convention():
+    import src.infrastructure.quote_providers as qp
+    seen = {}
+
+    def fake_stock(symbol, period, start_date, end_date, adjust):
+        seen["symbol"] = symbol
+        seen["adjust"] = adjust
+        idx = pd.to_datetime(["2026-01-05", "2026-01-06"])
+        return pd.DataFrame({"日期": idx, "收盘": [10.0, 11.0]})
+
+    orig = qp.ak.stock_zh_a_hist
+    try:
+        qp.ak.stock_zh_a_hist = fake_stock
+        df, source = qp.fetch_stock_qfq_history("000887")
+        assert seen["symbol"] == "000887", seen
+        assert seen["adjust"] == "qfq", seen
+        assert source == qp.SOURCE_EASTMONEY_STOCK_QFQ, source
+        assert list(df["close"]) == [10.0, 11.0], list(df["close"])
+    finally:
+        qp.ak.stock_zh_a_hist = orig
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]
