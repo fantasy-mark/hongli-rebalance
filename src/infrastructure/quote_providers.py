@@ -29,6 +29,29 @@ Spot tier order (latest → most stale):
     | `fetch_traded_close`     | 不复权   | 账本成本基准 (用户当天**付的**价) |
     | `latest_for_code` (实时) | 不复权   | 今天的市值 (真实成交价)           |
 
+⚠️⚠️ **「前复权」不等于「总收益指数」—— 拿它算收益率会虚高** (2026-11-04 实测):
+
+    东财的 qfq 其实是**加法减分红**:  qfq_t = 不复权价_t − (t 之后还没发的那几笔分红)。
+    拿它的**比值**当收益率 ⇒ 虚高。实测 515180 红利ETF 2020-11 → 2026-11:
+
+        东财 qfq         +77.63%
+        自算总收益       +59.40%
+        官方累计净值     +56.97%   ← 权威 (ak.fund_open_fund_info_em)
+        不复权 (分红全丢) +23.39%
+
+    ⇒ **分红标的用东财 qfq 算收益, 六年虚高 20.7pp**。
+    ⇒ 黄金/可转债/纳指那三只期间**不发分红**, 所以这个坑一直没暴露 ——
+      篮子里唯一暴露的是 515180 红利ETF。
+    ⇒ **要算收益率就用真总收益序列**:
+        `fetch_stock_total_return_history` (个股, 带股息税)
+        `fetch_etf_total_return_history`  (ETF, 个人分红免税)
+
+⚠️ **东财的个股 qfq 可能是坏的** —— 用之前先审计 (`audit_stock_qfq`):
+    实测 601088 中国神华: 非除息日里 qfq 日收益与不复权日收益差 >1pp 的有 538 天,
+    最大 38.67pp, 还出现过 **+48.66%** 的单日「涨幅」(主板涨停才 10%)。
+    600900 / 000887 / 601398 同一项检查是 0.10~0.21pp 均值, 干净。
+    ⇒ **别无条件信, 审计不过就剔除** (静默用垃圾数据比没有数据更糟)。
+
     为什么要分开: 多年回测里用不复权 = 把分红全丢了 —— 红利 ETF 六年累计
     分红让 CAGR 从 **11.95% (qfq)** 掉到 **10.03% (不复权)**。图表的
     「3pp 再平衡」曲线正是拿这条线画的, 之前 `fetch_one` 是「新浪优先」
@@ -137,6 +160,8 @@ SOURCE_EASTMONEY_QFQ = "eastmoney_qfq"
 SOURCE_TENCENT_QFQ = "tencent_qfq"
 SOURCE_SINA_UNADJUSTED = "sina_unadjusted"
 SOURCE_EASTMONEY_STOCK_QFQ = "eastmoney_stock_qfq"
+SOURCE_STOCK_TOTAL_RETURN = "stock_total_return_own"
+SOURCE_FUND_TOTAL_RETURN = "fund_total_return_own"
 
 
 def _fetch_qfq(sina: str, eastmoney: str) -> Tuple[Optional[pd.DataFrame], str]:
@@ -235,6 +260,251 @@ def fetch_stock_qfq_history(code: str, start: str = "", end: str = "",
     except Exception as ex:
         log.error("Eastmoney stock %s failed: %s", code, ex)
     raise RuntimeError(f"no price data for stock {code}")
+
+
+def _stock_dividend_events(code: str) -> pd.DataFrame:
+    """个股的分红送转事件 —— (除权除息日, 每股现金, 每股送转股比)。
+
+    `派息` 是「每 10 股派 X 元」; `送股` / `转增` 同为「每 10 股 X 股」。
+    只保留**已实施**的行 (预案/通过的行还没除权, 不能算进收益)。
+    """
+    raw = ak.stock_history_dividend_detail(symbol=code, indicator="分红")
+    raw = raw[raw["进度"] == "实施"].copy()
+    raw["除权除息日"] = pd.to_datetime(raw["除权除息日"])
+    raw = raw[raw["除权除息日"].notna()].sort_values("除权除息日")
+    out = pd.DataFrame({
+        "ex_date": raw["除权除息日"].values,
+        "cash": pd.to_numeric(raw["派息"], errors="coerce").fillna(0.0).values / 10.0,
+        "bonus": ((pd.to_numeric(raw["送股"], errors="coerce").fillna(0.0).values
+                   + pd.to_numeric(raw["转增"], errors="coerce").fillna(0.0).values)
+                  / 10.0),
+    })
+    return out.reset_index(drop=True)
+
+
+def fetch_stock_total_return_history(
+    code: str, start: str = "", end: str = "",
+    dividend_tax_bps: float = 0.0,
+) -> Tuple[pd.DataFrame, str]:
+    """**自算**个股的总收益序列 (前复权口径) —— 不复权价 × 分红再投。
+
+    ⚠️ **为什么不用东财的 qfq**: 东财 qfq **对某些股票是坏的**。
+      实测 601088 (中国神华): 非除息日里 qfq 日收益与不复权日收益差 >1pp 的
+      有 **243 天**, 最大差 **21.63pp**, 还出现过 **+48.66%** 的单日「涨幅」
+      —— 主板涨停才 10%, 只能是数据错。
+      同一项检查: 600900 / 000887 / 601398 是 0.10~0.21pp 均值, 干净。
+      ⇒ **东财 qfq 不能无条件信** —— 要么自算, 要么先审计 (见 `audit_stock_qfq`)。
+
+    算法 (标准总收益指数):
+        股数在每个除息日变化:
+            shares ← shares × (1 + bonus)          # 送转: 份额变多, 价值不变
+                    + shares × cash × (1−tax) / P_ex   # 现金分红按除息价再投
+        每日组合价值 = shares × P_t
+        最后按 qfq 惯例归一化: 末值 = 真实的末日收盘价 ⇒ 可与别的源直接拼接。
+
+    Args:
+        code: 6 位代码。
+        start / end: 可选 ISO 日期过滤 (含端点)。
+        dividend_tax_bps: 股息税 (万分之几)。个人投资者: 持有 ≤1 月 20%,
+            1 月~1 年 10%, >1 年 0%。**再平衡会卖旧买新 ⇒ 持股时钟重置**
+            ⇒ 长期落在大多落在 10% 档 ⇒ 传 100 就是 10%。
+
+    Returns:
+        (DataFrame indexed by date with 'close' column, 源名)
+    """
+    raw = ak.stock_zh_a_hist(symbol=code, period="daily",
+                             start_date="19900101", end_date="20991231", adjust="")
+    if raw is None or raw.empty:
+        raise RuntimeError(f"no unadjusted price data for stock {code}")
+    raw["日期"] = pd.to_datetime(raw["日期"])
+    raw["收盘"] = pd.to_numeric(raw["收盘"], errors="coerce")
+    px = (raw.set_index("日期").sort_index()["收盘"])
+    px = px[~px.isna()]
+    if px.empty:
+        raise RuntimeError(f"no unadjusted price data for stock {code}")
+
+    tax = float(dividend_tax_bps) / 10000.0
+    events = _stock_dividend_events(code)
+    shares = 1.0
+    factor = pd.Series(1.0, index=px.index)      # 累计份额倍数
+    for _i, ev in events.iterrows():
+        # 除息日若不是交易日 (停牌), 用**之后**第一个有成交的日子
+        pos = px.index.searchsorted(ev["ex_date"])
+        if pos >= len(px):
+            continue
+        ex_idx = px.index[pos]
+        p_ex = float(px.iloc[pos])
+        if p_ex <= 0:
+            continue
+        s = factor.iloc[pos - 1] if pos > 0 else 1.0
+        factor.iloc[pos:] = (s * (1.0 + float(ev["bonus"]))
+                             + s * float(ev["cash"]) * (1.0 - tax) / p_ex)
+    series = factor * px
+    # qfq 归一化: 末日 = 真实收盘价
+    series = series * (float(px.iloc[-1]) / float(series.iloc[-1]))
+    df = pd.DataFrame({"close": series})
+    df.index.name = "date"
+    if start:
+        df = df[df.index >= pd.Timestamp(start)]
+    if end:
+        df = df[df.index <= pd.Timestamp(end)]
+    log.info("价格源: 自算个股总收益 (%s, 股息税 %.2f%%), %d 根",
+             code, tax * 100, len(df))
+    return df, SOURCE_STOCK_TOTAL_RETURN
+
+
+def audit_stock_qfq(code: str, start: str = "", end: str = "",
+                    tol_pp: float = 0.5) -> dict:
+    """审计东财 qfq 序列**能不能信** —— 拿不复权日收益做对照。
+
+    原理: **除息日以外**, qfq 的日收益必须跟不复权日收益几乎一样
+    (前复权只是把过去的价按比例调低, 不改「每天涨多少」)。
+    所以拿分红送转表 (权威) 标出除息日, 其余日子逐一比对。
+
+    Returns:
+        {"ok": bool, "n_days": int, "mean_err_pp": float, "max_err_pp": float,
+         "n_bad_days": int, "worst_date": str, "worst_qfq_ret": float,
+         "worst_unadj_ret": float}
+    """
+    qdf, _ = fetch_stock_qfq_history(code, start=start, end=end)
+    raw = ak.stock_zh_a_hist(symbol=code, period="daily",
+                             start_date="19900101", end_date="20991231", adjust="")
+    raw["日期"] = pd.to_datetime(raw["日期"])
+    raw["收盘"] = pd.to_numeric(raw["收盘"], errors="coerce")
+    unadj = raw.set_index("日期").sort_index()["收盘"]
+    unadj = unadj[~unadj.isna()]
+
+    df = pd.DataFrame({"q": qdf["close"], "u": unadj}).dropna()
+    df["rq"] = df["q"].pct_change()
+    df["ru"] = df["u"].pct_change()
+    df = df.dropna()
+    if df.empty:
+        return {"ok": False, "n_days": 0, "mean_err_pp": 0.0, "max_err_pp": 0.0,
+                "n_bad_days": 0, "worst_date": "", "worst_qfq_ret": 0.0,
+                "worst_unadj_ret": 0.0}
+
+    # 除息日 (权威来源: 分红送转表)
+    ex_dates: set = set()
+    for _i, ev in _stock_dividend_events(code).iterrows():
+        pos = df.index.searchsorted(ev["ex_date"])
+        if pos < len(df):
+            ex_dates.add(df.index[pos])
+    normal = df.drop(index=[d for d in ex_dates if d in df.index])
+    err = (normal["rq"] - normal["ru"]).abs() * 100.0
+    if err.empty:
+        return {"ok": False, "n_days": len(df), "mean_err_pp": 0.0,
+                "max_err_pp": 0.0, "n_bad_days": 0, "worst_date": "",
+                "worst_qfq_ret": 0.0, "worst_unadj_ret": 0.0}
+    worst = err.idxmax()
+    return {
+        "ok": bool(err.max() <= tol_pp),
+        "n_days": len(df),
+        "n_exdiv_days": len(ex_dates),
+        "mean_err_pp": float(err.mean()),
+        "max_err_pp": float(err.max()),
+        "n_bad_days": int((err > tol_pp).sum()),
+        "worst_date": worst.date().isoformat() if hasattr(worst, "date") else str(worst),
+        "worst_qfq_ret": float(normal.loc[worst, "rq"]),
+        "worst_unadj_ret": float(normal.loc[worst, "ru"]),
+    }
+
+
+#: 全市场基金分红表缓存 —— `ak.fund_fh_em()` 要翻 ~74 页, 别重复打。
+_FUND_FH_CACHE: dict = {}
+
+
+def fund_dividends(code: str, start_year: int = 2010,
+                   end_year: int = 2100) -> pd.DataFrame:
+    """ETF / 基金的分红记录 —— (除息日期, 每股分红)。
+
+    `ak.fund_fh_em()` 一次拉**全市场全年份**的分红表 (~74 页, 十几秒),
+    比逐年翻页快得多 —— 只按年翻会把 91 个年度请求全打一遍。
+
+    ⚠️ **ETF 分红个人不收股息税** (基金层面已扣) —— 跟 A 股个股不一样。
+    """
+    if "all" not in _FUND_FH_CACHE:
+        try:
+            _FUND_FH_CACHE["all"] = ak.fund_fh_em()
+        except Exception as ex:                          # pragma: no cover
+            log.warning("fund_fh_em failed: %s", ex)
+            _FUND_FH_CACHE["all"] = pd.DataFrame()
+    df = _FUND_FH_CACHE["all"]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["ex_date", "cash"])
+    rows = []
+    for _i, r in df[df["基金代码"] == code].iterrows():
+        d = pd.to_datetime(r["除息日期"])
+        if pd.isna(d) or not (start_year <= d.year <= end_year):
+            continue
+        rows.append({"ex_date": d, "cash": float(r["分红"])})
+    out = pd.DataFrame(rows, columns=["ex_date", "cash"])
+    return out.sort_values("ex_date").reset_index(drop=True)
+
+
+def _total_return_series(px: pd.Series, events: pd.DataFrame,
+                          tax: float) -> pd.Series:
+    """总收益指数 = 不复权价 × 累计份额倍数 (分红按除息日收盘价再投)。"""
+    factor = pd.Series(1.0, index=px.index)
+    if events is not None and not events.empty:
+        for _i, ev in events.iterrows():
+            pos = px.index.searchsorted(ev["ex_date"])
+            if pos >= len(px):
+                continue
+            p_ex = float(px.iloc[pos])
+            if p_ex <= 0:
+                continue
+            s = factor.iloc[pos - 1] if pos > 0 else 1.0
+            bonus = float(ev.get("bonus", 0.0) or 0.0)
+            cash = float(ev.get("cash", 0.0) or 0.0)
+            factor.iloc[pos:] = (s * (1.0 + bonus)
+                                 + s * cash * (1.0 - tax) / p_ex)
+    return factor * px
+
+
+def fetch_etf_total_return_history(
+    code: str, sina: str = "", start: str = "", end: str = "",
+) -> Tuple[pd.DataFrame, str]:
+    """**自算**ETF 的总收益序列 (前复权口径) —— 不复权价 × 分红再投。
+
+    ⚠️ **为什么不能用东财的 qfq 当收益率序列**: 东财的「前复权」其实是
+      **加法减分红**口径:  qfq_t = 不复权价_t − (t 之后还没发的那几笔分红)。
+      拿它算收益会**虚高** —— 实测 515180 红利ETF 2020-11→2026-11:
+          东财 qfq        +77.63%
+          自算总收益      +59.40%
+          官方累计净值    +56.97%   ← 权威
+          不复权          +23.39%
+      ⇒ **分红标的用东财 qfq 算收益, 六年虚高 20.7pp**。
+      (黄金/可转债/纳指那三只期间不发分红, 所以这个坑一直没暴露。)
+
+    Returns:
+        (DataFrame indexed by date with 'close' column, 源名)
+    """
+    raw = ak.fund_etf_hist_sina(symbol=sina) if sina else None
+    if raw is None or raw.empty:
+        raise RuntimeError(f"no unadjusted ETF price data for {code}")
+    raw = raw.copy()
+    raw["date"] = pd.to_datetime(raw["date"])
+    raw["close"] = pd.to_numeric(raw["close"], errors="coerce")
+    px = raw.set_index("date").sort_index()["close"]
+    px = px[~px.isna()]
+    if px.empty:
+        raise RuntimeError(f"no unadjusted ETF price data for {code}")
+
+    divs = fund_dividends(code)
+    if not divs.empty:
+        divs["ex_date"] = pd.to_datetime(divs["ex_date"])
+        divs = divs[divs["ex_date"].isin(px.index)
+                    | (divs["ex_date"] <= px.index[-1])]
+    series = _total_return_series(px, divs, tax=0.0)   # ETF 分红个人免税
+    series = series * (float(px.iloc[-1]) / float(series.iloc[-1]))
+    df = pd.DataFrame({"close": series})
+    df.index.name = "date"
+    if start:
+        df = df[df.index >= pd.Timestamp(start)]
+    if end:
+        df = df[df.index <= pd.Timestamp(end)]
+    log.info("价格源: 自算 ETF 总收益 (%s), %d 根", code, len(df))
+    return df, SOURCE_FUND_TOTAL_RETURN
 
 
 def fetch_traded_close(code: str, date: str) -> float:

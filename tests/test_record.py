@@ -5244,6 +5244,106 @@ def test_the_stock_price_source_uses_the_forward_adjusted_convention():
         qp.ak.stock_zh_a_hist = orig
 
 
+def test_the_additive_qfq_convention_overstates_the_reinvested_total_return():
+    """东财 qfq 是**加法减分红**口径 ⇒ 拿它算收益率**虚高**。
+
+    这不是小数点误差: 515180 红利ETF 2020-11 → 2026-11
+        东财 qfq     +77.63%
+        真总收益     +59.40%
+        官方累计净值 +56.97%   ← 权威
+    ⇒ **分红标的必须用真总收益序列** (`fetch_stock_total_return_history` /
+      `fetch_etf_total_return_history`), 不能用东财 qfq 当收益率序列。
+    """
+    from src.infrastructure.quote_providers import _total_return_series
+    idx = pd.to_datetime(["2020-01-02", "2021-01-04", "2022-01-03", "2023-01-03"])
+    px = pd.Series([100.0, 90.0, 90.0, 90.0], index=idx)
+    events = pd.DataFrame({"ex_date": [idx[1], idx[2]], "cash": [10.0, 10.0]})
+
+    tr = _total_return_series(px, events, tax=0.0)
+    # 分红按除息价再投: 1 → 1+10/90 → 1.11111 + 1.11111*10/90 = 1.234568
+    tr_ret = tr.iloc[-1] / tr.iloc[0] - 1
+    assert abs(tr_ret - 0.11111) < 1e-4, tr_ret
+
+    # 加法 qfq: 不复权价 − 之后还没发的那几笔分红
+    qfq = px.copy()
+    qfq.iloc[0] = 100.0 - 20.0        # 之后还有 2 笔 × ¥10
+    qfq.iloc[1] = 90.0 - 10.0         # 之后还有 1 笔 × ¥10
+    qfq_ret = qfq.iloc[-1] / qfq.iloc[0] - 1
+    assert qfq_ret > tr_ret, (qfq_ret, tr_ret)
+    assert abs(qfq_ret - 0.125) < 1e-9, qfq_ret
+
+
+def test_the_dividend_tax_lowers_the_reinvested_total_return():
+    """个股股息税 (≤1月 20% / 1月~1年 10% / >1年 0%) 会侵蚀总收益。"""
+    from src.infrastructure.quote_providers import _total_return_series
+    idx = pd.to_datetime(["2020-01-02", "2021-01-04", "2022-01-03"])
+    px = pd.Series([100.0, 90.0, 120.0], index=idx)
+    events = pd.DataFrame({"ex_date": [idx[1]], "cash": [10.0]})
+    gross = _total_return_series(px, events, tax=0.0)
+    taxed = _total_return_series(px, events, tax=0.10)
+    assert taxed.iloc[-1] / taxed.iloc[0] < gross.iloc[-1] / gross.iloc[0]
+
+
+def test_the_stock_total_return_history_ends_at_the_real_close():
+    """自算总收益序列按 qfq 惯例归一化: 末日 = 真实的末日收盘价。"""
+    import src.infrastructure.quote_providers as qp
+    idx = pd.to_datetime(["2020-01-02", "2021-01-04", "2022-01-03"])
+
+    def fake_hist(symbol, period, start_date, end_date, adjust):
+        assert adjust == "", adjust
+        return pd.DataFrame({"日期": idx, "收盘": [100.0, 90.0, 120.0]})
+
+    def fake_events(code):
+        return pd.DataFrame({"ex_date": [idx[1]], "cash": [10.0], "bonus": [0.0]})
+
+    orig_hist, orig_ev = qp.ak.stock_zh_a_hist, qp._stock_dividend_events
+    try:
+        qp.ak.stock_zh_a_hist = fake_hist
+        qp._stock_dividend_events = fake_events
+        df, source = qp.fetch_stock_total_return_history("600900")
+        assert source == qp.SOURCE_STOCK_TOTAL_RETURN, source
+        s = df["close"]
+        assert abs(float(s.iloc[-1]) - 120.0) < 1e-9, list(s)
+        # 1 份 → 除息后 1 + 10/90 份 → × 120 = 133.333 ⇒ 总收益 +33.33%
+        assert abs(float(s.iloc[-1]) / float(s.iloc[0]) - 1.3333333) < 1e-4, list(s)
+    finally:
+        qp.ak.stock_zh_a_hist, qp._stock_dividend_events = orig_hist, orig_ev
+
+
+def test_the_qfq_audit_rejects_a_corrupt_series():
+    """东财个股 qfq **可能是坏的** —— 审计必须能挑出来 (否则会拿垃圾数据回测)。
+
+    实测 601088 中国神华: 非除息日里 qfq 日收益与不复权差 >1pp 的有 538 天,
+    最大 38.67pp, 还出现过 +48.66% 的单日「涨幅」(主板涨停才 10%)。
+    """
+    import src.infrastructure.quote_providers as qp
+    idx = pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"])
+
+    def fake_qfq(code, start="", end=""):
+        # 坏数据: 第三天凭空 +40%
+        return pd.DataFrame({"close": [10.0, 10.0, 14.0, 14.0]}, index=idx), "fake"
+
+    def fake_hist(symbol, period, start_date, end_date, adjust):
+        return pd.DataFrame({"日期": idx, "收盘": [10.0, 10.0, 10.0, 10.0]})
+
+    def fake_events(code):
+        return pd.DataFrame({"ex_date": [], "cash": [], "bonus": []})
+
+    orig_q, orig_h, orig_ev = (qp.fetch_stock_qfq_history,
+                               qp.ak.stock_zh_a_hist, qp._stock_dividend_events)
+    try:
+        qp.fetch_stock_qfq_history = fake_qfq
+        qp.ak.stock_zh_a_hist = fake_hist
+        qp._stock_dividend_events = fake_events
+        a = qp.audit_stock_qfq("601088")
+        assert a["ok"] is False, a
+        assert a["max_err_pp"] > 5.0, a
+    finally:
+        qp.fetch_stock_qfq_history = orig_q
+        qp.ak.stock_zh_a_hist = orig_h
+        qp._stock_dividend_events = orig_ev
+
+
 def test_main():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and k != "test_main" and callable(v)]
