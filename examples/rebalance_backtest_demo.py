@@ -17,6 +17,10 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import date
 
+# 设置中文字体
+plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+
 from src.application.rebalance.backtest_engine import (
     RebalanceConfig, 
     AssetConfig, 
@@ -98,8 +102,8 @@ def plot_equity_curve(result, title="再平衡策略收益曲线"):
     
     plt.tight_layout()
     plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
-    print("✅ 收益曲线已保存为 equity_curve.png")
-    plt.show()
+    print("[OK] 收益曲线已保存为 equity_curve.png")
+    # plt.show()  # 注释掉避免阻塞
 
 
 def plot_asset_weights(result):
@@ -135,8 +139,8 @@ def plot_asset_weights(result):
     
     plt.tight_layout()
     plt.savefig('asset_weights.png', dpi=150, bbox_inches='tight')
-    print("✅ 权重变化图已保存为 asset_weights.png")
-    plt.show()
+    print("[OK] 权重变化图已保存为 asset_weights.png")
+    # plt.show()
 
 
 def compare_strategies():
@@ -146,18 +150,32 @@ def compare_strategies():
     print("="*80)
     
     # 策略1: 等权重
-    print("\n【策略1】等权重再平衡 (各25%)")
+    print("\n" + "="*80)
+    print("【策略1】等权重再平衡 (各25%)")
+    print("="*80)
     config1 = create_equal_weight_config()
     backtester1 = RebalanceBacktester(config1)
     result1 = backtester1.run()
-    print(result1.summary())
+    print(f"累计收益: {float(result1.total_return):.2%}")
+    print(f"年化收益: {float(result1.annualized_return):.2%}")
+    print(f"夏普比率: {float(result1.sharpe_ratio):.2f}")
+    max_dd1, _, _ = result1.max_drawdown
+    print(f"最大回撤: {float(max_dd1):.2%}")
+    print(f"交易次数: {result1.total_trades}")
     
     # 策略2: 自定义权重
-    print("\n【策略2】自定义权重 (红利20%, 黄金30%, 可转债20%, 纳指30%)")
+    print("\n" + "="*80)
+    print("【策略2】自定义权重 (红利20%, 黄金30%, 可转债20%, 纳指30%)")
+    print("="*80)
     config2 = create_custom_weight_config()
     backtester2 = RebalanceBacktester(config2)
     result2 = backtester2.run()
-    print(result2.summary())
+    print(f"累计收益: {float(result2.total_return):.2%}")
+    print(f"年化收益: {float(result2.annualized_return):.2%}")
+    print(f"夏普比率: {float(result2.sharpe_ratio):.2f}")
+    max_dd2, _, _ = result2.max_drawdown
+    print(f"最大回撤: {float(max_dd2):.2%}")
+    print(f"交易次数: {result2.total_trades}")
     
     # 对比图表
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
@@ -222,8 +240,8 @@ def compare_strategies():
     
     plt.tight_layout()
     plt.savefig('strategy_comparison.png', dpi=150, bbox_inches='tight')
-    print("\n✅ 策略对比图已保存为 strategy_comparison.png")
-    plt.show()
+    print("\n[OK] 策略对比图已保存为 strategy_comparison.png")
+    # plt.show()
 
 
 def main():
@@ -238,8 +256,23 @@ def main():
     backtester = RebalanceBacktester(config)
     result = backtester.run()
     
-    # 打印摘要
-    print("\n" + result.summary())
+    # 打印摘要（避免Unicode问题）
+    print("\n" + "="*80)
+    print("回测结果摘要")
+    print("="*80)
+    print(f"回测期间: {result.snapshots[0].date} ~ {result.snapshots[-1].date}")
+    print(f"初始资金: {result.config.initial_capital:,.0f}")
+    print(f"最终市值: {result.snapshots[-1].total_value:,.0f}")
+    print(f"\n收益指标:")
+    print(f"  累计收益: {float(result.total_return):.2%}")
+    print(f"  年化收益: {float(result.annualized_return):.2%}")
+    print(f"  波动率:   {float(result.volatility):.2%}")
+    print(f"  夏普比率: {float(result.sharpe_ratio):.2f}")
+    max_dd, dd_start, dd_end = result.max_drawdown
+    print(f"  最大回撤: {float(max_dd):.2%} ({dd_start} ~ {dd_end})")
+    print(f"\n交易统计:")
+    print(f"  总交易次数: {result.total_trades}")
+    print(f"  总交易成本: {float(result.total_transaction_cost):,.2f}")
     
     # 绘制收益曲线
     plot_equity_curve(result, title="等权重再平衡策略收益曲线 (2020-2026)")

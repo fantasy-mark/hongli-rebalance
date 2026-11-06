@@ -311,12 +311,12 @@ class RebalanceBacktester:
             trades_today = []
             if i == 0:
                 # 第一天：初始建仓
-                trades_today = self._initial_build(prices, cash)
+                trades_today = self._initial_build(prices, cash, current_date)
             elif self._should_rebalance(asset_weights, prices, total_value):
                 # 触发再平衡
                 trades_today = self._rebalance(
                     current_shares, asset_values, prices, 
-                    total_value, cash
+                    total_value, cash, current_date
                 )
             
             # 执行交易
@@ -441,18 +441,33 @@ class RebalanceBacktester:
         first_code = list(price_data.keys())[0]
         df = price_data[first_code]
         
-        # 过滤日期范围 - 索引可能是date或Timestamp
+        # 过滤日期范围 - 索引是date对象
         trading_days = []
         for idx in df.index:
-            d = idx.date() if hasattr(idx, 'date') else idx
-            if start_date <= d <= end_date:
+            # 确保是date对象
+            d = idx if isinstance(idx, date) else (idx.date() if hasattr(idx, 'date') else None)
+            if d and start_date <= d <= end_date:
                 trading_days.append(d)
         
         # 确保所有资产在这些日期都有价格
         valid_days = []
         for day in trading_days:
-            day_ts = pd.Timestamp(day)
-            if all(day_ts in price_data[code].index for code in price_data.keys()):
+            # 检查所有资产是否都有这一天的数据
+            has_all = True
+            for code in price_data.keys():
+                df_check = price_data[code]
+                # 索引可能是date或Timestamp，需要兼容
+                found = False
+                for idx in df_check.index:
+                    idx_date = idx if isinstance(idx, date) else (idx.date() if hasattr(idx, 'date') else None)
+                    if idx_date == day:
+                        found = True
+                        break
+                if not found:
+                    has_all = False
+                    break
+            
+            if has_all:
                 valid_days.append(day)
         
         return sorted(valid_days)
@@ -461,12 +476,24 @@ class RebalanceBacktester:
                             price_data: Dict[str, pd.DataFrame]) -> Dict[str, Decimal]:
         """获取指定日期所有资产的收盘价"""
         prices = {}
-        target_ts = pd.Timestamp(target_date)
         
         for code, df in price_data.items():
-            if target_ts in df.index:
-                close = df.loc[target_ts, 'close']
-                prices[code] = Decimal(str(close))
+            # 在索引中查找target_date
+            found = False
+            for idx in df.index:
+                idx_date = idx if isinstance(idx, date) else (idx.date() if hasattr(idx, 'date') else None)
+                if idx_date == target_date:
+                    # 找到对应的行
+                    if isinstance(df.index, pd.DatetimeIndex):
+                        close = df.loc[idx, 'close']
+                    else:
+                        close = df.at[idx, 'close']
+                    prices[code] = Decimal(str(close))
+                    found = True
+                    break
+            
+            if not found:
+                logger.warning(f"未找到 {code} 在 {target_date} 的价格")
         
         return prices
     
@@ -494,7 +521,8 @@ class RebalanceBacktester:
         return False
     
     def _initial_build(self, prices: Dict[str, Decimal], 
-                       cash: Decimal) -> List[Trade]:
+                       cash: Decimal,
+                       build_date: date) -> List[Trade]:
         """初始建仓"""
         trades = []
         
@@ -513,7 +541,7 @@ class RebalanceBacktester:
             cost = actual_amount * self.config.transaction_cost_bps / Decimal("10000")
             
             trade = Trade(
-                date=pd.Timestamp(list(prices.keys())[0]).date(),
+                date=build_date,
                 asset_code=code,
                 action='buy',
                 shares=shares_int,
@@ -529,14 +557,14 @@ class RebalanceBacktester:
                    current_values: Dict[str, Decimal],
                    prices: Dict[str, Decimal],
                    total_value: Decimal,
-                   cash: Decimal) -> List[Trade]:
+                   cash: Decimal,
+                   rebalance_date: date) -> List[Trade]:
         """
         执行再平衡
         
         策略：卖出超配资产，买入低配资产，使权重回到目标
         """
         trades = []
-        rebalance_date = pd.Timestamp(list(prices.keys())[0]).date()
         
         # 计算目标市值
         target_values = {
