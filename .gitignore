@@ -37,6 +37,7 @@ ENV/
 .coverage
 htmlcov/
 .hypothesis/
+*.png
 
 # Data files
 data/*.json
