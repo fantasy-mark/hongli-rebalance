@@ -112,10 +112,8 @@ class ChartRenderer:
     
     @staticmethod
     def _add_annotation(ax, series: ChartSeries, annotation: Annotation):
-        """添加标注"""
-        # 计算标注位置（使用数据坐标）
-        x_idx = int(annotation.x_position * (len(series.dates) - 1))
-        y_value = float(series.values[x_idx])
+        """添加标注 - ASSET使用数据坐标贴在曲线末端右侧，其他使用轴坐标"""
+        import pandas as pd
         
         # 创建文本框样式
         bbox_props = {
@@ -124,17 +122,47 @@ class ChartRenderer:
             'alpha': annotation.bbox_alpha,
         }
         
-        ax.text(
-            series.dates[x_idx],
-            y_value,
-            annotation.text,
-            transform=ax.transData,
-            fontsize=annotation.fontsize,
-            fontweight=annotation.fontweight,
-            verticalalignment='bottom',
-            horizontalalignment='left',
-            bbox=bbox_props,
-        )
+        if series.role == SeriesRole.ASSET:
+            # 资产标注：使用数据坐标，贴在曲线最后一个点的右侧
+            # x_position 表示相对于最后两点间距的偏移比例
+            last_date = series.dates[-1]
+            last_value = float(series.values[-1])
+            
+            # 计算日期偏移（取相邻两点间距的固定比例作为向右偏移量）
+            if len(series.dates) >= 2:
+                date_range = (series.dates[-1] - series.dates[-2]).days
+                offset_days = int(date_range * annotation.x_position)
+                annot_x = last_date + pd.Timedelta(days=offset_days)
+            else:
+                annot_x = last_date
+            
+            ax.text(
+                annot_x,
+                last_value,
+                annotation.text,
+                transform=ax.transData,
+                fontsize=annotation.fontsize,
+                fontweight=annotation.fontweight,
+                verticalalignment='center',
+                horizontalalignment='left',
+                bbox=bbox_props,
+            )
+        else:
+            # 组合/基准标注：使用轴坐标
+            h_align = 'left' if annotation.x_position < 0.5 else 'right'
+            v_align = 'bottom' if annotation.y_position < 0.5 else 'top'
+            
+            ax.text(
+                annotation.x_position,
+                annotation.y_position,
+                annotation.text,
+                transform=ax.transAxes,
+                fontsize=annotation.fontsize,
+                fontweight=annotation.fontweight,
+                verticalalignment=v_align,
+                horizontalalignment=h_align,
+                bbox=bbox_props,
+            )
 
 
 class ChartFactory:
@@ -155,6 +183,7 @@ class ChartFactory:
         show_annotations: bool = True,
         annualized_return: Optional[Decimal] = None,
         max_drawdown: Optional[Decimal] = None,
+        asset_weights: Optional[Dict[str, Decimal]] = None,  # 各资产最新权重
     ) -> ChartConfig:
         """
         创建收益曲线对比图配置
@@ -175,6 +204,7 @@ class ChartFactory:
             show_annotations: 是否显示收益率标注
             annualized_return: 年化收益率（可选）
             max_drawdown: 最大回撤（可选，负值）
+            asset_weights: 各资产最新权重 {asset_code: weight}（可选）
             
         Returns:
             图表配置
@@ -185,6 +215,43 @@ class ChartFactory:
             ylabel="归一化市值",
         )
         
+        # 左侧添加资产权重标注（包含年化收益和最大回撤）
+        if asset_weights:
+            weight_lines = ["当前持仓比例:"]
+            for asset_code, weight in asset_weights.items():
+                # 从asset_data中获取资产名称
+                asset_name = asset_data.get(asset_code, {}).get('name', asset_code)
+                weight_lines.append(f"  {asset_name}: {float(weight):.1%}")
+            
+            # 添加年化收益和最大回撤到左侧
+            if annualized_return is not None:
+                weight_lines.append("")
+                weight_lines.append(f"年化收益: {float(annualized_return):.2%}")
+            if max_drawdown is not None:
+                weight_lines.append(f"最大回撤: {float(max_drawdown):.2%}")
+            
+            weight_text = "\n".join(weight_lines)
+            
+            # 创建一个虚拟系列来承载标注（不绘制曲线）
+            weight_series = ChartSeries(
+                name="_weight_annotation",
+                role=SeriesRole.BENCHMARK,
+                dates=portfolio_dates[:1],  # 只需要一个日期
+                values=[Decimal("1")],
+                style=ChartStyle(color="white", line_width=0.01, alpha=0.001),  # 极细几乎透明线，实际不可见
+                annotation=Annotation(
+                    text=weight_text,
+                    x_position=-0.02,  # 轴坐标：左边缘外2%
+                    y_position=0.50,   # 轴坐标：垂直居中
+                    fontsize=9,
+                    fontweight="normal",
+                    bbox_style="round,pad=0.3",
+                    bbox_facecolor="lightyellow",
+                    bbox_alpha=0.9,
+                ),
+            )
+            config.add_series(weight_series)
+        
         # 添加组合曲线（实线）
         portfolio_series = ChartSeries(
             name="组合",
@@ -194,30 +261,23 @@ class ChartFactory:
             style=ChartStyle.for_portfolio(),
         )
         
-        # 添加标注 - 包含累计收益、年化收益、最大回撤
-        # 移到右侧，避免遮挡曲线
+        # 添加标注 - 组合曲线标注贴在末端右侧（与资产标注规则一致）
         if show_annotations and portfolio_values:
             current_return = portfolio_values[-1] - Decimal("1")
             
-            # 构建多行标注文本
-            annotation_lines = [f"累计收益: {float(current_return):.2%}"]
-            if annualized_return is not None:
-                annotation_lines.append(f"年化收益: {float(annualized_return):.2%}")
-            if max_drawdown is not None:
-                annotation_lines.append(f"最大回撤: {float(max_drawdown):.2%}")
-            
-            annotation_text = "\n".join(annotation_lines)
+            # 只保留百分比数值，不带前缀
+            annotation_text = f"{float(current_return):.2%}"
             
             portfolio_series = ChartSeries(
                 name="组合",
-                role=SeriesRole.PORTFOLIO,
+                role=SeriesRole.ASSET,  # 改为ASSET角色，使用数据坐标渲染
                 dates=portfolio_dates,
                 values=portfolio_values,
                 style=ChartStyle.for_portfolio(),
                 annotation=Annotation(
                     text=annotation_text,
-                    x_position=0.98,  # 右侧（数据坐标比例）
-                    y_position=0.98,  # 顶部
+                    x_position=0.5,  # 向右偏移半个日期间隔
+                    y_position=0,    # Y值由渲染器自动取最后一个数据点
                     fontsize=10,
                     fontweight="bold",
                 ),
@@ -248,7 +308,7 @@ class ChartFactory:
                 style=ChartStyle.for_asset(asset_index),
             )
             
-            # 添加收益率标注
+            # 添加收益率标注（贴在曲线末端右侧）
             if show_annotations and asset_values_normalized:
                 asset_return = asset_values_normalized[-1] - Decimal("1")
                 asset_series = ChartSeries(
@@ -259,8 +319,8 @@ class ChartFactory:
                     style=ChartStyle.for_asset(asset_index),
                     annotation=Annotation(
                         text=f"{float(asset_return):.2%}",
-                        x_position=0.98,
-                        y_position=0.02 + asset_index * 0.08,
+                        x_position=0.5,  # 向右偏移半个日期间隔
+                        y_position=0,    # Y值由渲染器自动取最后一个数据点
                         fontsize=9,
                     ),
                 )
@@ -332,6 +392,18 @@ class ChartFactory:
             else:
                 max_drawdown = md
         
+        # 从回测结果提取最新资产权重（如果有）
+        asset_weights = None
+        if hasattr(backtest_result, 'daily_values'):
+            dv = backtest_result.daily_values
+            weight_cols = [c for c in dv.columns if c.endswith('_weight')]
+            if weight_cols:
+                last_row = dv.iloc[-1]
+                asset_weights = {}
+                for col in weight_cols:
+                    asset_code = col.replace('_weight', '')
+                    asset_weights[asset_code] = Decimal(str(last_row[col]))
+        
         return ChartFactory.create_equity_curve_config(
             portfolio_dates=portfolio_dates,
             portfolio_values=portfolio_values,
@@ -340,4 +412,5 @@ class ChartFactory:
             show_annotations=True,
             annualized_return=annualized_return,
             max_drawdown=max_drawdown,
+            asset_weights=asset_weights,
         )

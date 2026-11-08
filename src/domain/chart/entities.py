@@ -103,7 +103,7 @@ class Annotation:
     fontweight: str = "normal"
     bbox_style: Optional[str] = "round,pad=0.3"
     bbox_facecolor: str = "wheat"
-    bbox_alpha: float = 0.8
+    bbox_alpha: float = 0.5
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -246,19 +246,24 @@ class ChartConfig:
         if not self.series_list:
             errors.append("至少需要一条曲线")
         
-        # 检查所有曲线的日期范围是否一致
+        # 检查所有曲线的日期范围是否一致（排除BENCHMARK角色，如纯标注系列）
         if len(self.series_list) > 1:
-            first_dates = set(self.series_list[0].dates)
-            for series in self.series_list[1:]:
-                series_dates = set(series.dates)
-                if first_dates != series_dates:
-                    errors.append(f"曲线'{series.name}'的日期范围与其他曲线不一致")
-                    break
+            data_series = [s for s in self.series_list if s.role != SeriesRole.BENCHMARK]
+            if len(data_series) > 1:
+                first_dates = set(data_series[0].dates)
+                for series in data_series[1:]:
+                    series_dates = set(series.dates)
+                    if first_dates != series_dates:
+                        errors.append(f"曲线'{series.name}'的日期范围与其他曲线不一致")
+                        break
         
-        # 检查是否有组合曲线
+        # 检查是否有组合曲线（PORTFOLIO角色或名为"组合"的ASSET系列）
         portfolio_series = self.get_series_by_role(SeriesRole.PORTFOLIO)
         if not portfolio_series:
-            errors.append("缺少组合曲线")
+            # 也接受名为"组合"的ASSET系列
+            combo_series = [s for s in self.series_list if s.name == "组合"]
+            if not combo_series:
+                errors.append("缺少组合曲线")
         
         return errors
     
