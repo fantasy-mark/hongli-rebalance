@@ -290,7 +290,7 @@ class ChartFactory:
             y_axis_scale=y_axis_scale,
         )
         
-        # 左侧添加资产权重标注（包含年化收益和最大回撤）
+        # 左侧添加资产权重标注（包含年化收益、最大回撤和当前回撤）
         if asset_weights:
             weight_lines = ["当前持仓比例:"]
             for asset_code, weight in asset_weights.items():
@@ -304,6 +304,15 @@ class ChartFactory:
                 weight_lines.append(f"年化收益: {float(annualized_return):.2%}")
             if max_drawdown is not None:
                 weight_lines.append(f"最大回撤: {float(max_drawdown):.2%}")
+            
+            # 计算当前回撤（从最近峰值到当前的回撤百分比）
+            if portfolio_values and len(portfolio_values) > 0:
+                current_value = float(portfolio_values[-1])
+                peak_value = max(float(v) for v in portfolio_values)
+                if peak_value > 0:
+                    current_dd = (current_value - peak_value) / peak_value
+                    weight_lines.append("")
+                    weight_lines.append(f"当前回撤: {current_dd:.2%}")
             
             weight_text = "\n".join(weight_lines)
             
