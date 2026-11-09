@@ -17,7 +17,7 @@ plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
 from src.domain.chart.entities import (
-    ChartConfig, ChartSeries, SeriesRole, Annotation, ChartStyle
+    ChartConfig, ChartSeries, SeriesRole, Annotation, ChartStyle, YAxisScale
 )
 
 
@@ -63,15 +63,51 @@ class ChartRenderer:
         ax.set_ylabel(config.ylabel, fontsize=12)
         ax.set_title(config.title, fontsize=14, fontweight='bold')
         
+        # 设置Y轴刻度类型
+        if config.y_axis_scale == YAxisScale.LOGARITHMIC:
+            ax.set_yscale('log')
+            
+            # 使用自定义格式化器，直接显示小数（如 1.0, 2.0, 3.0）
+            from matplotlib.ticker import FuncFormatter, FixedLocator
+            import numpy as np
+            
+            def log_tick_formatter(value, pos):
+                """对数坐标Y轴标签格式化 - 显示为普通小数"""
+                return f"{value:.2f}"
+            
+            ax.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
+            
+            # 设置主刻度位置为整数（1, 2, 3, ...），避免科学计数法
+            # 根据数据范围动态生成刻度
+            all_values = []
+            for series in config.series_list:
+                if series.role != SeriesRole.BENCHMARK:
+                    all_values.extend([float(v) for v in series.values])
+            
+            if all_values:
+                min_val = min(all_values)
+                max_val = max(all_values)
+                # 生成从1到max_val+1的整数刻度
+                ticks = [float(i) for i in range(1, int(max_val) + 2)]
+                # 过滤在数据范围内的刻度
+                ticks = [t for t in ticks if min_val * 0.8 <= t <= max_val * 1.2]
+                if ticks:
+                    ax.yaxis.set_major_locator(FixedLocator(ticks))
+            
+            # 对数坐标下显示主次网格
+            if config.show_grid:
+                ax.grid(True, which='both', alpha=0.2)
+        else:
+            # 线性坐标
+            if config.show_grid:
+                ax.grid(True, alpha=0.3)
+        
         # 格式化x轴日期
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
         ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
         plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
         
-        # 网格和图例
-        if config.show_grid:
-            ax.grid(True, alpha=0.3)
-        
+        # 图例
         if config.show_legend:
             ax.legend(loc=config.legend_location)
         
@@ -94,7 +130,7 @@ class ChartRenderer:
     
     @staticmethod
     def _plot_series(ax, series: ChartSeries):
-        """绘制单条曲线"""
+        """绘制单条曲线及标记点"""
         ax.plot(
             series.dates,
             [float(v) for v in series.values],
@@ -105,6 +141,41 @@ class ChartRenderer:
             marker=series.style.marker,
             alpha=series.style.alpha,
         )
+        
+        # 绘制标记点（如再平衡触发日）
+        if series.marker_dates and len(series.marker_dates) > 0:
+            # 找到标记点对应的Y值
+            marker_values = []
+            marker_xs = []
+            date_to_idx = {d: i for i, d in enumerate(series.dates)}
+            
+            for md in series.marker_dates:
+                if md in date_to_idx:
+                    idx = date_to_idx[md]
+                    marker_xs.append(md)
+                    marker_values.append(float(series.values[idx]))
+            
+            if marker_xs:
+                # 默认红色圆点样式
+                m_color = 'red'
+                m_size = 50
+                m_marker = 'o'
+                
+                if series.marker_style:
+                    m_color = series.marker_style.get('color', 'red')
+                    m_size = series.marker_style.get('size', 50)
+                    m_marker = series.marker_style.get('marker', 'o')
+                
+                ax.scatter(
+                    marker_xs,
+                    marker_values,
+                    c=m_color,
+                    s=m_size,
+                    marker=m_marker,
+                    zorder=5,  # 确保在曲线上方
+                    edgecolors='white',
+                    linewidths=0.5,
+                )
         
         # 添加标注
         if series.annotation:
@@ -184,6 +255,8 @@ class ChartFactory:
         annualized_return: Optional[Decimal] = None,
         max_drawdown: Optional[Decimal] = None,
         asset_weights: Optional[Dict[str, Decimal]] = None,  # 各资产最新权重
+        y_axis_scale: YAxisScale = YAxisScale.LINEAR,  # Y轴刻度类型
+        rebalance_dates: Optional[List[date]] = None,  # 再平衡触发日期列表
     ) -> ChartConfig:
         """
         创建收益曲线对比图配置
@@ -205,6 +278,7 @@ class ChartFactory:
             annualized_return: 年化收益率（可选）
             max_drawdown: 最大回撤（可选，负值）
             asset_weights: 各资产最新权重 {asset_code: weight}（可选）
+            y_axis_scale: Y轴刻度类型（LINEAR或LOGARITHMIC）
             
         Returns:
             图表配置
@@ -213,6 +287,7 @@ class ChartFactory:
             title=title,
             xlabel="日期",
             ylabel="归一化市值",
+            y_axis_scale=y_axis_scale,
         )
         
         # 左侧添加资产权重标注（包含年化收益和最大回撤）
@@ -241,8 +316,8 @@ class ChartFactory:
                 style=ChartStyle(color="white", line_width=0.01, alpha=0.001),  # 极细几乎透明线，实际不可见
                 annotation=Annotation(
                     text=weight_text,
-                    x_position=-0.02,  # 轴坐标：左边缘外2%
-                    y_position=0.50,   # 轴坐标：垂直居中
+                    x_position=0.01,
+                    y_position=0.82,
                     fontsize=9,
                     fontweight="normal",
                     bbox_style="round,pad=0.3",
@@ -252,7 +327,7 @@ class ChartFactory:
             )
             config.add_series(weight_series)
         
-        # 添加组合曲线（实线）
+        # 添加组合曲线（实线）+ 再平衡标记点
         portfolio_series = ChartSeries(
             name="组合",
             role=SeriesRole.PORTFOLIO,
@@ -274,6 +349,8 @@ class ChartFactory:
                 dates=portfolio_dates,
                 values=portfolio_values,
                 style=ChartStyle.for_portfolio(),
+                marker_dates=rebalance_dates,  # 再平衡触发日期
+                marker_style={'color': 'red', 'size': 20, 'marker': 'o'},  # 红色圆点
                 annotation=Annotation(
                     text=annotation_text,
                     x_position=0.5,  # 向右偏移半个日期间隔
@@ -335,6 +412,7 @@ class ChartFactory:
         backtest_result: Any,  # BacktestResult from rebalance engine
         asset_price_data: Dict[str, Dict[str, Any]],
         title: Optional[str] = None,
+        y_axis_scale: YAxisScale = YAxisScale.LINEAR,  # Y轴刻度类型
     ) -> ChartConfig:
         """
         从回测结果创建图表配置
@@ -343,6 +421,7 @@ class ChartFactory:
             backtest_result: 回测结果对象
             asset_price_data: 各资产价格数据
             title: 自定义标题
+            y_axis_scale: Y轴刻度类型（LINEAR或LOGARITHMIC）
             
         Returns:
             图表配置
@@ -404,6 +483,13 @@ class ChartFactory:
                     asset_code = col.replace('_weight', '')
                     asset_weights[asset_code] = Decimal(str(last_row[col]))
         
+        # 从回测结果提取再平衡触发日期（从交易记录中获取唯一日期）
+        rebalance_dates = None
+        if hasattr(backtest_result, 'all_trades') and backtest_result.all_trades:
+            # 去重并按日期排序
+            trade_dates = sorted(set(t.date for t in backtest_result.all_trades))
+            rebalance_dates = trade_dates
+        
         return ChartFactory.create_equity_curve_config(
             portfolio_dates=portfolio_dates,
             portfolio_values=portfolio_values,
@@ -413,4 +499,6 @@ class ChartFactory:
             annualized_return=annualized_return,
             max_drawdown=max_drawdown,
             asset_weights=asset_weights,
+            y_axis_scale=y_axis_scale,
+            rebalance_dates=rebalance_dates,
         )

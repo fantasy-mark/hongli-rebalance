@@ -27,6 +27,12 @@ class SeriesRole(Enum):
     BENCHMARK = "benchmark"  # 基准
 
 
+class YAxisScale(Enum):
+    """Y轴刻度类型"""
+    LINEAR = "linear"  # 线性刻度（默认）
+    LOGARITHMIC = "log"  # 对数刻度
+
+
 @dataclass(frozen=True)
 class ChartStyle:
     """
@@ -132,6 +138,8 @@ class ChartSeries:
     values: List[Decimal]  # 归一化值（起点=1）
     style: ChartStyle
     annotation: Optional[Annotation] = None
+    marker_dates: Optional[List[date]] = None  # 标记点日期列表（如再平衡触发日）
+    marker_style: Optional[Dict[str, Any]] = None  # 标记点样式 {color, size, marker}
     series_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     
     def __post_init__(self):
@@ -210,6 +218,7 @@ class ChartConfig:
     show_grid: bool = True
     show_legend: bool = True
     legend_location: str = "upper left"
+    y_axis_scale: YAxisScale = YAxisScale.LINEAR  # Y轴刻度类型
     config_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = field(default_factory=datetime.now)
     

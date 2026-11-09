@@ -123,12 +123,12 @@ def example_2_render_from_backtest():
     )
     from src.application.price.query_service import PriceQueryService
     
-    # 创建再平衡配置
+    # 创建再平衡配置（将可转债ETF改为511260）
     config = RebalanceConfig(
         assets=[
             AssetConfig(code="515180", name="红利ETF", target_weight=0.25),
             AssetConfig(code="159937", name="黄金ETF", target_weight=0.25),
-            AssetConfig(code="511380", name="可转债ETF", target_weight=0.25),
+            AssetConfig(code="511260", name="十年国债国泰", target_weight=0.25),
             AssetConfig(code="513300", name="纳指ETF", target_weight=0.25),
         ],
         threshold_pp=3,
@@ -163,10 +163,15 @@ def example_2_render_from_backtest():
     # 使用ChartFactory创建配置（索引已经是date对象）
     start_d = result.daily_values.index[0]
     end_d = result.daily_values.index[-1]
+    
+    # 导入YAxisScale枚举
+    from src.domain.chart.entities import YAxisScale
+    
     chart_config = ChartFactory.create_from_backtest_result(
         backtest_result=result,
         asset_price_data=asset_price_data,
         title=f"等权重再平衡策略收益曲线 ({start_d} ~ {end_d})",
+        y_axis_scale=YAxisScale.LOGARITHMIC,  # 使用对数坐标
     )
     
     print(f"[OK] 图表配置创建成功: {chart_config}")
