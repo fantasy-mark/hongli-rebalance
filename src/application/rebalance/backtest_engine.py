@@ -23,6 +23,25 @@ from src.application.price.query_service import PriceQueryService
 logger = logging.getLogger(__name__)
 
 
+def _round_to_lot_size(shares: Decimal, lot_size: int = 100) -> Decimal:
+    """
+    将股数向下取整到指定手数的整数倍
+    
+    Args:
+        shares: 原始股数
+        lot_size: 手数大小，默认100股
+        
+    Returns:
+        取整后的股数（lot_size的整数倍）
+    """
+    if shares <= 0:
+        return Decimal("0")
+    
+    # 向下取整到lot_size的倍数
+    lots = int(shares) // lot_size
+    return Decimal(str(lots * lot_size))
+
+
 @dataclass
 class AssetConfig:
     """资产配置"""
@@ -535,8 +554,8 @@ class RebalanceBacktester:
             target_amount = cash * asset.target_weight
             shares = target_amount / price
             
-            # 向下取整到整数股
-            shares_int = Decimal(str(int(shares)))
+            # 向下取整到100股的整数倍
+            shares_int = _round_to_lot_size(shares, lot_size=100)
             actual_amount = shares_int * price
             cost = actual_amount * self.config.transaction_cost_bps / Decimal("10000")
             
@@ -585,7 +604,8 @@ class RebalanceBacktester:
                 sell_amount = current_val - target_val
                 price = prices[code]
                 shares_to_sell = sell_amount / price
-                shares_int = Decimal(str(int(shares_to_sell)))
+                # 向下取整到100股的整数倍
+                shares_int = _round_to_lot_size(shares_to_sell, lot_size=100)
                 
                 if shares_int > 0:
                     actual_amount = shares_int * price
@@ -616,7 +636,8 @@ class RebalanceBacktester:
                 buy_amount = target_val - current_val
                 price = prices[code]
                 shares_to_buy = buy_amount / price
-                shares_int = Decimal(str(int(shares_to_buy)))
+                # 向下取整到100股的整数倍
+                shares_int = _round_to_lot_size(shares_to_buy, lot_size=100)
                 
                 if shares_int > 0:
                     actual_amount = shares_int * price
