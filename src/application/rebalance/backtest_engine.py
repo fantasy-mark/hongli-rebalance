@@ -300,9 +300,15 @@ class RebalanceBacktester:
     4. 考虑交易成本
     """
     
-    def __init__(self, config: RebalanceConfig):
+    def __init__(self, config: RebalanceConfig,
+                 price_service: Optional[PriceQueryService] = None):
         self.config = config
-        self.price_service = PriceQueryService()
+        # 可通过外部注入共享同一实例（复用缓存，避免重复拉取）
+        self.price_service = price_service or PriceQueryService()
+
+        # 日期->收盘价 索引缓存（避免逐日扫描 DataFrame）
+        self._close_index: Optional[Dict[str, Dict[date, Decimal]]] = None
+        self._close_index_source: Optional[int] = None
         self._price_cache: Dict[str, pd.DataFrame] = {}
     
     def run(self) -> BacktestResult:
@@ -312,6 +318,8 @@ class RebalanceBacktester:
         
         # 1. 加载所有资产的价格数据
         price_data = self._load_all_prices()
+        self._close_index = None
+        self._close_index_source = None
         
         # 2. 确定回测时间范围
         start_date, end_date = self._determine_date_range(price_data)
@@ -480,67 +488,67 @@ class RebalanceBacktester:
         
         return start_date, end_date
     
+    @staticmethod
+    def _index_dates_and_prices(price_data: Dict[str, pd.DataFrame]):
+        """
+        一次性建立日期索引，避免逐日逐资产扫描 DataFrame
+
+        Returns:
+            (calendars, closes)
+            calendars: code -> set[date]
+            closes:    code -> dict[date, Decimal]
+        """
+        calendars: Dict[str, set] = {}
+        closes: Dict[str, Dict[date, Decimal]] = {}
+
+        for code, df in price_data.items():
+            index_dates = pd.to_datetime(df.index).date
+            calendars[code] = set(index_dates)
+
+            close_series = df['close']
+            closes[code] = {
+                d: Decimal(str(v))
+                for d, v in zip(index_dates, close_series.tolist())
+            }
+
+        return calendars, closes
+
     def _get_trading_days(self, price_data: Dict[str, pd.DataFrame],
                           start_date: date, end_date: date) -> List[date]:
         """获取交易日列表（所有资产都有价格的日期）"""
-        # 取第一个资产的交易日历作为基准
+        if not price_data:
+            return []
+
+        calendars, _ = self._index_dates_and_prices(price_data)
+
+        # 取第一个资产的交易日历作为基准，并限定区间
         first_code = list(price_data.keys())[0]
-        df = price_data[first_code]
-        
-        # 过滤日期范围 - 索引是date对象
-        trading_days = []
-        for idx in df.index:
-            # 确保是date对象
-            d = idx if isinstance(idx, date) else (idx.date() if hasattr(idx, 'date') else None)
-            if d and start_date <= d <= end_date:
-                trading_days.append(d)
-        
-        # 确保所有资产在这些日期都有价格
-        valid_days = []
-        for day in trading_days:
-            # 检查所有资产是否都有这一天的数据
-            has_all = True
-            for code in price_data.keys():
-                df_check = price_data[code]
-                # 索引可能是date或Timestamp，需要兼容
-                found = False
-                for idx in df_check.index:
-                    idx_date = idx if isinstance(idx, date) else (idx.date() if hasattr(idx, 'date') else None)
-                    if idx_date == day:
-                        found = True
-                        break
-                if not found:
-                    has_all = False
-                    break
-            
-            if has_all:
-                valid_days.append(day)
-        
-        return sorted(valid_days)
+        base_days = sorted(
+            d for d in calendars[first_code] if start_date <= d <= end_date
+        )
+
+        # 其他资产必须同样具备该日数据（集合求交，O(1) 判定）
+        other_calendars = [calendars[c] for c in price_data.keys() if c != first_code]
+        if not other_calendars:
+            return base_days
+
+        return [d for d in base_days if all(d in cal for cal in other_calendars)]
     
-    def _get_prices_on_date(self, target_date: date, 
+    def _get_prices_on_date(self, target_date: date,
                             price_data: Dict[str, pd.DataFrame]) -> Dict[str, Decimal]:
-        """获取指定日期所有资产的收盘价"""
+        """获取指定日期所有资产的收盘价（使用缓存索引）"""
+        if self._close_index is None or self._close_index_source != id(price_data):
+            _, self._close_index = self._index_dates_and_prices(price_data)
+            self._close_index_source = id(price_data)
+
         prices = {}
-        
-        for code, df in price_data.items():
-            # 在索引中查找target_date
-            found = False
-            for idx in df.index:
-                idx_date = idx if isinstance(idx, date) else (idx.date() if hasattr(idx, 'date') else None)
-                if idx_date == target_date:
-                    # 找到对应的行
-                    if isinstance(df.index, pd.DatetimeIndex):
-                        close = df.loc[idx, 'close']
-                    else:
-                        close = df.at[idx, 'close']
-                    prices[code] = Decimal(str(close))
-                    found = True
-                    break
-            
-            if not found:
+        for code in price_data.keys():
+            close = self._close_index[code].get(target_date)
+            if close is None:
                 logger.warning(f"未找到 {code} 在 {target_date} 的价格")
-        
+                continue
+            prices[code] = close
+
         return prices
     
     def _should_rebalance(self, current_weights: Dict[str, Decimal],
