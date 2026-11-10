@@ -257,24 +257,51 @@ class TestPriceQueryService(unittest.TestCase):
     """测试价格查询服务（集成测试）"""
     
     def test_get_adjusted_prices(self):
-        """测试获取价格数据"""
+        """测试获取价格数据（只校验结构，不断言具体价位）"""
         service = PriceQueryService()
-        df = service.get_adjusted_prices("515180", start_date="2026-11-01")
-        
+        start = "2026-11-01"
+        df = service.get_adjusted_prices("515180", start_date=start)
+
         self.assertFalse(df.empty)
-        self.assertIn('close', df.columns)
-        # DataFrame中的值是float，需要转换后比较
-        self.assertAlmostEqual(float(df['close'].iloc[-1]), 1.762, places=3)
-    
+
+        # 结构：必要列齐全
+        for column in ('open', 'high', 'low', 'close', 'volume'):
+            self.assertIn(column, df.columns)
+
+        # 结构：索引有序且不重复
+        self.assertTrue(df.index.is_monotonic_increasing)
+        self.assertFalse(df.index.has_duplicates)
+
+        # 结构：请求区间生效
+        self.assertGreaterEqual(df.index.min(), date(2026, 11, 1))
+
+        # 数值合理性：价格为正、OHLC 自洽（不依赖具体行情）
+        self.assertTrue((df['close'] > 0).all())
+        self.assertTrue((df['low'] <= df['close']).all())
+        self.assertTrue((df['high'] >= df['close']).all())
+        self.assertTrue((df['volume'] >= 0).all())
+
     def test_get_latest_price(self):
-        """测试获取最新价格"""
+        """测试获取最新价格（与K线序列交叉校验，不硬编码价位）"""
         service = PriceQueryService()
         latest = service.get_latest_price("515180")
-        
+
         self.assertEqual(latest['code'], "515180")
-        self.assertEqual(latest['close'], Decimal("1.762"))
         self.assertIn('date', latest)
         self.assertIn('change_pct', latest)
+
+        # 数值合理性：价格为正、涨跌幅在合理区间
+        self.assertIsInstance(latest['close'], Decimal)
+        self.assertGreater(latest['close'], Decimal("0"))
+        self.assertIsInstance(latest['change_pct'], Decimal)
+        self.assertGreater(latest['change_pct'], Decimal("-1"))
+
+        # 一致性：最新价应与K线序列末行相同（避免硬编码价位而随行情失效）
+        df = service.get_adjusted_prices("515180",
+                                         start_date=str(latest['date']))
+        self.assertFalse(df.empty)
+        self.assertAlmostEqual(float(latest['close']),
+                               float(df['close'].iloc[-1]), places=6)
     
     def test_calculate_returns(self):
         """测试收益率计算"""
