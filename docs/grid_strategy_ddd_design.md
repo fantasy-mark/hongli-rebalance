@@ -409,6 +409,11 @@ repo.save(strategy)                            # 保存新的档位与持仓状�
 - `grid_strategy_comparison.png`：再平衡 vs 网格 **归一化净值**（起点=100，持仓隔离对比）
   —— 不绘制网格总市值等绝对金额曲线（两个子组合规模不同，绝对值对比无意义）
 - `GridChartRenderer.trigger_log(result)`：控制台触发日志
+  （资产代码 / 名称 / 触发日期 / 交易类型：开仓·加仓·止盈 / 轮次 / 档位 / 股数 / 价格 / 金额）
+  —— **同日同轮的止盈会聚合为一行**（整轮一次性清仓时每个批次各产生一笔卖出，
+  聚合后按加权均价与合计股数展示，避免刷屏）；
+  `aggregate_take_profit=False` 可查看逐笔明细
+- `GridChartRenderer.trigger_log(result)`：控制台触发日志
   （资产代码 / 名称 / 触发日期 / 交易类型：开仓·加仓·止盈 / 轮次 / 档位 / 价格 / 金额）
 
 ```python

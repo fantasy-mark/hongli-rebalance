@@ -403,38 +403,85 @@ class GridChartRenderer:
         return styles
 
     @staticmethod
-    def trigger_log(grid_result) -> str:
+    def _format_levels(levels) -> str:
+        """档位文本：连续区间用 1-5，否则用 1,3,5"""
+        levels = sorted(levels)
+        if not levels:
+            return "-"
+        if len(levels) == 1:
+            return str(levels[0])
+        if levels == list(range(levels[0], levels[-1] + 1)):
+            return f"{levels[0]}-{levels[-1]}"
+        return ",".join(str(x) for x in levels)
+
+    @staticmethod
+    def trigger_log(grid_result, aggregate_take_profit: bool = True) -> str:
         """
         生成网格触发日志
 
         展示每个触发网格的资产：代码、名称、触发日期、交易类型
         （开仓 / 加仓 / 止盈）
 
+        Args:
+            grid_result: 网格回测结果
+            aggregate_take_profit: 是否把"同日同轮"的多笔止盈聚合成一行
+                （整轮一次性清仓时，每个持仓批次各产生一笔卖出，
+                  聚合后按加权均价与合计股数展示，避免滚屏）
+
         Returns:
             可直接打印的文本
         """
         names = grid_result.config.asset_names
 
+        # ---- 先按 (日期, 资产, 轮次) 归并止盈 ----
+        tp_groups: Dict[Tuple, List] = {}
+        if aggregate_take_profit:
+            for trade in grid_result.trades:
+                if trade.trade_type == GridTradeType.TAKE_PROFIT:
+                    key = (trade.date, trade.asset_code, trade.round_no)
+                    tp_groups.setdefault(key, []).append(trade)
+
         lines = [
             "网格触发日志（资产代码 / 名称 / 触发日期 / 交易类型）",
-            "=" * 92,
+            "=" * 104,
             f"{'触发日期':<12}| {'资产代码':<9}| {'资产名称':<10}| {'交易类型':<8}| "
-            f"{'轮次':<5}| {'档位':<5}| {'价格':>9}| {'金额':>11}",
-            "-" * 92,
+            f"{'轮次':<5}| {'档位':<7}| {'股数':>8}| {'价格':>9}| {'金额':>11}",
+            "-" * 104,
         ]
 
+        emitted = set()
         for trade in grid_result.trades:
+            level_txt = str(trade.level or '-')
+            price = trade.price
+            shares = trade.shares
+            amount = trade.amount
+
+            # 止盈聚合
+            if aggregate_take_profit and trade.trade_type == GridTradeType.TAKE_PROFIT:
+                key = (trade.date, trade.asset_code, trade.round_no)
+                if key in emitted:
+                    continue
+                emitted.add(key)
+
+                group = tp_groups[key]
+                level_txt = GridChartRenderer._format_levels(
+                    [g.level for g in group if g.level is not None]
+                )
+                shares = sum((g.shares for g in group), Decimal("0"))
+                amount = sum((g.amount for g in group), Decimal("0"))
+                price = amount / shares if shares > 0 else Decimal("0")
+
             lines.append(
                 f"{str(trade.date):<12}| {trade.asset_code:<9}| "
                 f"{names.get(trade.asset_code, trade.asset_code):<10}| "
                 f"{trade.type_label:<8}| {trade.round_no:<5}| "
-                f"{str(trade.level or '-'):<5}| "
-                f"{float(trade.price):>9.4f}| {float(trade.amount):>11,.0f}"
+                f"{level_txt:<7}| {float(shares):>8,.0f}| "
+                f"{float(price):>9.4f}| {float(amount):>11,.0f}"
             )
 
         # ---- 网格轮次概览 ----
         if grid_result.round_events:
-            lines.append("-" * 92)
+            lines.append("-" * 104)
             lines.append("网格轮次（从跌破前N日最低价，到本轮完全止盈）:")
             for event in grid_result.round_events:
                 name = names.get(event.asset_code, event.asset_code)

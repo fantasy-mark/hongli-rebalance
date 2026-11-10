@@ -988,6 +988,80 @@ class TestOneShotTakeProfit(unittest.TestCase):
         self.assertFalse(hasattr(GridTradeType, 'REDUCE'))
 
 
+class TestTriggerLogAggregation(unittest.TestCase):
+    """触发日志：同日同轮止盈聚合"""
+
+    def _run(self):
+        # 先横盘，再持续下跌触发多档，最后反弹一次性止盈
+        closes = ([1.00] * 30
+                  + [0.98, 0.96, 0.94, 0.92, 0.90, 0.88]
+                  + [0.95, 1.00, 1.02])
+        df = make_price_df(closes, lows=[c - 0.01 for c in closes],
+                           highs=[c + 0.01 for c in closes])
+        provider = FakePriceProvider({"515180": df})
+
+        config = GridConfig(
+            assets=[GridAssetConfig(code="515180", name="红利ETF")],
+            trigger=GridTrigger(
+                lookback_days=10, atr_period=5, step_ratio=Decimal("0.5"),
+                buy_amount=Decimal("10000"), lot_size=100,
+                price_basis=GridPriceBasis.LOW, take_profit_ratio=Decimal("1"),
+            ),
+            initial_capital=Decimal("100000"),
+        )
+        return GridBacktester(config, price_provider=provider).run()
+
+    def test_aggregates_same_day_take_profit(self):
+        """同日同轮的多笔止盈聚合为一行"""
+        from src.application.grid.grid_chart import GridChartRenderer
+
+        result = self._run()
+        sells = [t for t in result.trades if t.side == 'sell']
+        self.assertGreater(len(sells), 1, "需要多笔止盈才能验证聚合")
+
+        aggregated = GridChartRenderer.trigger_log(result)
+        raw = GridChartRenderer.trigger_log(result, aggregate_take_profit=False)
+
+        tp_rows = [l for l in aggregated.split('\n') if '| 止盈' in l]
+        groups = {(t.date, t.asset_code, t.round_no) for t in sells}
+
+        self.assertEqual(len(tp_rows), len(groups))
+        self.assertLess(len(tp_rows), len(sells))            # 确实折叠了
+        self.assertEqual(
+            len([l for l in raw.split('\n') if '| 止盈' in l]), len(sells)
+        )
+
+    def test_aggregated_shares_and_amount(self):
+        """聚合行的股数/价格等于明细之和与加权均价"""
+        from src.application.grid.grid_chart import GridChartRenderer
+
+        result = self._run()
+        sells = [t for t in result.trades if t.side == 'sell']
+        key = (sells[0].date, sells[0].asset_code, sells[0].round_no)
+        group = [t for t in sells
+                 if (t.date, t.asset_code, t.round_no) == key]
+
+        total_shares = sum(t.shares for t in group)
+        total_amount = sum(t.amount for t in group)
+        avg_price = total_amount / total_shares
+
+        log = GridChartRenderer.trigger_log(result)
+        row = next(l for l in log.split('\n')
+                   if '| 止盈' in l and str(key[0]) in l)
+
+        self.assertIn(f"{float(total_shares):,.0f}", row)
+        self.assertIn(f"{float(avg_price):.4f}", row)
+
+    def test_format_levels(self):
+        """档位文本：连续区间 / 离散枚举 / 单档 / 空"""
+        from src.application.grid.grid_chart import GridChartRenderer
+
+        self.assertEqual(GridChartRenderer._format_levels([1, 2, 3, 4, 5]), "1-5")
+        self.assertEqual(GridChartRenderer._format_levels([1, 3, 5]), "1,3,5")
+        self.assertEqual(GridChartRenderer._format_levels([2]), "2")
+        self.assertEqual(GridChartRenderer._format_levels([]), "-")
+
+
 class TestGridPnlAccounting(unittest.TestCase):
     """网格盈亏核算"""
 
