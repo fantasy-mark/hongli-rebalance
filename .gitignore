@@ -40,6 +40,7 @@ htmlcov/
 *.png
 
 # Data files
+data/
 data/*.json
 data/*.csv
 *.xlsx

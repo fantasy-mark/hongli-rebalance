@@ -85,7 +85,7 @@ def _fetch_etf_adjusted_kline(
     if adjust_type == "":
         # 不复权
         try:
-            df = _eastmoney_etf_hist(code, adjust="")
+            df = _eastmoney_etf_hist(code, adjust="", start_date=start_date, end_date=end_date)
             df = _filter_by_date(df, start_date, end_date)
             if not df.empty:
                 df["source"] = SOURCE_EASTMONEY
@@ -95,7 +95,7 @@ def _fetch_etf_adjusted_kline(
     
     # 默认使用后复权 (hfq)
     try:
-        df = _eastmoney_etf_hist(code, adjust="hfq")
+        df = _eastmoney_etf_hist(code, adjust="hfq", start_date=start_date, end_date=end_date)
         df = _filter_by_date(df, start_date, end_date)
         if not df.empty:
             logger.info(f"ETF {code} 从东财获取后复权(hfq)数据成功，共 {len(df)} 条记录")
@@ -131,7 +131,7 @@ def _fetch_stock_adjusted_kline(
     if adjust_type == "":
         # 不复权
         try:
-            df = _eastmoney_stock_hist(code, adjust="")
+            df = _eastmoney_stock_hist(code, adjust="", start_date=start_date, end_date=end_date)
             df = _filter_by_date(df, start_date, end_date)
             if not df.empty:
                 df["source"] = SOURCE_EASTMONEY
@@ -141,7 +141,7 @@ def _fetch_stock_adjusted_kline(
     
     # 尝试东财qfw + 质量审计
     try:
-        df = _eastmoney_stock_hist(code, adjust="qfq")
+        df = _eastmoney_stock_hist(code, adjust="qfq", start_date=start_date, end_date=end_date)
         
         # 质量审计
         audit_result = _audit_stock_qfq_quality(df, code)
@@ -404,7 +404,17 @@ def _apply_dividend_reinvestment(
     return df
 
 
-def _eastmoney_etf_hist(code: str, adjust: str = "hfq") -> pd.DataFrame:
+def _to_akshare_date(value: Optional[str]) -> Optional[str]:
+    """'YYYY-MM-DD' -> 'YYYYMMDD'（akshare 要求的格式）"""
+    if not value:
+        return None
+    return pd.to_datetime(value).strftime("%Y%m%d")
+
+
+def _eastmoney_etf_hist(code: str,
+                        adjust: str = "hfq",
+                        start_date: Optional[str] = None,
+                        end_date: Optional[str] = None) -> pd.DataFrame:
     """
     从东方财富获取ETF历史K线
     
@@ -415,7 +425,17 @@ def _eastmoney_etf_hist(code: str, adjust: str = "hfq") -> pd.DataFrame:
     """
     import akshare as ak
     
-    df = ak.fund_etf_hist_em(symbol=code, period="daily", adjust=adjust)
+    # 仅当明确给区间时才下推，避免改变原有全历史行为
+    ak_start = _to_akshare_date(start_date)
+    ak_end = _to_akshare_date(end_date)
+    
+    kwargs = {"symbol": code, "period": "daily", "adjust": adjust}
+    if ak_start:
+        kwargs["start_date"] = ak_start
+    if ak_end:
+        kwargs["end_date"] = ak_end
+    
+    df = ak.fund_etf_hist_em(**kwargs)
     df = df.rename(columns={
         "日期": "date",
         "开盘": "open",
@@ -435,11 +455,23 @@ def _eastmoney_etf_hist(code: str, adjust: str = "hfq") -> pd.DataFrame:
     return df[["open", "high", "low", "close", "volume", "amount"]]
 
 
-def _eastmoney_stock_hist(code: str, adjust: str = "qfq") -> pd.DataFrame:
+def _eastmoney_stock_hist(code: str,
+                          adjust: str = "qfq",
+                          start_date: Optional[str] = None,
+                          end_date: Optional[str] = None) -> pd.DataFrame:
     """从东方财富获取个股历史K线"""
     import akshare as ak
     
-    df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust=adjust)
+    ak_start = _to_akshare_date(start_date)
+    ak_end = _to_akshare_date(end_date)
+    
+    kwargs = {"symbol": code, "period": "daily", "adjust": adjust}
+    if ak_start:
+        kwargs["start_date"] = ak_start
+    if ak_end:
+        kwargs["end_date"] = ak_end
+    
+    df = ak.stock_zh_a_hist(**kwargs)
     df = df.rename(columns={
         "日期": "date",
         "开盘": "open",

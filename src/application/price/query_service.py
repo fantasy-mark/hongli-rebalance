@@ -1,10 +1,13 @@
 """
 价格查询应用服务
 
-编排领域对象完成用例
+编排领域对象完成用例:
+- 缓存命中则只做增量同步（仅拉取缺失的尾部区间）
+- 用领域服务 PriceCachePlanner 决定"全量 / 增量 / 不需要"
+- 用领域服务 PriceSeriesMerger 做接缝校验后合并
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, List, Dict
 import logging
@@ -12,9 +15,13 @@ import logging
 import pandas as pd
 
 from src.domain.price.entities import AdjustedPriceSeries, AssetCode, DataSource
-from src.domain.price.value_objects import ReturnMetrics, DateRange
-from src.domain.price.services import PriceCalculator
-from src.infrastructure.price.repositories import PriceSeriesRepository, InMemoryPriceRepository
+from src.domain.price.value_objects import CachePolicy, RefreshMode, ReturnMetrics, DateRange
+from src.domain.price.services import (
+    PriceCalculator,
+    PriceCachePlanner,
+    PriceSeriesMerger,
+)
+from src.infrastructure.price.repositories import PriceSeriesRepository, JsonFilePriceRepository
 from src.infrastructure.adjusted_price_provider import fetch_adjusted_kline
 
 logger = logging.getLogger(__name__)
@@ -30,11 +37,30 @@ class PriceQueryService:
     - 处理缓存和数据源降级
     """
     
-    def __init__(self, 
+    def __init__(self,
                  repository: Optional[PriceSeriesRepository] = None,
-                 calculator: Optional[PriceCalculator] = None):
-        self.repository = repository or InMemoryPriceRepository()
+                 calculator: Optional[PriceCalculator] = None,
+                 cache_policy: Optional[CachePolicy] = None,
+                 persist_cache: bool = True):
+        """
+        Args:
+            repository: 价格仓储，默认使用 JSON 文件仓储（跨进程复用缓存）
+            calculator: 价格计算器
+            cache_policy: 缓存策略（重叠校验天数、接缝容差、最小刷新间隔）
+            persist_cache: 是否使用持久化仓储；False 时退回纯内存缓存
+        """
+        if repository is not None:
+            self.repository = repository
+        elif persist_cache:
+            self.repository = JsonFilePriceRepository()
+        else:
+            from src.infrastructure.price.repositories import InMemoryPriceRepository
+            self.repository = InMemoryPriceRepository()
+
         self.calculator = calculator or PriceCalculator()
+        self.cache_policy = cache_policy or CachePolicy()
+        # 每只资产上次访问数据源的时刻（用于最小刷新间隔）
+        self._last_checked_at: Dict[str, datetime] = {}
     
     def get_adjusted_prices(self,
                             code: str,
@@ -54,54 +80,15 @@ class PriceQueryService:
             DataFrame with columns: open, high, low, close, volume, amount, source
         """
         asset_code = AssetCode.from_string(code)
-        
-        # 尝试从缓存获取
-        if use_cache:
-            cached = self.repository.find_by_code(asset_code)
-            if cached and cached.count > 0:
-                logger.info(f"从缓存获取 {code} 的价格数据 ({cached.count}条)")
-                df = cached.to_dataframe()
-                
-                # 过滤日期范围（索引可能是 date 对象，统一转为 DatetimeIndex 比较）
-                if start_date or end_date:
-                    index = pd.to_datetime(df.index)
-                    mask = pd.Series(True, index=df.index)
-                    if start_date:
-                        mask &= index >= pd.to_datetime(start_date)
-                    if end_date:
-                        mask &= index <= pd.to_datetime(end_date)
-                    df = df[mask]
-                
-                return df
-        
-        # 从数据源获取
-        logger.info(f"从数据源获取 {code} 的价格数据")
-        try:
-            df_raw = fetch_adjusted_kline(code, start_date=start_date, end_date=end_date)
-            
-            if df_raw.empty:
-                raise ValueError(f"无法获取 {code} 的价格数据")
-            
-            # 转换为领域对象并缓存
-            series = AdjustedPriceSeries.from_dataframe(
-                asset_code=asset_code,
-                df=df_raw.drop(columns=['source'], errors='ignore'),
-                source=self._infer_source(df_raw),
-            )
-            
-            # 验证数据
-            errors = series.validate()
-            if errors:
-                logger.warning(f"{code} 数据验证警告: {errors}")
-            
-            # 保存到缓存
-            self.repository.save(series)
-            
-            return series.to_dataframe()
-            
-        except Exception as e:
-            logger.error(f"获取 {code} 价格数据失败: {e}")
-            raise
+
+        series = self._sync_series(
+            asset_code,
+            start_date=start_date,
+            end_date=end_date,
+            use_cache=use_cache,
+        )
+
+        return self._slice_frame(series, start_date, end_date)
     
     def calculate_returns(self,
                           code: str,
@@ -243,30 +230,171 @@ class PriceQueryService:
                                asset_code: AssetCode,
                                start_date: Optional[str] = None,
                                end_date: Optional[str] = None) -> AdjustedPriceSeries:
-        """加载或获取价格序列"""
-        # 尝试缓存
-        cached = self.repository.find_by_code(asset_code)
-        if cached and cached.count > 0:
-            return cached
-        
-        # 从数据源获取
-        df_raw = fetch_adjusted_kline(
-            str(asset_code),
+        """加载或增量同步价格序列"""
+        return self._sync_series(
+            asset_code,
             start_date=start_date,
             end_date=end_date,
+            use_cache=True,
         )
-        
-        if df_raw.empty:
-            raise ValueError(f"无法获取 {asset_code} 的价格数据")
-        
-        series = AdjustedPriceSeries.from_dataframe(
+
+    # ------------------------------------------------------------------
+    # 缓存与增量同步（应用层编排，决策在领域层）
+    # ------------------------------------------------------------------
+
+    def _sync_series(self,
+                     asset_code: AssetCode,
+                     start_date: Optional[str] = None,
+                     end_date: Optional[str] = None,
+                     use_cache: bool = True) -> AdjustedPriceSeries:
+        """
+        同步价格序列：缓存命中时只拉增量
+
+        流程:
+        1. 读缓存
+        2. PriceCachePlanner 给出刷新计划（NONE / INCREMENTAL / FULL）
+        3. 需要时仅拉取计划区间
+        4. PriceSeriesMerger 做接缝校验后合并（口径变化则全量重建）
+        5. 回写缓存
+        """
+        key = str(asset_code)
+        requested_start = self._parse_date(start_date)
+        requested_end = self._parse_date(end_date)
+
+        cached = self.repository.find_by_code(asset_code) if use_cache else None
+
+        plan = PriceCachePlanner.plan(
+            cached,
+            requested_start=requested_start,
+            requested_end=requested_end,
+            policy=self.cache_policy,
+            last_checked_at=self._last_checked_at.get(key),
+            history_complete=getattr(self.repository, 'is_history_complete',
+                                     lambda _code: False)(asset_code),
+        )
+
+        if not plan.needs_fetch:
+            logger.debug(f"{key} 命中缓存（{plan.reason}）")
+            return cached
+
+        logger.info(f"{key} {plan.reason}")
+
+        # ---- 拉取 ----------------
+        # 全量重建时必须拉全历史（不能按请求区间拉，否则缓存只剩残缺窗口，
+        # 后续其他调用会因缓存不完整而算错）；窄区间的检索由返回时切片完成。
+        if plan.mode is RefreshMode.INCREMENTAL:
+            fetch_start = plan.fetch_start.isoformat()
+        else:
+            fetch_start = None
+
+        try:
+            df_raw = fetch_adjusted_kline(key, start_date=fetch_start, end_date=end_date)
+        except Exception as e:
+            if cached is not None and cached.count > 0:
+                logger.warning(f"{key} 拉取失败，沿用缓存: {e}")
+                return cached
+            logger.error(f"获取 {key} 价格数据失败: {e}")
+            raise
+
+        self._last_checked_at[key] = datetime.now()
+
+        # ---- 数据源无新数据：保留缓存 ----
+        if df_raw is None or df_raw.empty:
+            if cached is not None and cached.count > 0:
+                logger.info(f"{key} 数据源暂无新数据，沿用缓存")
+                return cached
+            raise ValueError(f"无法获取 {key} 的价格数据")
+
+        update = AdjustedPriceSeries.from_dataframe(
             asset_code=asset_code,
             df=df_raw.drop(columns=['source'], errors='ignore'),
             source=self._infer_source(df_raw),
         )
-        
+
+        # ---- 合并 ----
+        if plan.mode is RefreshMode.INCREMENTAL and cached is not None:
+            result = PriceSeriesMerger.merge(cached, update, self.cache_policy)
+            if result.conflict:
+                logger.warning(
+                    f"{key} 检测到后复权口径变化"
+                    f"（重叠{result.overlap_points}点，"
+                    f"最大偏差{float(result.max_deviation):.4%}），改为全量重建"
+                )
+                series = self._fetch_full(asset_code, key, start_date, end_date)
+                if series is None:
+                    # 重建失败：保留原缓存，绝不用残缺窗口覆盖
+                    logger.warning(f"{key} 全量重建失败，保留原缓存")
+                    return cached
+            else:
+                series = result.series
+        else:
+            series = update
+
+        errors = series.validate()
+        if errors:
+            logger.warning(f"{key} 数据验证警告: {errors[:3]}")
+
         self.repository.save(series)
+
+        # 全量拉取（无起始限制）得到的即为完整历史，打标记避免反复重拉
+        if plan.mode is RefreshMode.FULL and fetch_start is None:
+            mark = getattr(self.repository, 'mark_history_complete', None)
+            if callable(mark):
+                mark(asset_code)
+
+        logger.info(
+            f"{key} 缓存已更新，共 {series.count} 条"
+            f"（{series.start_date} ~ {series.end_date}）"
+        )
+
         return series
+
+    def _fetch_full(self,
+                    asset_code: AssetCode,
+                    key: str,
+                    start_date: Optional[str],
+                    end_date: Optional[str]) -> Optional[AdjustedPriceSeries]:
+        """全量重建（后复权口径变化时使用）：拉全历史，不带起始限制"""
+        try:
+            df_raw = fetch_adjusted_kline(key, start_date=None, end_date=end_date)
+            if df_raw is None or df_raw.empty:
+                return None
+            return AdjustedPriceSeries.from_dataframe(
+                asset_code=asset_code,
+                df=df_raw.drop(columns=['source'], errors='ignore'),
+                source=self._infer_source(df_raw),
+            )
+        except Exception as e:
+            logger.error(f"{key} 全量重建失败: {e}")
+            return None
+
+    @staticmethod
+    def _parse_date(value):
+        """字符串日期 -> date"""
+        if value is None:
+            return None
+        if isinstance(value, date):
+            return value
+        return pd.to_datetime(value).date()
+
+    @staticmethod
+    def _slice_frame(series: AdjustedPriceSeries,
+                     start_date: Optional[str],
+                     end_date: Optional[str]) -> pd.DataFrame:
+        """按请求区间裁剪 DataFrame（供绘图/计算使用）"""
+        df = series.to_dataframe()
+
+        if df.empty or (not start_date and not end_date):
+            return df
+
+        index = pd.to_datetime(df.index)
+        mask = pd.Series(True, index=df.index)
+        if start_date:
+            mask &= index >= pd.to_datetime(start_date)
+        if end_date:
+            mask &= index <= pd.to_datetime(end_date)
+
+        return df[mask]
     
     @staticmethod
     def _infer_source(df: pd.DataFrame) -> DataSource:

@@ -1,13 +1,14 @@
 """
 价格领域值对象
 
-包含: ReturnMetrics, DateRange 等不可变值对象
+包含: ReturnMetrics, DateRange, TechnicalIndicators, CachePolicy, RefreshPlan
 """
 
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Tuple, Optional
+from enum import Enum
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -161,3 +162,115 @@ class TechnicalIndicators:
 
 
 
+
+
+class RefreshMode(Enum):
+    """价格序列刷新方式"""
+    NONE = "none"                # 缓存已满足，无需拉取
+    INCREMENTAL = "incremental"  # 仅拉取缺失的尾部区间
+    FULL = "full"                # 全量拉取（无缓存或需向前扩展）
+
+
+@dataclass(frozen=True)
+class CachePolicy:
+    """
+    价格缓存策略（值对象）
+
+    不变量:
+    - overlap_days >= 0
+    - seam_tolerance >= 0
+    - min_refresh_interval_hours >= 0
+
+    属性说明:
+    - overlap_days: 增量拉取时向回多取的日历天数，用于“接缝校验”
+      （后复权价会因分红除权而重算，必须用重叠区间发现口径变化）
+    - seam_tolerance: 重叠区间内收盘价的相对偏差阈值，
+      超过则判定为后复权口径已变，需全量重建
+    - min_refresh_interval_hours: 最小刷新间隔，避免同日重复拉取
+      0 表示不限制
+    """
+    overlap_days: int = 5
+    seam_tolerance: Decimal = Decimal("0.001")
+    min_refresh_interval_hours: int = 0
+
+    def __post_init__(self):
+        if self.overlap_days < 0:
+            raise ValueError(f"overlap_days 不能为负: {self.overlap_days}")
+        if self.seam_tolerance < 0:
+            raise ValueError(f"seam_tolerance 不能为负: {self.seam_tolerance}")
+        if self.min_refresh_interval_hours < 0:
+            raise ValueError(
+                f"min_refresh_interval_hours 不能为负: {self.min_refresh_interval_hours}"
+            )
+        if not isinstance(self.seam_tolerance, Decimal):
+            object.__setattr__(self, 'seam_tolerance',
+                               Decimal(str(self.seam_tolerance)))
+
+    def to_dict(self) -> dict:
+        """转换为字典"""
+        return {
+            'overlap_days': self.overlap_days,
+            'seam_tolerance': float(self.seam_tolerance),
+            'min_refresh_interval_hours': self.min_refresh_interval_hours,
+        }
+
+
+@dataclass(frozen=True)
+class RefreshPlan:
+    """
+    缓存刷新计划（值对象）
+
+    由领域服务 PriceCachePlanner 根据缓存状态与请求区间推导得出，
+    应用层只负责执行，不再自行判断。
+
+    不变量:
+    - mode 为 INCREMENTAL 时 fetch_start 必须有值
+    - mode 为 NONE 时 fetch_start 必须为 None
+    """
+    mode: RefreshMode
+    fetch_start: Optional[date] = None
+    reason: str = ""
+
+    def __post_init__(self):
+        if self.mode is RefreshMode.INCREMENTAL and self.fetch_start is None:
+            raise ValueError("增量刷新必须指定 fetch_start")
+        if self.mode is RefreshMode.NONE and self.fetch_start is not None:
+            raise ValueError("无需刷新时不应指定 fetch_start")
+
+    @property
+    def needs_fetch(self) -> bool:
+        """是否需要访问数据源"""
+        return self.mode is not RefreshMode.NONE
+
+    def to_dict(self) -> dict:
+        """转换为字典"""
+        return {
+            'mode': self.mode.value,
+            'fetch_start': self.fetch_start.isoformat() if self.fetch_start else None,
+            'reason': self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class MergeResult:
+    """
+    价格序列合并结果（值对象）
+
+    属性:
+    - series: 合并后的序列
+    - conflict: 接缝校验是否发现口径冲突（后复权被重算）
+    - overlap_points: 参与校验的重叠价格点数量
+    - max_deviation: 重叠区间的最大相对偏差
+    """
+    series: object  # AdjustedPriceSeries（避免循环导入）
+    conflict: bool = False
+    overlap_points: int = 0
+    max_deviation: Optional[Decimal] = None
+
+    def to_dict(self) -> dict:
+        """转换为字典"""
+        return {
+            'conflict': self.conflict,
+            'overlap_points': self.overlap_points,
+            'max_deviation': float(self.max_deviation) if self.max_deviation is not None else None,
+        }

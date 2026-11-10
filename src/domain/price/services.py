@@ -4,13 +4,20 @@
 包含纯业务逻辑计算，无副作用
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Tuple, Optional
 import math
 
 from src.domain.price.entities import AdjustedPriceSeries, PricePoint
-from src.domain.price.value_objects import ReturnMetrics, TechnicalIndicators
+from src.domain.price.value_objects import (
+    CachePolicy,
+    MergeResult,
+    RefreshMode,
+    RefreshPlan,
+    ReturnMetrics,
+    TechnicalIndicators,
+)
 
 
 class PriceCalculator:
@@ -526,4 +533,148 @@ class PriceCalculator:
             bollinger_upper=val_bb_upper,
             bollinger_middle=val_bb_middle,
             bollinger_lower=val_bb_lower,
+        )
+
+
+class PriceCachePlanner:
+    """
+    价格缓存规划器（领域服务）
+
+    职责:
+    - 根据缓存状态与请求区间，推导出刷新计划（全量 / 增量 / 不需要）
+    - 不访问网络、不依赖仓储，纯业务规则，便于单元测试
+    """
+
+    @staticmethod
+    def plan(cached: Optional[AdjustedPriceSeries],
+             requested_start: Optional[date] = None,
+             requested_end: Optional[date] = None,
+             policy: Optional[CachePolicy] = None,
+             today: Optional[date] = None,
+             last_checked_at: Optional[datetime] = None,
+             history_complete: bool = False) -> RefreshPlan:
+        """
+        推导刷新计划
+
+        Args:
+            cached: 已缓存的价格序列，None 表示无缓存
+            requested_start: 请求起始日期
+            requested_end: 请求结束日期（None 视为到今天）
+            policy: 缓存策略
+            today: 当前日期（便于测试注入）
+            last_checked_at: 上次检查数据源的时刻（用于最小刷新间隔）
+            history_complete: 缓存是否已是数据源的完整历史
+                （资产上市晚于请求起始日时，无法再向前扩展，
+                  不应反复触发全量重拉）
+
+        Returns:
+            RefreshPlan
+        """
+        policy = policy or CachePolicy()
+        today = today or date.today()
+        target_end = requested_end or today
+
+        # 1. 无缓存 -> 全量
+        if cached is None or cached.count == 0:
+            return RefreshPlan(
+                RefreshMode.FULL,
+                requested_start,
+                "无缓存，需全量拉取",
+            )
+
+        # 2. 最小刷新间隔内已检查过 -> 不再访问数据源
+        if (policy.min_refresh_interval_hours > 0
+                and last_checked_at is not None):
+            elapsed = datetime.now() - last_checked_at
+            if elapsed.total_seconds() < policy.min_refresh_interval_hours * 3600:
+                return RefreshPlan(
+                    RefreshMode.NONE, None,
+                    f"距上次刷新未超过 {policy.min_refresh_interval_hours} 小时",
+                )
+
+        # 3. 请求区间早于缓存起始日
+        if (requested_start is not None
+                and cached.start_date is not None
+                and requested_start < cached.start_date):
+            # 缓存已是完整历史 -> 更早的数据源本就不存在，无需重拉
+            if history_complete:
+                return RefreshPlan(
+                    RefreshMode.NONE, None,
+                    f"缓存已是完整历史（自 {cached.start_date}），无需向前扩展",
+                )
+            return RefreshPlan(
+                RefreshMode.FULL,
+                requested_start,
+                f"缓存起始 {cached.start_date} 晚于请求 {requested_start}，需全量",
+            )
+
+        # 4. 缓存尾部已覆盖到目标结束日 -> 无需刷新
+        if cached.end_date is not None and cached.end_date >= target_end:
+            return RefreshPlan(
+                RefreshMode.NONE, None,
+                f"缓存已覆盖至 {cached.end_date}",
+            )
+
+        # 5. 增量：从缓存末日向前多取 overlap_days，用于接缝校验
+        fetch_start = cached.end_date - timedelta(days=policy.overlap_days)
+
+        return RefreshPlan(
+            RefreshMode.INCREMENTAL,
+            fetch_start,
+            f"增量更新 {fetch_start} ~ {target_end}（缓存至 {cached.end_date}）",
+        )
+
+
+class PriceSeriesMerger:
+    """
+    价格序列合并器（领域服务）
+
+    职责:
+    - 将增量序列合并进缓存序列
+    - 通过重叠区间的价格偏差判断后复权口径是否被重算
+      （若口径变了，历史价格整体偏移，必须全量重建而不是拼接）
+
+    注：后复权(hfq)价格会在分红除权时整体重算，
+        因此“增量拼接”必须先做接缝校验，否则序列会出现价格断层。
+    """
+
+    @staticmethod
+    def merge(cached: AdjustedPriceSeries,
+              update: AdjustedPriceSeries,
+              policy: Optional[CachePolicy] = None) -> MergeResult:
+        """
+        合并增量数据
+
+        Args:
+            cached: 缓存序列
+            update: 新拉取的序列
+            policy: 缓存策略（提供接缝容差）
+
+        Returns:
+            MergeResult：含合并结果与是否口径冲突
+        """
+        policy = policy or CachePolicy()
+
+        overlap_points, max_dev = cached.overlap_close_deviation(update)
+
+        # 无重叠点（例如缓存末端后长期停牌的资产）视为无冲突，直接拼接
+        conflict = (
+            max_dev is not None
+            and max_dev > policy.seam_tolerance
+        )
+
+        if conflict:
+            # 口径已变：以新拉取的数据为准重建，旧缓存不可用
+            return MergeResult(
+                series=update,
+                conflict=True,
+                overlap_points=overlap_points,
+                max_deviation=max_dev,
+            )
+
+        return MergeResult(
+            series=cached.merged_with(update),
+            conflict=False,
+            overlap_points=overlap_points,
+            max_deviation=max_dev,
         )

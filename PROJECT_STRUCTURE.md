@@ -81,6 +81,13 @@ PROJECT_STRUCTURE.md                   # 本文件
 - ✅ 自动缓存（内存+JSON文件）
 - ✅ 多数据源降级（东财→腾讯）
 
+### 1.5 价格缓存与增量同步 ★新增
+- ✅ JSON 文件缓存，跨进程复用（`data/price_cache/`）
+- ✅ 缓存命中只拉缺失的尾部区间（实测 44 条 vs 全量 1668 条）
+- ✅ 接缝校验：后复权口径被重算时自动全量重建
+- ✅ 失败降级：数据源不可用时沿用缓存
+- ✅ 热启动 5.4s → 1.1s（4 资产组合回测）
+
 ### 2. 收益率计算
 - ✅ 累计收益率
 - ✅ 年化收益率(CAGR)
@@ -207,6 +214,7 @@ print(GridChartRenderer.trigger_log(result))
 | [README.md](README.md) | 项目概述 |
 | [docs/ddd_price_model_design.md](docs/ddd_price_model_design.md) | DDD设计详解 |
 | [docs/grid_strategy_ddd_design.md](docs/grid_strategy_ddd_design.md) | ★ 网格策略DDD设计 |
+| [docs/price_cache_design.md](docs/price_cache_design.md) | ★ 价格缓存与增量同步设计 |
 | [docs/ddd_implementation_summary.md](docs/ddd_implementation_summary.md) | 实现总结 |
 | [docs/migration_summary.md](docs/migration_summary.md) | 迁移报告 |
 | [docs/adjusted_price_provider_usage.md](docs/adjusted_price_provider_usage.md) | API详细文档 |

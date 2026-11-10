@@ -225,8 +225,10 @@ class CombinedBacktester:
         logger.info("开始组合回测: 再平衡 + 网格（共享总资产配置，持仓隔离）")
 
         # ---- 再平衡子组合 ----
-        rebalance_backtester = RebalanceBacktester(self.config.build_rebalance_config())
-        rebalance_backtester.price_service = self.price_service
+        rebalance_backtester = RebalanceBacktester(
+            self.config.build_rebalance_config(),
+            price_service=self.price_service,   # 共享同一实例，复用缓存
+        )
         rebalance_result = rebalance_backtester.run()
 
         # ---- 网格子组合（监控同一批资产）----

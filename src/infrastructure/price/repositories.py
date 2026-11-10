@@ -52,6 +52,21 @@ class PriceSeriesRepository(ABC):
         """清空所有"""
         pass
 
+    # ------------------------------------------------------------------
+    # 可选能力：标记"已缓存完整历史"
+    #
+    # 某些资产上市较晚，请求区间早于其首个交易日时，无法再向前扩展。
+    # 仓储记录该标记后，缓存规划器就不会反复触发全量重拉。
+    # ------------------------------------------------------------------
+
+    def mark_history_complete(self, asset_code: AssetCode) -> None:
+        """标记该资产已缓存完整历史（默认空实现）"""
+        pass
+
+    def is_history_complete(self, asset_code: AssetCode) -> bool:
+        """该资产的缓存是否为完整历史（默认未知）"""
+        return False
+
 
 class InMemoryPriceRepository(PriceSeriesRepository):
     """
@@ -135,84 +150,132 @@ class JsonFilePriceRepository(PriceSeriesRepository):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._memory_cache: InMemoryPriceRepository = InMemoryPriceRepository()
+        # 资产代码 -> 是否已缓存完整历史
+        self._history_complete: Dict[str, bool] = {}
     
     def _get_file_path(self, asset_code: AssetCode) -> Path:
         """获取文件路径"""
         return self.storage_dir / f"{asset_code.code}.json"
     
     def save(self, series: AdjustedPriceSeries) -> None:
-        """保存到JSON文件"""
+        """保存到JSON文件（Decimal 以字符串写入，保证精度可逆）"""
         file_path = self._get_file_path(series.asset_code)
-        
+
         data = {
             'asset_code': series.asset_code.code,
             'asset_type': series.asset_type.value,
             'source': series.source.value,
             'calculated_at': series.calculated_at.isoformat(),
-            'prices': [p.to_dict() for p in series.prices],
+            # 用元组列表而非 dict，体积更小、反序列化更快
+            'price_fields': ['date', 'open', 'high', 'low', 'close', 'volume', 'amount'],
+            'history_complete': self._history_complete.get(str(series.asset_code), False),
+            'prices': [
+                [
+                    p.date.isoformat(),
+                    str(p.open), str(p.high), str(p.low), str(p.close),
+                    int(p.volume), str(p.amount),
+                ]
+                for p in series.prices
+            ],
         }
-        
-        # 序列化date对象
-        for price in data['prices']:
-            price['date'] = price['date'].isoformat()
-        
+
         with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        
+            json.dump(data, f, ensure_ascii=False)
+
         # 同时更新内存缓存
         self._memory_cache.save(series)
-        
+
         logger.debug(f"已保存 {series.asset_code} 到 {file_path}")
-    
+
     def find_by_code(self, asset_code: AssetCode) -> Optional[AdjustedPriceSeries]:
-        """从文件或内存加载"""
+        """从内存或文件加载（直接构造领域对象，避免 DataFrame 中转）"""
         # 先查内存
         cached = self._memory_cache.find_by_code(asset_code)
         if cached:
             return cached
-        
+
         # 再查文件
         file_path = self._get_file_path(asset_code)
         if not file_path.exists():
             return None
-        
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
-            # 反序列化
-            import pandas as pd
-            prices_data = []
-            for p in data['prices']:
-                p['date'] = pd.to_datetime(p['date']).date()
-                prices_data.append(p)
-            
-            df = pd.DataFrame(prices_data)
-            df.set_index('date', inplace=True)
-            
-            from src.domain.price.entities import AssetType, DataSource
+
+            from src.domain.price.entities import AssetType, DataSource, PricePoint
             from datetime import datetime
-            
-            asset_type = AssetType(data['asset_type'])
-            source = DataSource(data['source'])
-            calculated_at = datetime.fromisoformat(data['calculated_at'])
-            
-            series = AdjustedPriceSeries.from_dataframe(
-                asset_code=asset_code,
-                df=df,
-                source=source,
+            from decimal import Decimal
+
+            raw_prices = data.get('prices', [])
+
+            # 兼容两种存储格式：紧凑数组 / 旧版 dict 列表
+            if raw_prices and isinstance(raw_prices[0], list):
+                points = [
+                    PricePoint(
+                        date=date.fromisoformat(row[0]),
+                        open=Decimal(row[1]),
+                        high=Decimal(row[2]),
+                        low=Decimal(row[3]),
+                        close=Decimal(row[4]),
+                        volume=int(row[5]),
+                        amount=Decimal(row[6]) if len(row) > 6 else Decimal("0"),
+                    )
+                    for row in raw_prices
+                ]
+            else:
+                points = [
+                    PricePoint(
+                        date=date.fromisoformat(str(p['date'])[:10]),
+                        open=Decimal(str(p['open'])),
+                        high=Decimal(str(p['high'])),
+                        low=Decimal(str(p['low'])),
+                        close=Decimal(str(p['close'])),
+                        volume=int(p['volume']),
+                        amount=Decimal(str(p.get('amount', 0))),
+                    )
+                    for p in raw_prices
+                ]
+
+            self._history_complete[str(asset_code)] = bool(
+                data.get('history_complete', False)
             )
-            series.calculated_at = calculated_at
-            
+
+            series = AdjustedPriceSeries(
+                asset_code=asset_code,
+                asset_type=AssetType(data['asset_type']),
+                prices=points,
+                source=DataSource(data['source']),
+                calculated_at=(datetime.fromisoformat(data['calculated_at'])
+                               if data.get('calculated_at') else datetime.now()),
+            )
+
             # 缓存到内存
             self._memory_cache.save(series)
-            
+
             return series
-            
+
         except Exception as e:
             logger.error(f"加载 {asset_code} 失败: {e}")
             return None
     
+    def mark_history_complete(self, asset_code: AssetCode) -> None:
+        """标记该资产已缓存完整历史（随文件持久化）"""
+        key = str(asset_code)
+        if self._history_complete.get(key):
+            return
+
+        self._history_complete[key] = True
+
+        # 立即落到文件，避免进程退出后丢失
+        series = self._memory_cache.find_by_code(asset_code)
+        if series is not None:
+            self.save(series)
+
+    def is_history_complete(self, asset_code: AssetCode) -> bool:
+        """该资产的缓存是否为完整历史"""
+        return self._history_complete.get(str(asset_code), False)
+
     def find_by_date_range(self,
                            asset_code: AssetCode,
                            date_range: DateRange) -> AdjustedPriceSeries:

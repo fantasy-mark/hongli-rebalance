@@ -8,7 +8,7 @@
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from enum import Enum
 
 import pandas as pd
@@ -212,6 +212,98 @@ class AdjustedPriceSeries:
         self.prices.append(price)
         self.prices.sort(key=lambda p: p.date)
         self.calculated_at = datetime.now()
+
+    # ------------------------------------------------------------------
+    # 缓存与增量同步（聚合根行为）
+    # ------------------------------------------------------------------
+
+    def covers(self, start: Optional[date] = None,
+               end: Optional[date] = None) -> bool:
+        """
+        判断当前序列是否已覆盖指定日期区间
+
+        Args:
+            start: 起始日期，None 表示不限制
+            end: 结束日期，None 表示不限制
+        """
+        if not self.prices:
+            return False
+
+        if start is not None and (self.start_date is None or self.start_date > start):
+            return False
+
+        if end is not None and (self.end_date is None or self.end_date < end):
+            return False
+
+        return True
+
+    def merged_with(self,
+                    update: 'AdjustedPriceSeries',
+                    prefer_update: bool = True) -> 'AdjustedPriceSeries':
+        """
+        合并另一份价格序列（增量更新）
+
+        规则:
+        - 以日期为唯一键，同一天以 update 为准（数据源可能修正旧值）
+        - 结果按日期升序，保持聚合根不变量
+        - 返回新实例，不修改自身（保持聚合根封装）
+
+        Args:
+            update: 增量价格序列
+            prefer_update: 重叠日期是否以 update 为准
+
+        Returns:
+            合并后的新序列
+        """
+        if str(update.asset_code) != str(self.asset_code):
+            raise ValueError(
+                f"资产不一致，无法合并: {self.asset_code} vs {update.asset_code}"
+            )
+
+        by_date = {p.date: p for p in self.prices}
+
+        for point in update.prices:
+            if point.date in by_date and not prefer_update:
+                continue
+            by_date[point.date] = point
+
+        merged_prices = [by_date[d] for d in sorted(by_date)]
+
+        return AdjustedPriceSeries(
+            asset_code=self.asset_code,
+            asset_type=self.asset_type,
+            prices=merged_prices,
+            source=update.source if update.prices else self.source,
+            calculated_at=datetime.now(),
+        )
+
+    def overlap_close_deviation(
+            self, other: 'AdjustedPriceSeries') -> Tuple[int, Optional[Decimal]]:
+        """
+        计算与另一份序列在重叠日期上的收盘价最大相对偏差
+
+        用途: 检测后复权口径是否因分红除权而重算
+        （若口径变了，重叠区的历史价格会整体不同，不能直接拼接）
+
+        Returns:
+            (重叠点数, 最大相对偏差)，无重叠时偏差为 None
+        """
+        other_by_date = {p.date: p for p in other.prices}
+
+        overlap = 0
+        max_dev: Optional[Decimal] = None
+
+        for point in self.prices:
+            counterpart = other_by_date.get(point.date)
+            if counterpart is None or point.close <= 0:
+                continue
+
+            overlap += 1
+            deviation = abs(counterpart.close - point.close) / point.close
+            if max_dev is None or deviation > max_dev:
+                max_dev = deviation
+
+        return overlap, max_dev
     
     def update_source(self, new_source: DataSource) -> None:
         """更新数据来源"""
