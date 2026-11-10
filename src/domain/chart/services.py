@@ -54,53 +54,8 @@ class ChartRenderer:
         # 创建画布
         fig, ax = plt.subplots(figsize=config.figsize)
         
-        # 绘制所有曲线
-        for series in config.series_list:
-            ChartRenderer._plot_series(ax, series)
-        
-        # 配置坐标轴
-        ax.set_xlabel(config.xlabel, fontsize=12)
-        ax.set_ylabel(config.ylabel, fontsize=12)
-        ax.set_title(config.title, fontsize=14, fontweight='bold')
-        
-        # 设置Y轴刻度类型
-        if config.y_axis_scale == YAxisScale.LOGARITHMIC:
-            ax.set_yscale('log')
-            
-            # 使用自定义格式化器，直接显示小数（如 1.0, 2.0, 3.0）
-            from matplotlib.ticker import FuncFormatter, FixedLocator
-            import numpy as np
-            
-            def log_tick_formatter(value, pos):
-                """对数坐标Y轴标签格式化 - 显示为普通小数"""
-                return f"{value:.2f}"
-            
-            ax.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
-            
-            # 设置主刻度位置为整数（1, 2, 3, ...），避免科学计数法
-            # 根据数据范围动态生成刻度
-            all_values = []
-            for series in config.series_list:
-                if series.role != SeriesRole.BENCHMARK:
-                    all_values.extend([float(v) for v in series.values])
-            
-            if all_values:
-                min_val = min(all_values)
-                max_val = max(all_values)
-                # 生成从1到max_val+1的整数刻度
-                ticks = [float(i) for i in range(1, int(max_val) + 2)]
-                # 过滤在数据范围内的刻度
-                ticks = [t for t in ticks if min_val * 0.8 <= t <= max_val * 1.2]
-                if ticks:
-                    ax.yaxis.set_major_locator(FixedLocator(ticks))
-            
-            # 对数坐标下显示主次网格
-            if config.show_grid:
-                ax.grid(True, which='both', alpha=0.2)
-        else:
-            # 线性坐标
-            if config.show_grid:
-                ax.grid(True, alpha=0.3)
+        # 绘制所有曲线（复用 render_on）
+        ChartRenderer.render_on(ax, config)
         
         # 格式化x轴日期
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
@@ -129,6 +84,60 @@ class ChartRenderer:
             return default_path
     
     @staticmethod
+    def render_on(ax, config: ChartConfig) -> None:
+        """
+        在已有坐标轴上渲染图表配置
+        
+        用于多面板组合图（如网格策略图），复用曲线/标记点绘制逻辑
+        
+        Args:
+            ax: matplotlib 坐标轴
+            config: 图表配置
+        """
+        errors = config.validate()
+        if errors:
+            raise ValueError(f"图表配置无效: {'; '.join(errors)}")
+        
+        # 绘制所有曲线
+        for series in config.series_list:
+            ChartRenderer._plot_series(ax, series)
+        
+        # 配置坐标轴
+        ax.set_xlabel(config.xlabel, fontsize=11)
+        ax.set_ylabel(config.ylabel, fontsize=11)
+        ax.set_title(config.title, fontsize=12, fontweight='bold')
+        
+        # 设置Y轴刻度类型
+        if config.y_axis_scale == YAxisScale.LOGARITHMIC:
+            ax.set_yscale('log')
+
+            # 使用自定义格式化器，直接显示小数（如 1.0, 2.0, 3.0）
+            from matplotlib.ticker import FuncFormatter, FixedLocator
+
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.2f}"))
+
+            # 设置主刻度位置为整数（1, 2, 3, ...），避免科学计数法
+            all_values = []
+            for series in config.series_list:
+                if series.role != SeriesRole.BENCHMARK:
+                    all_values.extend([float(v) for v in series.values])
+
+            if all_values:
+                min_val = min(all_values)
+                max_val = max(all_values)
+                ticks = [float(i) for i in range(1, int(max_val) + 2)]
+                ticks = [t for t in ticks if min_val * 0.8 <= t <= max_val * 1.2]
+                if ticks:
+                    ax.yaxis.set_major_locator(FixedLocator(ticks))
+
+            # 对数坐标下显示主次网格
+            if config.show_grid:
+                ax.grid(True, which='both', alpha=0.2)
+        else:
+            if config.show_grid:
+                ax.grid(True, alpha=0.3)
+    
+    @staticmethod
     def _plot_series(ax, series: ChartSeries):
         """绘制单条曲线及标记点"""
         ax.plot(
@@ -142,8 +151,13 @@ class ChartRenderer:
             alpha=series.style.alpha,
         )
         
-        # 绘制标记点（如再平衡触发日）
-        if series.marker_dates and len(series.marker_dates) > 0:
+        # 绘制分组标记点（如网格策略中各资产的买入/卖出点）
+        if series.marker_groups:
+            for group in series.marker_groups:
+                ChartRenderer._plot_marker_group(ax, series, group)
+        
+        # 绘制单组标记点（如再平衡触发日）
+        elif series.marker_dates and len(series.marker_dates) > 0:
             # 找到标记点对应的Y值
             marker_values = []
             marker_xs = []
@@ -180,6 +194,35 @@ class ChartRenderer:
         # 添加标注
         if series.annotation:
             ChartRenderer._add_annotation(ax, series, series.annotation)
+    
+    @staticmethod
+    def _plot_marker_group(ax, series: ChartSeries, group):
+        """绘制一组标记点（独立样式与图例）"""
+        date_to_idx = {d: i for i, d in enumerate(series.dates)}
+        
+        marker_xs = []
+        marker_values = []
+        for md in group.dates:
+            if md in date_to_idx:
+                idx = date_to_idx[md]
+                marker_xs.append(md)
+                marker_values.append(float(series.values[idx]))
+        
+        if not marker_xs:
+            return
+        
+        style = group.style or {}
+        ax.scatter(
+            marker_xs,
+            marker_values,
+            c=style.get('color', 'red'),
+            s=style.get('size', 50),
+            marker=style.get('marker', 'o'),
+            label=group.label or None,
+            zorder=5,
+            edgecolors='white',
+            linewidths=0.5,
+        )
     
     @staticmethod
     def _add_annotation(ax, series: ChartSeries, annotation: Annotation):

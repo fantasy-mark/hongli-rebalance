@@ -126,10 +126,40 @@ class Annotation:
 
 
 @dataclass(frozen=True)
+class ChartMarkerGroup:
+    """
+    标记点分组（值对象）
+
+    用于在一曲线上区分多组标记点
+    例如：网格策略中不同资产的买入点/卖出点
+
+    属性:
+    - dates: 标记日期列表
+    - style: 样式 {color, size, marker}
+    - label: 图例标签（为空则不单独显示图例）
+    """
+    dates: List[date]
+    style: Dict[str, Any]
+    label: str = ""
+
+    def __post_init__(self):
+        if not self.dates:
+            raise ValueError("标记点日期列表不能为空")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            'dates': [d.isoformat() for d in self.dates],
+            'style': dict(self.style),
+            'label': self.label,
+        }
+
+
+@dataclass(frozen=True)
 class ChartSeries:
     """
     图表数据序列（值对象）
-    
+
     代表一条要绘制的曲线
     """
     name: str
@@ -140,6 +170,7 @@ class ChartSeries:
     annotation: Optional[Annotation] = None
     marker_dates: Optional[List[date]] = None  # 标记点日期列表（如再平衡触发日）
     marker_style: Optional[Dict[str, Any]] = None  # 标记点样式 {color, size, marker}
+    marker_groups: Optional[List[ChartMarkerGroup]] = None  # 分组标记点（每组独立样式）
     series_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     
     def __post_init__(self):
@@ -196,6 +227,7 @@ class ChartSeries:
             'style': self.style.to_dict(),
             'annotation': self.annotation.to_dict() if self.annotation else None,
             'current_return': float(self.current_return),
+            'marker_groups': [g.to_dict() for g in self.marker_groups] if self.marker_groups else None,
         }
 
 
@@ -219,6 +251,7 @@ class ChartConfig:
     show_legend: bool = True
     legend_location: str = "upper left"
     y_axis_scale: YAxisScale = YAxisScale.LINEAR  # Y轴刻度类型
+    require_portfolio_series: bool = True  # 是否必须包含组合曲线
     config_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = field(default_factory=datetime.now)
     
@@ -271,7 +304,7 @@ class ChartConfig:
         if not portfolio_series:
             # 也接受名为"组合"的ASSET系列
             combo_series = [s for s in self.series_list if s.name == "组合"]
-            if not combo_series:
+            if not combo_series and self.require_portfolio_series:
                 errors.append("缺少组合曲线")
         
         return errors

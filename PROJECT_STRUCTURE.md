@@ -9,13 +9,27 @@
 src/domain/price/
 ├── entities.py              # 实体: AssetCode, PricePoint, AdjustedPriceSeries
 ├── value_objects.py         # 值对象: ReturnMetrics, DateRange, TechnicalIndicators
-└── services.py              # 领域服务: PriceCalculator
+└── services.py              # 领域服务: PriceCalculator (+ATR / 前N日最低价)
+
+src/domain/allocation/      # ★ 总资产配置（再平衡与网格共享内核）
+└── entities.py              # 聚合根: AllocationPlan, 值对象: AssetAllocation
+
+src/domain/grid/            # ★ 网格策略上下文
+├── entities.py              # 聚合根: GridStrategy, GridState
+├── value_objects.py         # 值对象: GridTrigger, GridCostModel, GridMarketSnapshot,
+│                             #          GridDecision, GridTradeType, 枚举
+└── services.py              # 领域服务: GridEngine
 ```
 
 #### 应用层 (Application Layer) - 用例编排
 ```
 src/application/price/
 └── query_service.py         # 应用服务: PriceQueryService
+
+src/application/grid/        # ★ 网格策略上下文
+├── grid_backtester.py       # 应用服务: GridBacktester
+├── grid_chart.py            # 应用服务: GridChartRenderer（多面板图 + 触发日志）
+└── combined_backtester.py   # 应用服务: CombinedBacktester（共享配置，持仓隔离）
 ```
 
 #### 基础设施层 (Infrastructure Layer) - 技术实现
@@ -23,26 +37,31 @@ src/application/price/
 src/infrastructure/
 ├── price/
 │   └── repositories.py      # 仓储: InMemoryPriceRepository, JsonFilePriceRepository
+├── grid/                    # ★ 网格策略上下文
+│   └── repositories.py      # 仓储: InMemoryGridStateRepository, JsonFileGridStateRepository
 └── adjusted_price_provider.py  # 数据源适配器 (已修复为hfq)
 ```
 
-### 测试 (1个文件)
+### 测试 (2个文件)
 ```
 tests/
-└── test_price_domain.py     # 27个单元测试 ✅ 全部通过
+├── test_price_domain.py     # 27个单元测试 ✅
+└── test_grid_domain.py      # 36个网格策略单元测试 ✅（离线，不依赖网络）
 ```
 
-### 示例 (1个文件)
+### 示例 (2个文件)
 ```
 examples/
-└── ddd_price_model_demo.py  # 6个完整使用场景示例
+├── ddd_price_model_demo.py  # 6个完整使用场景示例
+└── grid_strategy_demo.py    # 网格策略示例（回测/参数对比/组合隔离/绘图）
 ```
 
-### 文档 (5个Markdown文件)
+### 文档 (6个Markdown文件)
 ```
 docs/
 ├── ddd_price_model_design.md          # DDD设计文档
 ├── ddd_implementation_summary.md      # 实现总结
+├── grid_strategy_ddd_design.md        # ★ 网格策略DDD设计文档
 ├── adjusted_price_provider_usage.md   # 使用指南
 ├── migration_summary.md               # 迁移报告
 └── price_data_sources.md              # 数据源说明 (原有)
@@ -73,11 +92,22 @@ PROJECT_STRUCTURE.md                   # 本文件
 - ✅ 移动平均线(MA5/10/20/60)
 - ✅ RSI指标
 - ✅ 布林带
+- ✅ ATR(平均真实波幅) 与 前N日最低价
 
 ### 4. 多资产对比
 - ✅ 归一化价格对比
 - ✅ 批量收益率计算
 - ✅ 统一时间范围
+
+### 5. 网格策略 ★新增
+- ✅ 跌破前120日最低价启动监控
+- ✅ 网格间距 = 触发日ATR(120) × 可配置比例
+- ✅ 每格买入固定金额（默认10000元，可配置）
+- ✅ **网格轮次生命周期**：跌破前低 → 完全止盈 → 重新跌破才开新轮
+- ✅ **总资产配置共享**：网格只监控再平衡组合中的资产
+- ✅ 交易类型标记：开仓 / 加仓 / 减仓 / 止盈
+- ✅ 网格持仓与再平衡持仓完全隔离
+- ✅ 组合回测可分别归因两套策略收益
 
 ---
 
@@ -91,11 +121,13 @@ pip install pandas akshare requests
 ### 运行测试
 ```bash
 python -m pytest tests/test_price_domain.py -v
+python -m pytest tests/test_grid_domain.py -v    # 网格策略（离线，无需网络）
 ```
 
 ### 运行示例
 ```bash
 python examples/ddd_price_model_demo.py
+python examples/grid_strategy_demo.py           # 网格策略示例
 ```
 
 ### 基本用法
@@ -113,6 +145,37 @@ print(metrics.summary())
 
 # 多资产对比
 df = service.compare_assets(["515180", "159937", "511380", "513300"])
+```
+
+### 网格策略用法
+```python
+from decimal import Decimal
+from src.application.grid.grid_backtester import GridBacktester, GridConfig
+from src.domain.allocation.entities import AllocationPlan
+from src.domain.grid.value_objects import GridTrigger
+
+# 总资产配置（再平衡与网格共用）
+plan = AllocationPlan.equal_weight(
+    [("515180", "红利ETF"), ("159937", "黄金ETF")], name="两资产等权"
+)
+
+config = GridConfig.from_allocation(
+    plan=plan,
+    trigger=GridTrigger(
+        lookback_days=120,            # 前120日最低价（不含当日）
+        atr_period=120,              # 120日ATR
+        step_ratio=Decimal("0.5"),   # 网格间距 = ATR × 比例
+        buy_amount=Decimal("10000"), # 每格买入金额
+        take_profit_ratio=Decimal("1"),  # 上涨一个步长止盈（决定本轮结束）
+    ),
+    initial_capital=Decimal("200000"),
+)
+result = GridBacktester(config).run()
+print(result.summary())
+
+# 触发日志（资产代码/名称/触发日期/交易类型）
+from src.application.grid.grid_chart import GridChartRenderer
+print(GridChartRenderer.trigger_log(result))
 ```
 
 ---
@@ -143,6 +206,7 @@ df = service.compare_assets(["515180", "159937", "511380", "513300"])
 | [QUICKSTART.md](QUICKSTART.md) | ⭐ 5分钟上手 |
 | [README.md](README.md) | 项目概述 |
 | [docs/ddd_price_model_design.md](docs/ddd_price_model_design.md) | DDD设计详解 |
+| [docs/grid_strategy_ddd_design.md](docs/grid_strategy_ddd_design.md) | ★ 网格策略DDD设计 |
 | [docs/ddd_implementation_summary.md](docs/ddd_implementation_summary.md) | 实现总结 |
 | [docs/migration_summary.md](docs/migration_summary.md) | 迁移报告 |
 | [docs/adjusted_price_provider_usage.md](docs/adjusted_price_provider_usage.md) | API详细文档 |

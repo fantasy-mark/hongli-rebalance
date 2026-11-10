@@ -46,16 +46,95 @@ print(f"最新收盘价: {price:.3f}")
 ```
 rebalance/
 ├── src/
+│   ├── domain/
+│   │   ├── price/          # 价格上下文（实体/值对象/领域服务）
+│   │   ├── allocation/     # ★ 总资产配置（共享内核）
+│   │   ├── rebalance/      # 再平衡上下文
+│   │   ├── grid/           # ★ 网格上下文
+│   │   ├── strategy/       # 策略上下文
+│   │   ├── execution/      # 执行上下文
+│   │   └── chart/          # 图表上下文
+│   ├── application/
+│   │   ├── price/          # PriceQueryService
+│   │   ├── rebalance/      # RebalanceBacktester
+│   │   └── grid/           # ★ GridBacktester / GridChartRenderer / CombinedBacktester
 │   └── infrastructure/
-│       ├── adjusted_price_provider.py    # ⭐ 核心模块：后复权价格获取
-│       └── quote_providers.py            # 现有模块：实时报价（不复权）
+│       ├── price/          # 价格仓储
+│       ├── grid/           # ★ 网格状态仓储
+│       └── adjusted_price_provider.py
 ├── tests/
-│   └── test_adjusted_price_provider.py   # 测试脚本
-├── docs/
-│   └── adjusted_price_provider_usage.md  # 详细使用文档
-├── price_data_sources.md                 # 数据源清单与口径说明
-└── README.md                             # 本文件
+│   ├── test_price_domain.py
+│   └── test_grid_domain.py # ★ 网格策略测试（离线）
+├── examples/
+│   ├── ddd_price_model_demo.py
+│   └── grid_strategy_demo.py  # ★ 网格策略示例
+└── docs/
+    └── grid_strategy_ddd_design.md  # ★ 网格策略设计文档
 ```
+
+---
+
+## 🎯 网格策略（DDD）
+
+在价格模型与再平衡策略之上，新增了独立的**网格策略上下文**：
+
+| 规则 | 说明 | 配置项 |
+|------|------|--------|
+| 监控启动 | 资产价格跌破**前 120 日最低价**（不含最近交易日） | `lookback_days` |
+| 网格间距 | **触发日 120 日 ATR × 比例**（轮内固定） | `atr_period` / `step_ratio` |
+| 单格买入 | 每次下跌一个间距买入固定金额（默认 10000 元） | `buy_amount` |
+| 网格轮次 | 跌破前低 → 本轮**完全止盈**结束；**重新跌破前低**才开下一轮 | `take_profit_ratio` |
+| 持仓隔离 | 网格资金池与网格持仓独立于再平衡组合 | `initial_capital` |
+| 共享配置 | 两个策略共用同一份**总资产配置**（网格只监控再平衡的资产） | `AllocationPlan` |
+
+```python
+from decimal import Decimal
+from src.application.grid.grid_backtester import GridBacktester, GridConfig
+from src.domain.allocation.entities import AllocationPlan
+from src.domain.grid.value_objects import GridTrigger
+
+# 总资产配置（再平衡与网格共用）
+plan = AllocationPlan.equal_weight(
+    [("515180", "红利ETF"), ("159937", "黄金ETF")], name="两资产等权"
+)
+
+config = GridConfig.from_allocation(
+    plan=plan,
+    trigger=GridTrigger(
+        lookback_days=120,            # 前120日最低价（不含当日）
+        atr_period=120,              # 120日ATR
+        step_ratio=Decimal("0.5"),   # 网格间距 = ATR × 比例
+        buy_amount=Decimal("10000"), # 每格买入金额
+        take_profit_ratio=Decimal("1"),  # 上涨一个步长止盈
+    ),
+    initial_capital=Decimal("200000"),
+)
+
+result = GridBacktester(config).run()
+print(result.summary())
+
+# 触发日志：资产代码 / 名称 / 触发日期 / 交易类型（开仓/加仓/减仓/止盈）
+from src.application.grid.grid_chart import GridChartRenderer
+print(GridChartRenderer.trigger_log(result))
+```
+
+组合回测（共享总资产配置 + 持仓隔离）：
+
+```python
+from src.application.grid.combined_backtester import CombinedBacktester, CombinedConfig
+
+combined = CombinedBacktester(
+    CombinedConfig(
+        allocation=plan,                     # ★ 一份配置驱动两个策略
+        rebalance_initial_capital=Decimal("1000000"),
+        grid_initial_capital=Decimal("200000"),
+        grid_trigger=trigger,
+    )
+).run()
+print(combined.summary())
+```
+
+📖 详见 [docs/grid_strategy_ddd_design.md](docs/grid_strategy_ddd_design.md)
 
 ---
 

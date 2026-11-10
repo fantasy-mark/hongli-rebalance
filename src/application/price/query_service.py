@@ -62,11 +62,15 @@ class PriceQueryService:
                 logger.info(f"从缓存获取 {code} 的价格数据 ({cached.count}条)")
                 df = cached.to_dataframe()
                 
-                # 过滤日期范围
-                if start_date:
-                    df = df[df.index >= pd.to_datetime(start_date)]
-                if end_date:
-                    df = df[df.index <= pd.to_datetime(end_date)]
+                # 过滤日期范围（索引可能是 date 对象，统一转为 DatetimeIndex 比较）
+                if start_date or end_date:
+                    index = pd.to_datetime(df.index)
+                    mask = pd.Series(True, index=df.index)
+                    if start_date:
+                        mask &= index >= pd.to_datetime(start_date)
+                    if end_date:
+                        mask &= index <= pd.to_datetime(end_date)
+                    df = df[mask]
                 
                 return df
         

@@ -320,6 +320,150 @@ class PriceCalculator:
         return result
     
     @staticmethod
+    def calculate_true_ranges(series: AdjustedPriceSeries) -> List[Decimal]:
+        """
+        计算真实波幅序列 (True Range)
+        
+        TR = max(high - low, |high - prev_close|, |low - prev_close|)
+        首个交易日无前收盘价，退化为 high - low
+        
+        Returns:
+            与价格序列等长的 TR 列表
+        """
+        true_ranges: List[Decimal] = []
+        
+        for i, point in enumerate(series.prices):
+            if i == 0:
+                true_ranges.append(point.high - point.low)
+            else:
+                prev_close = series.prices[i - 1].close
+                true_ranges.append(max(
+                    point.high - point.low,
+                    abs(point.high - prev_close),
+                    abs(point.low - prev_close),
+                ))
+        
+        return true_ranges
+    
+    @staticmethod
+    def calculate_atr_series(series: AdjustedPriceSeries,
+                             period: int = 14) -> List[Tuple[date, Decimal]]:
+        """
+        计算 ATR 序列（Wilder 平滑法）
+        
+        首个 ATR 值出现在第 period 根K线（索引 period-1），
+        之后每个 ATR = (前ATR * (period-1) + 当日TR) / period
+        
+        Args:
+            series: 价格序列
+            period: ATR 周期
+        
+        Returns:
+            [(日期, ATR值), ...]，数据不足时返回空列表
+        """
+        if period < 1:
+            raise ValueError(f"ATR周期必须>=1: {period}")
+        
+        if len(series.prices) < period:
+            return []
+        
+        true_ranges = PriceCalculator.calculate_true_ranges(series)
+        period_dec = Decimal(str(period))
+        
+        # 首个 ATR：前 period 个 TR 的简单平均
+        atr = sum(true_ranges[:period]) / period_dec
+        result: List[Tuple[date, Decimal]] = [(series.prices[period - 1].date, atr)]
+        
+        # Wilder 平滑
+        for i in range(period, len(true_ranges)):
+            atr = (atr * (period - 1) + true_ranges[i]) / period_dec
+            result.append((series.prices[i].date, atr))
+        
+        return result
+    
+    @staticmethod
+    def calculate_atr(series: AdjustedPriceSeries,
+                      period: int = 14,
+                      index: int = -1) -> Decimal:
+        """
+        计算指定位置的 ATR
+        
+        Args:
+            series: 价格序列
+            period: ATR 周期
+            index: 价格索引，-1 表示最新
+        
+        Returns:
+            ATR 值，数据不足时返回 0
+        """
+        atr_series = PriceCalculator.calculate_atr_series(series, period)
+        if not atr_series:
+            return Decimal("0")
+        
+        target_idx = index if index >= 0 else len(series.prices) + index
+        if target_idx < 0 or target_idx >= len(series.prices):
+            return Decimal("0")
+        
+        target_date = series.prices[target_idx].date
+        for d, value in atr_series:
+            if d == target_date:
+                return value
+        
+        return Decimal("0")
+    
+    @staticmethod
+    def calculate_prior_low_series(series: AdjustedPriceSeries,
+                                   window: int) -> List[Tuple[date, Optional[Decimal]]]:
+        """
+        计算"前 N 日最低价"序列（不包含当日）
+        
+        用于网格策略的启动监控：当日收盘价跌破前 N 个交易日的最低价即触发
+        
+        Args:
+            series: 价格序列
+            window: 回看窗口（交易日数）
+        
+        Returns:
+            [(日期, 前N日最低价), ...]，历史不足时最低价为 None
+        """
+        if window < 1:
+            raise ValueError(f"回看窗口必须>=1: {window}")
+        
+        result: List[Tuple[date, Optional[Decimal]]] = []
+        
+        for i, point in enumerate(series.prices):
+            if i < window:
+                result.append((point.date, None))
+            else:
+                lows = [p.low for p in series.prices[i - window:i]]
+                result.append((point.date, min(lows)))
+        
+        return result
+    
+    @staticmethod
+    def calculate_prior_low(series: AdjustedPriceSeries,
+                            window: int,
+                            index: int = -1) -> Optional[Decimal]:
+        """
+        计算指定位置的前 N 日最低价（不含当日）
+        
+        Returns:
+            最低价，历史不足时返回 None
+        """
+        if window < 1:
+            raise ValueError(f"回看窗口必须>=1: {window}")
+        
+        target_idx = index if index >= 0 else len(series.prices) + index
+        if target_idx < 0 or target_idx >= len(series.prices):
+            return None
+        
+        if target_idx < window:
+            return None
+        
+        lows = [p.low for p in series.prices[target_idx - window:target_idx]]
+        return min(lows)
+    
+    @staticmethod
     def calculate_technical_indicators(series: AdjustedPriceSeries,
                                         index: int = -1) -> Optional[TechnicalIndicators]:
         """

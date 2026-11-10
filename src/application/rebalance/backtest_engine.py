@@ -74,6 +74,33 @@ class RebalanceConfig:
         if abs(float(total_weight) - 1.0) > 0.01:
             raise ValueError(f"权重总和必须为1，当前为{total_weight}")
     
+    @classmethod
+    def from_allocation(cls,
+                        plan,
+                        threshold_pp: Decimal = Decimal("3"),
+                        initial_capital: Decimal = Decimal("1000000"),
+                        transaction_cost_bps: Decimal = Decimal("5"),
+                        start_date: Optional[date] = None,
+                        end_date: Optional[date] = None) -> 'RebalanceConfig':
+        """
+        从共享的总资产配置创建再平衡配置
+        
+        Args:
+            plan: AllocationPlan 总资产配置（与网格策略共用）
+        """
+        assets = [
+            AssetConfig(code=a.code, name=a.name, target_weight=a.target_weight)
+            for a in plan.allocations
+        ]
+        return cls(
+            assets=assets,
+            threshold_pp=threshold_pp,
+            initial_capital=initial_capital,
+            transaction_cost_bps=transaction_cost_bps,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    
     @property
     def asset_codes(self) -> List[str]:
         return [a.code for a in self.assets]
