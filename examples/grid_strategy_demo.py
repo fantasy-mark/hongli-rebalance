@@ -80,7 +80,7 @@ def build_grid_config(step_ratio: str = "2.0",
             step_ratio=Decimal(step_ratio),   # 网格间距 = ATR * 比例
             buy_amount=Decimal(buy_amount),   # 每格买入金额
             lot_size=100,
-            price_basis=GridPriceBasis.LOW,   # 最低价触发 + 限价成交
+            price_basis=GridPriceBasis.CLOSE,   # 触发价 + 限价成交
             take_profit_ratio=(Decimal(take_profit_ratio)
                                if take_profit_ratio else None),
         ),
@@ -148,7 +148,7 @@ def example_3_combined_isolation():
                 atr_period=120,
                 step_ratio=Decimal("0.5"),
                 buy_amount=Decimal("10000"),
-                price_basis=GridPriceBasis.LOW,
+                price_basis=GridPriceBasis.CLOSE,
                 take_profit_ratio=Decimal("1"),
             ),
             start_date=BACKTEST_START,
