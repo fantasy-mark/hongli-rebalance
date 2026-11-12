@@ -22,6 +22,30 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+
+class PriceSourceRateLimited(ValueError):
+    """
+    数据源限流（当前 IP 被临时限制）
+
+    东方财富 push2 接口在短时间请求过多时会临时限流：
+    首次一般约 5 分钟恢复，反复触发可能需要 40 分钟以上。
+    等待期间不应继续重试，否则会延长封禁时间。
+    """
+
+
+def _is_rate_limited(error: BaseException) -> bool:
+    """判断异常是否为数据源限流"""
+    try:
+        from akshare.exceptions import RateLimitError
+        if isinstance(error, RateLimitError):
+            return True
+    except Exception:
+        pass
+
+    name = type(error).__name__
+    text = str(error)
+    return ('RateLimit' in name or '限流' in text or '请求过多' in text)
+
 # 数据源标识常量
 SOURCE_TOTAL_RETURN = "total_return"  # 自算总收益
 SOURCE_EASTMONEY = "eastmoney"
@@ -82,6 +106,7 @@ def _fetch_etf_adjusted_kline(
     修正方案：使用东财的 hfq (后复权) 参数
     优先级：东财hfq → 腾讯qfw
     """
+    rate_limited = False
     if adjust_type == "":
         # 不复权
         try:
@@ -91,6 +116,7 @@ def _fetch_etf_adjusted_kline(
                 df["source"] = SOURCE_EASTMONEY
                 return df
         except Exception as e:
+            rate_limited = rate_limited or _is_rate_limited(e)
             logger.warning(f"东财获取ETF {code} 不复权数据失败: {e}")
     
     # 默认使用后复权 (hfq)
@@ -102,6 +128,7 @@ def _fetch_etf_adjusted_kline(
             df["source"] = SOURCE_EASTMONEY
             return df
     except Exception as e:
+        rate_limited = rate_limited or _is_rate_limited(e)
         logger.warning(f"东财获取ETF {code} 后复权数据失败: {e}")
     
     # 降级到腾讯qfw
@@ -116,8 +143,16 @@ def _fetch_etf_adjusted_kline(
             df["source"] = SOURCE_TENCENT
             return df
     except Exception as e:
+        rate_limited = rate_limited or _is_rate_limited(e)
         logger.warning(f"腾讯获取ETF {code} 失败: {e}")
     
+    if rate_limited:
+        raise PriceSourceRateLimited(
+            f"ETF {code} 取数失败：东方财富接口限流（当前 IP 请求过多）。"
+            f"首次限流约 5 分钟恢复，反复触发可能需 40 分钟以上；"
+            f"等待期间请勿重复调用，或先使用已有缓存。"
+        )
+
     raise ValueError(f"无法获取ETF {code} 的后复权数据，所有数据源均失败")
 
 
@@ -137,6 +172,7 @@ def _fetch_stock_adjusted_kline(
                 df["source"] = SOURCE_EASTMONEY
                 return df
         except Exception as e:
+            rate_limited = rate_limited or _is_rate_limited(e)
             logger.warning(f"东财获取个股 {code} 不复权数据失败: {e}")
     
     # 尝试东财qfw + 质量审计
@@ -158,6 +194,7 @@ def _fetch_stock_adjusted_kline(
                 f"，切换到自算总收益"
             )
     except Exception as e:
+        rate_limited = rate_limited or _is_rate_limited(e)
         logger.warning(f"东财获取个股 {code} qfw失败: {e}")
     
     # 降级到自算总收益
@@ -183,8 +220,16 @@ def _fetch_stock_adjusted_kline(
             df["source"] = SOURCE_TENCENT
             return df
     except Exception as e:
+        rate_limited = rate_limited or _is_rate_limited(e)
         logger.warning(f"腾讯获取个股 {code} 失败: {e}")
     
+    if rate_limited:
+        raise PriceSourceRateLimited(
+            f"个股 {code} 取数失败：东方财富接口限流（当前 IP 请求过多）。"
+            f"首次限流约 5 分钟恢复，反复触发可能需 40 分钟以上；"
+            f"等待期间请勿重复调用，或先使用已有缓存。"
+        )
+
     raise ValueError(f"无法获取个股 {code} 的后复权数据，所有数据源均失败")
 
 
