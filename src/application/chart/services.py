@@ -16,7 +16,7 @@ from pathlib import Path
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-from src.domain.chart.entities import (
+from src.application.chart.entities import (
     ChartConfig, ChartSeries, SeriesRole, Annotation, ChartStyle, YAxisScale
 )
 

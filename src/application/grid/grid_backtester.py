@@ -24,6 +24,8 @@ from src.domain.price.entities import AdjustedPriceSeries, AssetCode, DataSource
 from src.domain.price.services import PriceCalculator
 from src.domain.grid.entities import GridStrategy, GridStrategyStatus
 from src.domain.grid.services import GridEngine
+from src.domain.performance.value_objects import PerformanceCalculator, ReturnStatistics
+from src.domain.trading.value_objects import LotSize
 from src.domain.grid.value_objects import (
     GridCostModel,
     GridMarketSnapshot,
@@ -235,6 +237,7 @@ class GridBacktestResult:
     trades: List[GridTradeRecord]
     daily_values: pd.DataFrame
     round_events: List[GridRoundEvent] = field(default_factory=list)
+    _statistics: Optional[ReturnStatistics] = field(default=None, repr=False, compare=False)
 
     # ------------------------------------------------------------------
     # 绩效指标
@@ -249,71 +252,41 @@ class GridBacktestResult:
         return self.snapshots[-1].total_value if self.snapshots else self.initial_capital
 
     @property
+    def statistics(self) -> ReturnStatistics:
+        """绩效统计（统一口径；基准为网格初始资金）"""
+        if self._statistics is None:
+            self._statistics = PerformanceCalculator.calculate(
+                dates=[s.date for s in self.snapshots],
+                values=[s.total_value for s in self.snapshots],
+                base_value=self.initial_capital,
+            )
+        return self._statistics
+
+    @property
     def total_return(self) -> Decimal:
         """累计收益率"""
-        if not self.snapshots or self.initial_capital <= 0:
-            return Decimal("0")
-        return (self.final_value - self.initial_capital) / self.initial_capital
+        return self.statistics.total_return
 
     @property
     def annualized_return(self) -> Decimal:
         """年化收益率（CAGR）"""
-        if len(self.snapshots) < 2:
-            return Decimal("0")
-
-        days = (self.snapshots[-1].date - self.snapshots[0].date).days
-        if days <= 0 or self.initial_capital <= 0:
-            return Decimal("0")
-
-        years = Decimal(str(days)) / Decimal("365.25")
-        ratio = float(self.final_value / self.initial_capital)
-        cagr = ratio ** (1.0 / float(years)) - 1.0
-        return Decimal(str(cagr))
+        return self.statistics.annualized_return
 
     @property
     def max_drawdown(self) -> tuple:
         """最大回撤 (幅度, 峰值日, 谷底日)"""
-        if not self.snapshots:
-            return (Decimal("0"), date.today(), date.today())
-
-        peak_value = self.snapshots[0].total_value
-        peak_date = self.snapshots[0].date
-        max_dd = Decimal("0")
-        dd_start = peak_date
-        dd_end = peak_date
-
-        for snapshot in self.snapshots[1:]:
-            if snapshot.total_value > peak_value:
-                peak_value = snapshot.total_value
-                peak_date = snapshot.date
-
-            drawdown = (snapshot.total_value - peak_value) / peak_value
-            if drawdown < max_dd:
-                max_dd = drawdown
-                dd_start = peak_date
-                dd_end = snapshot.date
-
-        return (max_dd, dd_start, dd_end)
+        stats = self.statistics
+        return (stats.max_drawdown, stats.max_drawdown_start, stats.max_drawdown_end)
 
     @property
     def volatility(self) -> Decimal:
         """年化波动率"""
-        if len(self.daily_values) < 2:
-            return Decimal("0")
-
-        returns = self.daily_values['total_value'].pct_change().dropna()
-        if returns.empty:
-            return Decimal("0")
-
-        return Decimal(str(returns.std() * np.sqrt(252)))
+        return self.statistics.volatility
 
     @property
     def sharpe_ratio(self) -> Decimal:
         """夏普比率（无风险利率 3%）"""
-        vol = self.volatility
-        if vol <= 0:
-            return Decimal("0")
-        return (self.annualized_return - Decimal("0.03")) / vol
+        return self.statistics.sharpe_ratio
 
     @property
     def buy_count(self) -> int:
@@ -487,6 +460,10 @@ class GridBacktester:
         open_rounds: Dict[str, GridRoundEvent] = {}
         # 每只资产当前持仓（交易类型判定 + 盈亏核算的唯一依据）
         current_shares: Dict[str, Decimal] = {code: Decimal("0") for code in self.config.asset_codes}
+        # 各资产最近一次收盘价（估值用）：
+        # 不同资产的交易日历不同，某资产当日可能无行情，
+        # 此时其持仓应沿用最近收盘价估值，否则组合市值会被漏算、净值出现虚假断崖。
+        last_close: Dict[str, Decimal] = {}
         # 网格交易盈亏账本
         level_cost: Dict[Tuple[str, int], Decimal] = {}   # (资产, 档位) -> 买入金额
         running_cost: Dict[str, Decimal] = {code: Decimal("0") for code in self.config.asset_codes}
@@ -503,6 +480,9 @@ class GridBacktester:
                 snapshot = asset_data.snapshot_at(current_date)
                 if snapshot is None:
                     continue
+
+                # 记录该资产最新收盘价（供估值沿用）
+                last_close[code] = snapshot.close
 
                 state = self.strategy.state_for(code)
                 before_round_no = state.round_no
@@ -591,10 +571,11 @@ class GridBacktester:
             trades.extend(day_trades)
 
             # 记录当日网格组合快照
+            # 估值价格：沿用各资产最近一次收盘价（当日无行情的资产不被漏算）
             prices = {
-                code: market_data[code].close_at(current_date)
+                code: last_close[code]
                 for code in self.config.asset_codes
-                if code in market_data and market_data[code].close_at(current_date) is not None
+                if code in last_close
             }
             positions = {
                 code: state.shares

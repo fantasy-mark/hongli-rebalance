@@ -49,15 +49,15 @@ rebalance/
 │   ├── domain/
 │   │   ├── price/          # 价格上下文（实体/值对象/领域服务）
 │   │   ├── allocation/     # ★ 总资产配置（共享内核）
+│   │   ├── performance/    # ★ 绩效统计（共享内核）
+│   │   ├── trading/        # ★ 交易内核（整手取整）
 │   │   ├── rebalance/      # 再平衡上下文
-│   │   ├── grid/           # ★ 网格上下文
-│   │   ├── strategy/       # 策略上下文
-│   │   ├── execution/      # 执行上下文
-│   │   └── chart/          # 图表上下文
+│   │   └── grid/           # ★ 网格上下文
 │   ├── application/
 │   │   ├── price/          # PriceQueryService
 │   │   ├── rebalance/      # RebalanceBacktester
-│   │   └── grid/           # ★ GridBacktester / GridChartRenderer / CombinedBacktester
+│   │   ├── grid/           # ★ GridBacktester / GridChartRenderer / CombinedBacktester
+│   │   └── chart/          # ★ 图表（由领域层迁出，属技术关注点）
 │   └── infrastructure/
 │       ├── price/          # 价格仓储
 │       ├── grid/           # ★ 网格状态仓储

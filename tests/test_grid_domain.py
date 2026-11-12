@@ -1062,6 +1062,93 @@ class TestTriggerLogAggregation(unittest.TestCase):
         self.assertEqual(GridChartRenderer._format_levels([]), "-")
 
 
+class TestGridValuationCarryForward(unittest.TestCase):
+    """
+    多资产估值：某资产当日无行情时，其持仓应沿用最近收盘价估值
+
+    不同资产的交易日历不同，若直接跳过当日无行情的资产，
+    组合市值会被漏算，净值曲线出现虚假断崖。
+    """
+
+    class _OffsetCalendarProvider:
+        """159937 隔日才有行情，515180 每日都有"""
+
+        def __init__(self, days=40):
+            self.days = days
+
+        def get_adjusted_prices(self, code, start_date=None, end_date=None,
+                                use_cache=True):
+            import pandas as pd
+            rows = []
+            for i in range(self.days):
+                d = date(2024, 1, 1) + pd.Timedelta(days=i)
+                if code == '159937' and i % 2 == 1:
+                    continue
+                close = 10.0 if i < 10 else 10.0 - (min(i, 29) - 9) * 0.15 if i < 30 else 6.7
+                rows.append({
+                    'date': d, 'open': close, 'high': close + 0.05,
+                    'low': close - 0.05, 'close': close,
+                    'volume': 1000, 'amount': 0.0,
+                })
+            return pd.DataFrame(rows).set_index('date')
+
+    def test_valuation_uses_last_known_close(self):
+        """持仓市值 = 份额 × 最近收盘价（不漏算）"""
+        plan = AllocationPlan.equal_weight(
+            [('515180', 'A'), ('159937', 'B')], name='双资产'
+        )
+        config = GridConfig.from_allocation(
+            plan,
+            trigger=GridTrigger(
+                lookback_days=3, atr_period=3, step_ratio=Decimal("0.5"),
+                buy_amount=Decimal("1000"), lot_size=100,
+                price_basis=GridPriceBasis.LOW, take_profit_ratio=Decimal("1"),
+            ),
+            initial_capital=Decimal("100000"),
+        )
+
+        result = GridBacktester(
+            config, price_provider=self._OffsetCalendarProvider()
+        ).run()
+
+        snapshot = result.snapshots[-1]
+        last_row = result.daily_values.iloc[-1]
+
+        expected = Decimal("0")
+        for code, shares in snapshot.positions.items():
+            close = Decimal(str(last_row[f'{code}_close']))
+            expected += shares * close
+
+        self.assertGreater(len(snapshot.positions), 0, "应当有持仓")
+        self.assertAlmostEqual(float(snapshot.market_value), float(expected), places=2)
+
+    def test_total_value_equals_cash_plus_positions(self):
+        """总市值恒等于 现金 + 持仓市值"""
+        plan = AllocationPlan.equal_weight(
+            [('515180', 'A'), ('159937', 'B')], name='双资产'
+        )
+        config = GridConfig.from_allocation(
+            plan,
+            trigger=GridTrigger(
+                lookback_days=3, atr_period=3, step_ratio=Decimal("0.5"),
+                buy_amount=Decimal("1000"), lot_size=100,
+                price_basis=GridPriceBasis.LOW, take_profit_ratio=Decimal("1"),
+            ),
+            initial_capital=Decimal("100000"),
+        )
+
+        result = GridBacktester(
+            config, price_provider=self._OffsetCalendarProvider()
+        ).run()
+
+        for snapshot in result.snapshots:
+            self.assertAlmostEqual(
+                float(snapshot.total_value),
+                float(snapshot.cash + snapshot.market_value),
+                places=2,
+            )
+
+
 class TestGridPnlAccounting(unittest.TestCase):
     """网格盈亏核算"""
 

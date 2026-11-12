@@ -21,13 +21,13 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 
-from src.domain.chart.entities import (
+from src.application.chart.entities import (
     ChartConfig,
     ChartSeries,
     ChartStyle,
     SeriesRole,
 )
-from src.domain.chart.services import ChartRenderer
+from src.application.chart.services import ChartRenderer
 from src.domain.grid.value_objects import GridTradeType
 
 logger = logging.getLogger(__name__)

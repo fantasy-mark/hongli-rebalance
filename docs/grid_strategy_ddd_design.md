@@ -39,7 +39,10 @@
 - Grid Context 依赖 Price Context（ATR / 前低）
 - Grid 与 Rebalance 之间为 **Partnership**（组合回测时协作），
   但**资金与持仓完全隔离**（各自独立的聚合根与账本）
-- Chart Context 扩展了**分组标记点**能力（`ChartMarkerGroup`），供网格图使用
+- Chart 原为独立上下文，因属**技术关注点**（渲染）而非业务规则，
+  已迁至 `application/chart`；同时扩展了**分组标记点**能力（`ChartMarkerGroup`）
+- Performance Context 为共享内核，三个策略共用同一套绩效口径
+  （此前三处各写一遍，口径已漂移）
 
 ---
 
@@ -256,15 +259,19 @@ src/
 │   │   ├── value_objects.py        # GridTrigger, GridCostModel, GridMarketSnapshot,
 │   │   │                           # GridDecision, GridOrder, GridTranche, GridTradeType, 枚举
 │   │   └── services.py             # GridEngine(领域服务)
-│   ├── chart/
-│   │   ├── entities.py             ★ 扩展: ChartMarkerGroup(分组标记点)
-│   │   └── services.py             ★ 扩展: ChartRenderer.render_on(多面板复用)
+│   ├── performance/                ★ 新增（共享内核）
+│   │   └── value_objects.py         # ReturnStatistics + PerformanceCalculator
+│   ├── trading/                    ★ 新增（共享内核）
+│   │   └── value_objects.py         # LotSize（整手取整）
 │   └── price/
 │       └── services.py             ★ 扩展: calculate_atr_series / calculate_atr /
 │                                       calculate_prior_low_series / calculate_prior_low
 ├── application/
 │   ├── rebalance/
 │   │   └── backtest_engine.py      ★ 扩展: RebalanceConfig.from_allocation
+│   ├── chart/                      ★ 新增（由领域层迁出）
+│   │   ├── entities.py             # ChartConfig, ChartSeries, ChartMarkerGroup ...
+│   │   └── services.py             # ChartRenderer, ChartFactory
 │   └── grid/                       ★ 新增
 │       ├── grid_backtester.py      # GridConfig / GridBacktester / GridBacktestResult
 │       ├── grid_chart.py           # GridChartRenderer（多面板图 + 触发日志）

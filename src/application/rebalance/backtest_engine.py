@@ -15,31 +15,13 @@ from typing import Dict, List, Optional, Tuple
 import logging
 
 import pandas as pd
-import numpy as np
 
 from src.domain.price.entities import AssetCode, AdjustedPriceSeries
+from src.domain.performance.value_objects import PerformanceCalculator, ReturnStatistics
+from src.domain.trading.value_objects import LotSize
 from src.application.price.query_service import PriceQueryService
 
 logger = logging.getLogger(__name__)
-
-
-def _round_to_lot_size(shares: Decimal, lot_size: int = 100) -> Decimal:
-    """
-    将股数向下取整到指定手数的整数倍
-    
-    Args:
-        shares: 原始股数
-        lot_size: 手数大小，默认100股
-        
-    Returns:
-        取整后的股数（lot_size的整数倍）
-    """
-    if shares <= 0:
-        return Decimal("0")
-    
-    # 向下取整到lot_size的倍数
-    lots = int(shares) // lot_size
-    return Decimal(str(lots * lot_size))
 
 
 @dataclass
@@ -162,92 +144,43 @@ class BacktestResult:
     snapshots: List[PortfolioSnapshot]
     all_trades: List[Trade]
     daily_values: pd.DataFrame
+    _statistics: Optional[ReturnStatistics] = field(default=None, repr=False, compare=False)
+    
+    @property
+    def statistics(self) -> ReturnStatistics:
+        """绩效统计（统一口径，由 PerformanceCalculator 计算）"""
+        if self._statistics is None:
+            self._statistics = PerformanceCalculator.calculate(
+                dates=[s.date for s in self.snapshots],
+                values=[s.total_value for s in self.snapshots],
+            )
+        return self._statistics
     
     @property
     def total_return(self) -> Decimal:
         """总收益率"""
-        if not self.snapshots:
-            return Decimal("0")
-        initial = self.snapshots[0].total_value
-        final = self.snapshots[-1].total_value
-        if initial <= 0:
-            return Decimal("0")
-        return (final - initial) / initial
+        return self.statistics.total_return
     
     @property
     def annualized_return(self) -> Decimal:
         """年化收益率"""
-        if len(self.snapshots) < 2:
-            return Decimal("0")
-        
-        initial = self.snapshots[0].total_value
-        final = self.snapshots[-1].total_value
-        days = (self.snapshots[-1].date - self.snapshots[0].date).days
-        
-        if days <= 0 or initial <= 0:
-            return Decimal("0")
-        
-        years = Decimal(str(days)) / Decimal("365.25")
-        ratio = final / initial
-        
-        # CAGR = (final/initial)^(1/years) - 1
-        cagr = float(ratio) ** (1.0 / float(years)) - 1.0
-        return Decimal(str(cagr))
+        return self.statistics.annualized_return
     
     @property
     def max_drawdown(self) -> Tuple[Decimal, date, date]:
         """最大回撤"""
-        if not self.snapshots:
-            return (Decimal("0"), date.today(), date.today())
-        
-        values = [(s.date, s.total_value) for s in self.snapshots]
-        
-        max_dd = Decimal("0")
-        peak_value = values[0][1]
-        peak_date = values[0][0]
-        dd_start = values[0][0]
-        dd_end = values[0][0]
-        
-        for current_date, current_value in values[1:]:
-            if current_value > peak_value:
-                peak_value = current_value
-                peak_date = current_date
-            
-            drawdown = (current_value - peak_value) / peak_value
-            
-            if drawdown < max_dd:
-                max_dd = drawdown
-                dd_start = peak_date
-                dd_end = current_date
-        
-        return (max_dd, dd_start, dd_end)
+        stats = self.statistics
+        return (stats.max_drawdown, stats.max_drawdown_start, stats.max_drawdown_end)
     
     @property
     def volatility(self) -> Decimal:
         """波动率（年化）"""
-        if len(self.daily_values) < 2:
-            return Decimal("0")
-        
-        returns = self.daily_values['total_value'].pct_change().dropna()
-        if returns.empty:
-            return Decimal("0")
-        
-        daily_vol = returns.std()
-        annual_vol = daily_vol * np.sqrt(252)
-        
-        return Decimal(str(annual_vol))
+        return self.statistics.volatility
     
     @property
     def sharpe_ratio(self) -> Decimal:
-        """夏普比率（假设无风险利率3%）"""
-        ann_return = self.annualized_return
-        vol = self.volatility
-        
-        if vol <= 0:
-            return Decimal("0")
-        
-        risk_free = Decimal("0.03")
-        return (ann_return - risk_free) / vol
+        """夏普比率（无风险利率3%）"""
+        return self.statistics.sharpe_ratio
     
     @property
     def total_trades(self) -> int:
@@ -590,7 +523,7 @@ class RebalanceBacktester:
             shares = target_amount / price
             
             # 向下取整到100股的整数倍
-            shares_int = _round_to_lot_size(shares, lot_size=100)
+            shares_int = LotSize(100).floor(shares)
             actual_amount = shares_int * price
             cost = actual_amount * self.config.transaction_cost_bps / Decimal("10000")
             
@@ -640,7 +573,7 @@ class RebalanceBacktester:
                 price = prices[code]
                 shares_to_sell = sell_amount / price
                 # 向下取整到100股的整数倍
-                shares_int = _round_to_lot_size(shares_to_sell, lot_size=100)
+                shares_int = LotSize(100).floor(shares_to_sell)
                 
                 if shares_int > 0:
                     actual_amount = shares_int * price
@@ -672,7 +605,7 @@ class RebalanceBacktester:
                 price = prices[code]
                 shares_to_buy = buy_amount / price
                 # 向下取整到100股的整数倍
-                shares_int = _round_to_lot_size(shares_to_buy, lot_size=100)
+                shares_int = LotSize(100).floor(shares_to_buy)
                 
                 if shares_int > 0:
                     actual_amount = shares_int * price

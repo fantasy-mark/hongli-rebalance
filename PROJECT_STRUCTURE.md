@@ -9,16 +9,30 @@
 src/domain/price/
 ├── entities.py              # 实体: AssetCode, PricePoint, AdjustedPriceSeries
 ├── value_objects.py         # 值对象: ReturnMetrics, DateRange, TechnicalIndicators
+│                             #          CachePolicy, RefreshPlan, MergeResult
 └── services.py              # 领域服务: PriceCalculator (+ATR / 前N日最低价)
+                             #          PriceCachePlanner, PriceSeriesMerger
 
 src/domain/allocation/      # ★ 总资产配置（再平衡与网格共享内核）
 └── entities.py              # 聚合根: AllocationPlan, 值对象: AssetAllocation
+
+src/domain/performance/     # ★ 绩效统计（三个策略共享内核）
+├── value_objects.py         # 值对象: ReturnStatistics
+└── services.py              # （见 value_objects 内 PerformanceCalculator）
+
+src/domain/trading/         # ★ 交易内核（整手取整等市场规则共享）
+└── value_objects.py         # 值对象: LotSize
 
 src/domain/grid/            # ★ 网格策略上下文
 ├── entities.py              # 聚合根: GridStrategy, GridState
 ├── value_objects.py         # 值对象: GridTrigger, GridCostModel, GridMarketSnapshot,
 │                             #          GridDecision, GridTradeType, 枚举
 └── services.py              # 领域服务: GridEngine
+
+src/domain/rebalance/        # 再平衡上下文
+├── entities.py              # RebalancePolicy 等
+├── value_objects.py         # 值对象: RebalanceOrder（上下文自有，不依赖其它上下文）
+└── services.py              # 领域服务: RebalanceEngine
 ```
 
 #### 应用层 (Application Layer) - 用例编排
@@ -30,6 +44,10 @@ src/application/grid/        # ★ 网格策略上下文
 ├── grid_backtester.py       # 应用服务: GridBacktester
 ├── grid_chart.py            # 应用服务: GridChartRenderer（多面板图 + 触发日志）
 └── combined_backtester.py   # 应用服务: CombinedBacktester（共享配置，持仓隔离）
+
+src/application/chart/       # ★ 图表（技术关注点，由领域层迁出）
+├── entities.py              # ChartConfig, ChartSeries, ChartMarkerGroup ...
+└── services.py              # ChartRenderer, ChartFactory
 ```
 
 #### 基础设施层 (Infrastructure Layer) - 技术实现

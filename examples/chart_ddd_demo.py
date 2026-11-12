@@ -15,11 +15,11 @@ from datetime import date
 from decimal import Decimal
 
 # 导入领域实体和服务
-from src.domain.chart.entities import (
+from src.application.chart.entities import (
     ChartConfig, ChartSeries, ChartStyle, Annotation,
     SeriesRole, SeriesType
 )
-from src.domain.chart.services import ChartRenderer, ChartFactory
+from src.application.chart.services import ChartRenderer, ChartFactory
 
 
 def example_1_create_chart_config():
@@ -165,7 +165,7 @@ def example_2_render_from_backtest():
     end_d = result.daily_values.index[-1]
     
     # 导入YAxisScale枚举
-    from src.domain.chart.entities import YAxisScale
+    from src.application.chart.entities import YAxisScale
     
     chart_config = ChartFactory.create_from_backtest_result(
         backtest_result=result,

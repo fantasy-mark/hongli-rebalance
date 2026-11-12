@@ -19,7 +19,6 @@ from typing import List, Optional
 import logging
 
 import pandas as pd
-import numpy as np
 
 from src.application.price.query_service import PriceQueryService
 from src.application.rebalance.backtest_engine import (
@@ -32,6 +31,7 @@ from src.application.grid.grid_backtester import (
     GridConfig,
 )
 from src.domain.allocation.entities import AllocationPlan
+from src.domain.performance.value_objects import PerformanceCalculator, ReturnStatistics
 from src.domain.grid.value_objects import GridCostModel, GridTrigger
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ class CombinedBacktestResult:
     rebalance_result: object          # RebalanceBacktestResult
     grid_result: GridBacktestResult
     daily_values: pd.DataFrame        # rebalance_value / grid_value / total_value
+    _statistics: Optional[ReturnStatistics] = field(default=None, repr=False, compare=False)
 
     @property
     def initial_capital(self) -> Decimal:
@@ -110,68 +111,44 @@ class CombinedBacktestResult:
         return Decimal(str(self.daily_values['total_value'].iloc[-1]))
 
     @property
+    def statistics(self) -> ReturnStatistics:
+        """绩效统计（统一口径；基准为共同区间首日合计市值）"""
+        if self._statistics is None:
+            index = self.daily_values.index
+            values = [Decimal(str(v)) for v in self.daily_values['total_value'].tolist()]
+            dates = [i.date() if hasattr(i, 'date') else i for i in index]
+            self._statistics = PerformanceCalculator.calculate(
+                dates=dates,
+                values=values,
+                base_value=self.base_value,
+            )
+        return self._statistics
+
+    @property
     def total_return(self) -> Decimal:
         """组合累计收益率（相对共同区间首日市值）"""
-        base = self.base_value
-        if base <= 0:
-            return Decimal("0")
-        return (self.final_value - base) / base
+        return self.statistics.total_return
 
     @property
     def annualized_return(self) -> Decimal:
         """组合年化收益率"""
-        if len(self.daily_values) < 2:
-            return Decimal("0")
-
-        days = (self.daily_values.index[-1] - self.daily_values.index[0]).days
-        base = self.base_value
-        if days <= 0 or base <= 0:
-            return Decimal("0")
-
-        years = Decimal(str(days)) / Decimal("365.25")
-        ratio = float(self.final_value / base)
-        return Decimal(str(ratio ** (1.0 / float(years)) - 1.0))
+        return self.statistics.annualized_return
 
     @property
     def max_drawdown(self) -> tuple:
         """组合最大回撤"""
-        if self.daily_values.empty:
-            return (Decimal("0"), date.today(), date.today())
-
-        values = self.daily_values['total_value']
-        peak = values.iloc[0]
-        max_dd = 0.0
-        dd_start = values.index[0]
-        dd_end = values.index[0]
-
-        for idx, value in values.items():
-            if value > peak:
-                peak = value
-                dd_start = idx
-            dd = (value - peak) / peak
-            if dd < max_dd:
-                max_dd = dd
-                dd_end = idx
-
-        return (Decimal(str(max_dd)), dd_start, dd_end)
+        stats = self.statistics
+        return (stats.max_drawdown, stats.max_drawdown_start, stats.max_drawdown_end)
 
     @property
     def volatility(self) -> Decimal:
         """组合年化波动率"""
-        if len(self.daily_values) < 2:
-            return Decimal("0")
-        returns = self.daily_values['total_value'].pct_change().dropna()
-        if returns.empty:
-            return Decimal("0")
-        return Decimal(str(returns.std() * np.sqrt(252)))
+        return self.statistics.volatility
 
     @property
     def sharpe_ratio(self) -> Decimal:
         """组合夏普比率"""
-        vol = self.volatility
-        if vol <= 0:
-            return Decimal("0")
-        return (self.annualized_return - Decimal("0.03")) / vol
+        return self.statistics.sharpe_ratio
 
     def summary(self) -> str:
         """生成组合摘要"""

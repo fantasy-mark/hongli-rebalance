@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
 from src.domain.rebalance.entities import RebalancePolicy
-from src.domain.execution.entities import TradeOrder, OrderSide, OrderType
+from src.domain.rebalance.value_objects import RebalanceOrder, RebalanceOrderSide
 
 
 @dataclass
@@ -18,7 +18,7 @@ class RebalanceResult:
     """再平衡结果"""
     policy_id: str
     triggered: bool
-    orders: List[TradeOrder]
+    orders: List[RebalanceOrder]
     total_cost: Decimal
     estimated_turnover: Decimal
     timestamp: datetime
@@ -71,7 +71,7 @@ class RebalanceEngine:
     @staticmethod
     def calculate_orders(policy: RebalancePolicy,
                         current_state: Dict[str, Any],
-                        strategy_id: Optional[str] = None) -> List[TradeOrder]:
+                        strategy_id: Optional[str] = None) -> List[RebalanceOrder]:
         """
         计算再平衡订单
         
@@ -88,25 +88,28 @@ class RebalanceEngine:
         """
         orders_data, total_cost = policy.calculate_rebalance_orders(current_state)
         
-        # 转换为TradeOrder对象
+        # 转换为 RebalanceOrder 对象
         orders = []
         for order_data in orders_data:
-            order = TradeOrder(
+            order = RebalanceOrder(
                 asset_code=order_data['asset_code'],
-                side=OrderSide.BUY if order_data['side'] == 'BUY' else OrderSide.SELL,
+                side=(RebalanceOrderSide.BUY if order_data['side'] == 'BUY'
+                      else RebalanceOrderSide.SELL),
                 quantity=order_data['quantity'],
-                order_type=OrderType.MARKET,
+                price=order_data.get('price'),
+                amount=order_data.get('amount'),
                 strategy_id=strategy_id,
                 policy_id=policy.policy_id,
+                created_at=datetime.now(),
             )
             orders.append(order)
         
         return orders
     
     @staticmethod
-    def optimize_orders(orders: List[TradeOrder],
+    def optimize_orders(orders: List[RebalanceOrder],
                        constraints: Any,
-                       portfolio_value: Decimal) -> List[TradeOrder]:
+                       portfolio_value: Decimal) -> List[RebalanceOrder]:
         """
         优化订单以满足约束
         
