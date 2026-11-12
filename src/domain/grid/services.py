@@ -17,6 +17,7 @@ GridEngine: 网格引擎（纯业务规则，无外部依赖）
 - LOW:   以当日最低价判定触发，按限价单在档位价格成交（跳空时按开盘价成交）
 """
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from typing import List
@@ -318,7 +319,10 @@ class GridEngine:
             )
 
             strategy.cash -= (amount + cost)
-            state.record_buy(order)
+            # 由领域状态判定交易类型（开仓 / 加仓）并记账
+            order = replace(order,
+                            trade_type=state.record_buy(order),
+                            shares_after=state.shares)
             orders.append(order)
 
             state.next_level += 1
@@ -408,7 +412,10 @@ class GridEngine:
             )
 
             strategy.cash += (amount - cost)
-            state.record_sell(order)
+            # 由领域状态记账并结算已实现盈亏
+            order = replace(order,
+                            trade_type=state.record_sell(order),
+                            shares_after=state.shares)
             orders.append(order)
 
         return orders

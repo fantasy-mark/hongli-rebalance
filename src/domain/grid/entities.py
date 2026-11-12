@@ -24,6 +24,7 @@ from src.domain.grid.value_objects import (
     GridCostModel,
     GridOrder,
     GridOrderSide,
+    GridTradeType,
     GridTrigger,
     GridTranche,
 )
@@ -92,7 +93,8 @@ class GridState:
     skipped_levels: List[int] = field(default_factory=list)  # 已跳过档位
     tranches: List[GridTranche] = field(default_factory=list)  # 持仓批次
     shares: Decimal = Decimal("0")             # 网格持仓数量
-    cost_basis: Decimal = Decimal("0")         # 网格持仓成本
+    cost_basis: Decimal = Decimal("0")         # 网格持仓成本（含手续费）
+    realized_pnl: Decimal = Decimal("0")        # 累计已实现盈亏
     last_price: Optional[Decimal] = None       # 最近价格
     last_action: Optional[GridAction] = None   # 最近动作
     triggered_at: Optional[date] = None        # 本轮触发日期
@@ -196,13 +198,31 @@ class GridState:
     # 成交记录
     # ------------------------------------------------------------------
 
-    def record_buy(self, order: GridOrder) -> None:
-        """记录一笔网格买入"""
+    def record_buy(self, order: GridOrder) -> GridTradeType:
+        """
+        记录一笔网格买入，并判定交易类型
+
+        判定规则（业务规则，仅有一份实现）:
+        - 买入前持仓为 0   -> 开仓 OPEN
+        - 买入前持仓 > 0   -> 加仓 ADD（持仓中再买只能是加仓）
+
+        同时累计持仓成本（含手续费）与持仓批次。
+
+        Args:
+            order: 买入成交记录
+
+        Returns:
+            GridTradeType
+        """
         if order.side != GridOrderSide.BUY:
             raise ValueError(f"只能记录买入成交: {order.side}")
 
+        # 交易类型由领域层判定：持仓为 0 才是开仓
+        trade_type = (GridTradeType.OPEN if self.shares == 0
+                      else GridTradeType.ADD)
+
         self.shares += order.shares
-        self.cost_basis += order.amount
+        self.cost_basis += order.amount + order.cost
 
         if order.level is not None:
             self.filled_levels.append(order.level)
@@ -213,10 +233,26 @@ class GridState:
             shares=order.shares,
             amount=order.amount,
             date=order.date,
+            cost=order.cost,
         ))
 
-    def record_sell(self, order: GridOrder) -> None:
-        """记录一笔网格卖出（按批次平仓）"""
+        return trade_type
+
+    def record_sell(self, order: GridOrder) -> GridTradeType:
+        """
+        记录一笔网格卖出（止盈），并结算已实现盈亏
+
+        盈亏口径:
+        - 已实现盈亏 = (卖出净额 - 对应批次总支出)
+          卖出净额 = 金额 - 手续费；总支出 = 买入金额 + 买入手续费
+        - 持仓成本同步扣减该批次总支出
+
+        Args:
+            order: 卖出成交记录
+
+        Returns:
+            GridTradeType（止盈 TAKE_PROFIT）
+        """
         if order.side != GridOrderSide.SELL:
             raise ValueError(f"只能记录卖出成交: {order.side}")
 
@@ -226,9 +262,14 @@ class GridState:
 
         for tranche in list(self.tranches):
             if order.level is not None and tranche.level == order.level:
-                self.cost_basis -= tranche.amount
+                # 扣减该批次总支出，并结算已实现盈亏
+                self.cost_basis -= tranche.total_outlay
+                self.realized_pnl += (order.amount - order.cost) - tranche.total_outlay
                 self.tranches.remove(tranche)
                 break
+
+        # 卖出只发生在整轮止盈场景（引擎保证一次性清仓）
+        return GridTradeType.TAKE_PROFIT
 
     def skip_level(self, level: int) -> None:
         """标记档位被跳过"""
@@ -245,10 +286,14 @@ class GridState:
         return self.shares * price
 
     def unrealized_pnl(self, price: Optional[Decimal]) -> Decimal:
-        """浮动盈亏"""
+        """浮动盈亏 = 持仓市值 - 持仓成本（含手续费）"""
         if price is None:
             return Decimal("0")
         return self.market_value(price) - self.cost_basis
+
+    def total_pnl(self, price: Optional[Decimal]) -> Decimal:
+        """总盈亏 = 已实现 + 浮动"""
+        return self.realized_pnl + self.unrealized_pnl(price)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -265,6 +310,7 @@ class GridState:
             'tranches': [t.to_dict() for t in self.tranches],
             'shares': float(self.shares),
             'cost_basis': float(self.cost_basis),
+            'realized_pnl': float(self.realized_pnl),
             'last_price': float(self.last_price) if self.last_price is not None else None,
             'last_action': self.last_action.value if self.last_action else None,
             'triggered_at': self.triggered_at.isoformat() if self.triggered_at else None,
@@ -291,6 +337,7 @@ class GridState:
             skipped_levels=list(data.get('skipped_levels', [])),
             shares=Decimal(str(data.get('shares', 0))),
             cost_basis=Decimal(str(data.get('cost_basis', 0))),
+            realized_pnl=Decimal(str(data.get('realized_pnl', 0))),
             last_price=Decimal(str(data['last_price'])) if data.get('last_price') is not None else None,
             last_action=GridAction(last_action) if last_action else None,
             triggered_at=date.fromisoformat(triggered_at) if triggered_at else None,
@@ -305,6 +352,7 @@ class GridState:
                 shares=Decimal(str(t['shares'])),
                 amount=Decimal(str(t['amount'])),
                 date=date.fromisoformat(t['date']),
+                cost=Decimal(str(t.get('cost', 0))),
             ))
 
         return state

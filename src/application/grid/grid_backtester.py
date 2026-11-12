@@ -458,16 +458,12 @@ class GridBacktester:
         round_events: List[GridRoundEvent] = []
         # 记录每只资产当前轮次的事件对象，便于在完全止盈时闭合
         open_rounds: Dict[str, GridRoundEvent] = {}
-        # 每只资产当前持仓（交易类型判定 + 盈亏核算的唯一依据）
-        current_shares: Dict[str, Decimal] = {code: Decimal("0") for code in self.config.asset_codes}
         # 各资产最近一次收盘价（估值用）：
         # 不同资产的交易日历不同，某资产当日可能无行情，
         # 此时其持仓应沿用最近收盘价估值，否则组合市值会被漏算、净值出现虚假断崖。
         last_close: Dict[str, Decimal] = {}
-        # 网格交易盈亏账本
-        level_cost: Dict[Tuple[str, int], Decimal] = {}   # (资产, 档位) -> 买入金额
-        running_cost: Dict[str, Decimal] = {code: Decimal("0") for code in self.config.asset_codes}
-        realized_pnl = Decimal("0")
+        # 说明：持仓 / 成本 / 已实现盈亏 / 交易类型均由领域层 GridState 维护，
+        # 应用层不再持有影子账本，避免出现两份真相来源。
 
         for current_date in trading_days:
             day_trades: List[GridTradeRecord] = []
@@ -505,32 +501,8 @@ class GridBacktester:
                     open_rounds[code] = event
 
                 for order in decision.orders:
-                    # ---- 交易类型判定（以买入前持仓为准）----
-                    # 开仓 = 买入前持仓为 0；持仓 > 0 时再买一律视为加仓
-                    # 卖出一律视为止盈（整轮一次性清仓）
-                    if order.side == GridOrderSide.BUY:
-                        position_before = current_shares.get(code, Decimal("0"))
-                        trade_type = (GridTradeType.OPEN
-                                      if position_before == 0
-                                      else GridTradeType.ADD)
-                        current_shares[code] = position_before + order.shares
-                        # 记录该档位的买入总支出（含手续费，用于卖出时计算已实现盈亏）
-                        if order.level is not None:
-                            level_cost[(order.asset_code, order.level)] = order.amount + order.cost
-                        running_cost[order.asset_code] = (
-                            running_cost.get(order.asset_code, Decimal("0"))
-                            + order.amount + order.cost
-                        )
-                    else:
-                        # 止盈为整轮一次性清仓，本决策内的全部卖出均标记为止盈
-                        remaining = current_shares.get(code, Decimal("0")) - order.shares
-                        current_shares[code] = max(remaining, Decimal("0"))
-                        trade_type = GridTradeType.TAKE_PROFIT
-                        # 已实现盈亏 = 净卖出金额 - 对应档位的买入成本
-                        cost = level_cost.get((order.asset_code, order.level), Decimal("0"))
-                        realized_pnl += (order.amount - order.cost) - cost
-                        running_cost[order.asset_code] = (running_cost.get(order.asset_code, Decimal("0"))
-                                                         - cost)
+                    # 交易类型与盈亏已由领域层在记账时判定，应用层只做展示
+                    trade_type = order.trade_type or GridTradeType.ADD
 
                     trade = GridTradeRecord(
                         date=order.date,
@@ -544,7 +516,9 @@ class GridBacktester:
                         cash_after=self.strategy.cash,
                         trade_type=trade_type,
                         round_no=state.round_no,
-                        shares_after=current_shares.get(order.asset_code, Decimal("0")),
+                        shares_after=(order.shares_after
+                                      if order.shares_after is not None
+                                      else state.shares),
                     )
                     day_trades.append(trade)
 
@@ -584,8 +558,11 @@ class GridBacktester:
             }
             market_value = self.strategy.positions_value(prices)
 
-            # ---- 网格交易盈亏（已实现 + 浮动）----
-            cost_basis = sum(running_cost.values(), Decimal("0"))
+            # ---- 网格交易盈亏（已实现 + 浮动，均取自领域层状态）----
+            cost_basis = sum((st.cost_basis for st in self.strategy.states.values()),
+                             Decimal("0"))
+            realized_pnl = sum((st.realized_pnl for st in self.strategy.states.values()),
+                               Decimal("0"))
             floating_pnl = market_value - cost_basis
             total_pnl = realized_pnl + floating_pnl
 

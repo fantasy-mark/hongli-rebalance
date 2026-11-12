@@ -1149,6 +1149,143 @@ class TestGridValuationCarryForward(unittest.TestCase):
             )
 
 
+class TestTradeTypeInDomain(unittest.TestCase):
+    """
+    交易类型判定与盈亏核算位于领域层
+
+    - 开仓 / 加仓 由 GridState.record_buy 判定（持仓为 0 才是开仓）
+    - 已实现盈亏由 GridState.record_sell 结算（含手续费）
+    应用层不再持有影子持仓，避免两份真相来源。
+    """
+
+    def _state(self):
+        from src.domain.grid.entities import GridState
+        return GridState(asset_code="515180")
+
+    def _order(self, side, shares, price, level, on=date(2024, 1, 2),
+               cost=Decimal("0")):
+        from src.domain.grid.value_objects import GridOrder, GridOrderSide
+        return GridOrder(
+            asset_code="515180",
+            side=side,
+            price=Decimal(str(price)),
+            shares=Decimal(str(shares)),
+            amount=Decimal(str(price)) * Decimal(str(shares)),
+            cost=Decimal(str(cost)),
+            date=on,
+            level=level,
+        )
+
+    # ------------------------------------------------------------------
+
+    def test_first_buy_is_open(self):
+        """持仓为 0 时买入 -> 开仓"""
+        from src.domain.grid.value_objects import GridOrderSide, GridTradeType
+
+        state = self._state()
+        trade_type = state.record_buy(
+            self._order(GridOrderSide.BUY, 100, "10.00", level=1))
+
+        self.assertEqual(trade_type, GridTradeType.OPEN)
+        self.assertEqual(state.shares, Decimal("100"))
+
+    def test_buy_while_holding_is_add(self):
+        """持仓 > 0 时再买 -> 加仓（即使换了新轮次也不影响该规则）"""
+        from src.domain.grid.value_objects import GridOrderSide, GridTradeType
+
+        state = self._state()
+        first = state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1))
+        second = state.record_buy(self._order(GridOrderSide.BUY, 100, "9.80", level=2))
+
+        self.assertEqual(first, GridTradeType.OPEN)
+        self.assertEqual(second, GridTradeType.ADD)
+        self.assertEqual(state.shares, Decimal("200"))
+
+    def test_cost_basis_includes_commission(self):
+        """持仓成本含手续费"""
+        from src.domain.grid.value_objects import GridOrderSide
+
+        state = self._state()
+        state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1, cost="5"))
+
+        self.assertEqual(state.cost_basis, Decimal("1005"))
+
+    def test_realized_pnl_nets_commission(self):
+        """已实现盈亏 = 卖出净额 - 买入总支出（两侧均扣手续费）"""
+        from src.domain.grid.value_objects import GridOrderSide, GridTradeType
+
+        state = self._state()
+        # 买入：1000 + 手续费 5 = 1005 支出
+        state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1, cost="5"))
+        # 卖出：1100 - 手续费 6 = 1094 净收入
+        trade_type = state.record_sell(
+            self._order(GridOrderSide.SELL, 100, "11.00", level=1,
+                        on=date(2024, 1, 3), cost="6"))
+
+        self.assertEqual(trade_type, GridTradeType.TAKE_PROFIT)
+        self.assertEqual(state.realized_pnl, Decimal("89"))      # 1094 - 1005
+        self.assertEqual(state.shares, Decimal("0"))
+        self.assertEqual(state.cost_basis, Decimal("0"))
+
+    def test_sell_more_than_held_raises(self):
+        """卖出数量超过持仓 -> 拒绝"""
+        from src.domain.grid.value_objects import GridOrderSide
+
+        state = self._state()
+        state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1))
+        with self.assertRaises(ValueError):
+            state.record_sell(
+                self._order(GridOrderSide.SELL, 200, "11.00", level=1,
+                            on=date(2024, 1, 3)))
+
+    def test_total_pnl_is_realized_plus_floating(self):
+        """总盈亏 = 已实现 + 浮动"""
+        from src.domain.grid.value_objects import GridOrderSide
+
+        state = self._state()
+        state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1))
+
+        # 持仓 100 股，现价 10.5 -> 浮动 +50
+        self.assertEqual(state.unrealized_pnl(Decimal("10.5")), Decimal("50.0"))
+        self.assertEqual(state.realized_pnl, Decimal("0"))
+        self.assertEqual(state.total_pnl(Decimal("10.5")), Decimal("50.0"))
+
+    def test_order_carries_trade_type_and_shares_after(self):
+        """引擎记账后把交易类型与成交后持仓回填到订单上"""
+        from src.domain.grid.entities import GridStrategy
+        from src.domain.grid.services import GridEngine
+
+        strategy = GridStrategy(
+            name="回填测试",
+            trigger=GridTrigger(
+                lookback_days=5, atr_period=3, step_ratio=Decimal("0.5"),
+                buy_amount=Decimal("10000"), lot_size=100,
+                price_basis=GridPriceBasis.CLOSE, take_profit_ratio=Decimal("1"),
+            ),
+            asset_codes=["515180"],
+            cash=Decimal("100000"),
+        )
+
+        GridEngine.evaluate(strategy, "515180", GridMarketSnapshot(
+            date=date(2024, 1, 10), close=Decimal("1.000"),
+            prior_low=Decimal("1.050"), atr=Decimal("0.040"),
+            open=Decimal("1.000"), high=Decimal("1.000"), low=Decimal("1.000"),
+        ))
+        # 跌穿两档 -> 同日两笔买入
+        decision = GridEngine.evaluate(strategy, "515180", GridMarketSnapshot(
+            date=date(2024, 1, 11), close=Decimal("0.940"),
+            prior_low=Decimal("0.950"), atr=Decimal("0.040"),
+            open=Decimal("0.940"), high=Decimal("0.940"), low=Decimal("0.940"),
+        ))
+
+        self.assertGreaterEqual(len(decision.orders), 2)
+        self.assertEqual(decision.orders[0].trade_type, GridTradeType.OPEN)
+        self.assertEqual(decision.orders[1].trade_type, GridTradeType.ADD)
+        # shares_after 逐笔递增（不是当日最终值）
+        self.assertLess(decision.orders[0].shares_after,
+                        decision.orders[1].shares_after)
+
+
 class TestGridPnlAccounting(unittest.TestCase):
     """网格盈亏核算"""
 

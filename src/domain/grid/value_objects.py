@@ -237,12 +237,18 @@ class GridTranche:
     网格持仓批次（值对象）
 
     记录单笔网格买入，用于止盈时按批次平仓
+
+    属性:
+    - amount: 成交金额
+    - cost:   交易费用（手续费+滑点）
+    - total_outlay: 总支出 = amount + cost（成本核算口径）
     """
     level: int
     price: Decimal
     shares: Decimal
     amount: Decimal
     date: date
+    cost: Decimal = Decimal("0")
 
     def __post_init__(self):
         if self.level < 0:
@@ -251,6 +257,15 @@ class GridTranche:
             raise ValueError(f"持仓数量必须>0: {self.shares}")
         if self.price <= 0:
             raise ValueError(f"买入价格必须>0: {self.price}")
+        if self.amount < 0:
+            raise ValueError(f"成交金额不能为负: {self.amount}")
+        if self.cost < 0:
+            raise ValueError(f"交易费用不能为负: {self.cost}")
+
+    @property
+    def total_outlay(self) -> Decimal:
+        """总支出（含手续费）"""
+        return self.amount + self.cost
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -259,6 +274,8 @@ class GridTranche:
             'price': float(self.price),
             'shares': float(self.shares),
             'amount': float(self.amount),
+            'cost': float(self.cost),
+            'total_outlay': float(self.total_outlay),
             'date': self.date.isoformat(),
         }
 
@@ -279,6 +296,8 @@ class GridOrder:
     date: date
     level: Optional[int] = None
     order_id: str = ""
+    trade_type: Optional['GridTradeType'] = None   # 由领域层在记账时判定
+    shares_after: Optional[Decimal] = None         # 本笔成交后的持仓（领域层回填）
 
     def __post_init__(self):
         if not self.asset_code:
@@ -311,6 +330,8 @@ class GridOrder:
             'cost': float(self.cost),
             'date': self.date.isoformat(),
             'level': self.level,
+            'trade_type': self.trade_type.value if self.trade_type else None,
+            'shares_after': float(self.shares_after) if self.shares_after is not None else None,
         }
 
 
