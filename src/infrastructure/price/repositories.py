@@ -67,6 +67,14 @@ class PriceSeriesRepository(ABC):
         """该资产的缓存是否为完整历史（默认未知）"""
         return False
 
+    def get_adjustment(self, asset_code: AssetCode) -> Optional[str]:
+        """该资产缓存的价格口径（hfq/qfq/none），未知时返回 None"""
+        return None
+
+    def set_adjustment(self, asset_code: AssetCode, adjustment: str) -> None:
+        """记录缓存的价格口径（默认空实现）"""
+        pass
+
 
 class InMemoryPriceRepository(PriceSeriesRepository):
     """
@@ -152,6 +160,8 @@ class JsonFilePriceRepository(PriceSeriesRepository):
         self._memory_cache: InMemoryPriceRepository = InMemoryPriceRepository()
         # 资产代码 -> 是否已缓存完整历史
         self._history_complete: Dict[str, bool] = {}
+        # 资产代码 -> 缓存的价格口径
+        self._adjustment: Dict[str, str] = {}
     
     def _get_file_path(self, asset_code: AssetCode) -> Path:
         """获取文件路径"""
@@ -169,6 +179,7 @@ class JsonFilePriceRepository(PriceSeriesRepository):
             # 用元组列表而非 dict，体积更小、反序列化更快
             'price_fields': ['date', 'open', 'high', 'low', 'close', 'volume', 'amount'],
             'history_complete': self._history_complete.get(str(series.asset_code), False),
+            'adjustment': self._adjustment.get(str(series.asset_code)),
             'prices': [
                 [
                     p.date.isoformat(),
@@ -240,6 +251,8 @@ class JsonFilePriceRepository(PriceSeriesRepository):
             self._history_complete[str(asset_code)] = bool(
                 data.get('history_complete', False)
             )
+            if data.get('adjustment'):
+                self._adjustment[str(asset_code)] = data['adjustment']
 
             series = AdjustedPriceSeries(
                 asset_code=asset_code,
@@ -275,6 +288,20 @@ class JsonFilePriceRepository(PriceSeriesRepository):
     def is_history_complete(self, asset_code: AssetCode) -> bool:
         """该资产的缓存是否为完整历史"""
         return self._history_complete.get(str(asset_code), False)
+
+    def get_adjustment(self, asset_code: AssetCode) -> Optional[str]:
+        """该资产缓存的价格口径"""
+        return self._adjustment.get(str(asset_code))
+
+    def set_adjustment(self, asset_code: AssetCode, adjustment: str) -> None:
+        """记录缓存的价格口径（随文件持久化）"""
+        key = str(asset_code)
+        if self._adjustment.get(key) == adjustment:
+            return
+        self._adjustment[key] = adjustment
+        series = self._memory_cache.find_by_code(asset_code)
+        if series is not None:
+            self.save(series)
 
     def find_by_date_range(self,
                            asset_code: AssetCode,

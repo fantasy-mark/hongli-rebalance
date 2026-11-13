@@ -233,6 +233,7 @@ print(GridChartRenderer.trigger_log(result))
 | [docs/ddd_price_model_design.md](docs/ddd_price_model_design.md) | DDD设计详解 |
 | [docs/grid_strategy_ddd_design.md](docs/grid_strategy_ddd_design.md) | ★ 网格策略DDD设计 |
 | [docs/price_cache_design.md](docs/price_cache_design.md) | ★ 价格缓存与增量同步设计 |
+| [docs/price_sources_design.md](docs/price_sources_design.md) | ★ 多数据源容灾与复权口径设计 |
 | [docs/ddd_implementation_summary.md](docs/ddd_implementation_summary.md) | 实现总结 |
 | [docs/migration_summary.md](docs/migration_summary.md) | 迁移报告 |
 | [docs/adjusted_price_provider_usage.md](docs/adjusted_price_provider_usage.md) | API详细文档 |

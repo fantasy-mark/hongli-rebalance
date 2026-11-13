@@ -21,8 +21,15 @@ from src.domain.price.services import (
     PriceCachePlanner,
     PriceSeriesMerger,
 )
+from src.domain.price.sources import (
+    PriceAdjustment,
+    PriceBasisAligner,
+)
 from src.infrastructure.price.repositories import PriceSeriesRepository, JsonFilePriceRepository
-from src.infrastructure.adjusted_price_provider import fetch_adjusted_kline
+from src.infrastructure.price.fallback_provider import (
+    FallbackPriceProvider,
+    FetchedPrices,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +48,8 @@ class PriceQueryService:
                  repository: Optional[PriceSeriesRepository] = None,
                  calculator: Optional[PriceCalculator] = None,
                  cache_policy: Optional[CachePolicy] = None,
-                 persist_cache: bool = True):
+                 persist_cache: bool = True,
+                 price_provider: Optional[FallbackPriceProvider] = None):
         """
         Args:
             repository: 价格仓储，默认使用 JSON 文件仓储（跨进程复用缓存）
@@ -59,6 +67,10 @@ class PriceQueryService:
 
         self.calculator = calculator or PriceCalculator()
         self.cache_policy = cache_policy or CachePolicy()
+        # 主备数据源（使用前探测、主源优先、失败降级）
+        self.price_provider = price_provider or FallbackPriceProvider()
+        # 缓存统一以"后复权"口径存储，其他口径的源需先对齐
+        self.cache_adjustment = PriceAdjustment.HFQ
         # 每只资产上次访问数据源的时刻（用于最小刷新间隔）
         self._last_checked_at: Dict[str, datetime] = {}
     
@@ -288,10 +300,13 @@ class PriceQueryService:
             fetch_start = None
 
         try:
-            df_raw = fetch_adjusted_kline(key, start_date=fetch_start, end_date=end_date)
+            fetched: FetchedPrices = self.price_provider.fetch(
+                key, start_date=fetch_start, end_date=end_date
+            )
+            df_raw = fetched.frame
         except Exception as e:
             if cached is not None and cached.count > 0:
-                logger.warning(f"{key} 拉取失败，沿用缓存: {e}")
+                logger.warning(f"{key} 主备源均失败，沿用缓存: {e}")
                 return cached
             logger.error(f"获取 {key} 价格数据失败: {e}")
             raise
@@ -310,6 +325,57 @@ class PriceQueryService:
             df=df_raw.drop(columns=['source'], errors='ignore'),
             source=self._infer_source(df_raw),
         )
+
+        # ---- 口径对齐（不同源可能复权口径不同）----
+        cached_basis = self._cached_adjustment(asset_code, cached)
+
+        if cached is None or cached.count == 0:
+            # 空缓存：直接采用当前源的口径，并记录下来
+            if fetched.adjustment is not self.cache_adjustment:
+                logger.warning(
+                    f"{key} 缓存将以 {fetched.adjustment.label} 口径建立"
+                    f"（源 {fetched.source_id}）——非规范口径"
+                    f"（{self.cache_adjustment.label}），"
+                    f"分红收益可能被低估；主源恢复后会自动重建"
+                )
+            self._remember_adjustment(asset_code, fetched.adjustment)
+            cached_basis = fetched.adjustment
+
+        elif fetched.adjustment != cached_basis:
+            if self._is_primary_source(fetched.source_id):
+                # 主源口径为规范口径：直接全量重建，不做近似换算
+                logger.info(
+                    f"{key} 用主源重建缓存：{cached_basis.label} -> "
+                    f"{fetched.adjustment.label}"
+                )
+                self._remember_adjustment(asset_code, fetched.adjustment)
+                self.repository.save(update)
+                return update
+
+            alignment = PriceBasisAligner.align(
+                cached, update, cached_basis, fetched.adjustment
+            )
+            if alignment.incompatible:
+                logger.warning(
+                    f"{key} 数据源口径 {fetched.adjustment.label} 与缓存口径 "
+                    f"{cached_basis.label} 本质不可换算（除权阶梯关系），"
+                    f"本次不更新缓存，等待主源恢复"
+                )
+                return cached
+            if not alignment.applied or alignment.factor <= 0:
+                logger.warning(
+                    f"{key} 数据源口径为 {fetched.adjustment.label}，"
+                    f"与缓存口径 {cached_basis.label} 不同且无重叠可对齐，"
+                    f"本次不更新缓存（等待主源恢复）"
+                )
+                return cached
+            logger.info(
+                f"{key} 数据源口径 {fetched.adjustment.label} -> "
+                f"缓存口径 {cached_basis.label}，倍率 {float(alignment.factor):.6f}"
+                f"（重叠 {alignment.overlaps} 点，"
+                f"对齐后偏差 {float(alignment.max_deviation):.4%}）"
+            )
+            update = alignment.series
 
         # ---- 合并 ----
         if plan.mode is RefreshMode.INCREMENTAL and cached is not None:
@@ -356,7 +422,8 @@ class PriceQueryService:
                     end_date: Optional[str]) -> Optional[AdjustedPriceSeries]:
         """全量重建（后复权口径变化时使用）：拉全历史，不带起始限制"""
         try:
-            df_raw = fetch_adjusted_kline(key, start_date=None, end_date=end_date)
+            fetched = self.price_provider.fetch(key, start_date=None, end_date=end_date)
+            df_raw = fetched.frame
             if df_raw is None or df_raw.empty:
                 return None
             return AdjustedPriceSeries.from_dataframe(
@@ -367,6 +434,34 @@ class PriceQueryService:
         except Exception as e:
             logger.error(f"{key} 全量重建失败: {e}")
             return None
+
+    def _cached_adjustment(self, asset_code: AssetCode,
+                           cached) -> PriceAdjustment:
+        """读取缓存口径（未记录时按后复权处理，与历史缓存一致）"""
+        raw = None
+        getter = getattr(self.repository, 'get_adjustment', None)
+        if callable(getter):
+            raw = getter(asset_code)
+        try:
+            return PriceAdjustment(raw) if raw else self.cache_adjustment
+        except ValueError:
+            return self.cache_adjustment
+
+    def _remember_adjustment(self, asset_code: AssetCode,
+                             adjustment: PriceAdjustment) -> None:
+        """记录缓存口径"""
+        setter = getattr(self.repository, 'set_adjustment', None)
+        if callable(setter):
+            setter(asset_code, adjustment.value)
+
+    def _is_primary_source(self, source_id: str) -> bool:
+        """是否为最高优先级（主）数据源"""
+        provider = self.price_provider
+        sources = getattr(provider, 'sources', None)
+        if not sources:
+            return False
+        first = sources[0]
+        return getattr(first, 'source_id', None) == source_id
 
     @staticmethod
     def _parse_date(value):

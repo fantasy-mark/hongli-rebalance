@@ -93,27 +93,43 @@ class FakePriceRepository:
 
 
 class FakeFetcher:
-    """数据源替身：记录调用区间，返回构造好的 DataFrame"""
+    """
+    主备数据源替身
 
-    def __init__(self, closes, start=date(2024, 1, 1)):
+    形态与 FallbackPriceProvider.fetch 一致：
+    返回 FetchedPrices(frame, source_id, adjustment, probes)
+    """
+
+    def __init__(self, closes, start=date(2024, 1, 1),
+                 adjustment=None, scale=1.0):
         self.closes = closes
         self.start = start
+        self.scale = scale
         self.calls: List[Optional[str]] = []
         self.raise_error = False
+        if adjustment is None:
+            from src.domain.price.sources import PriceAdjustment
+            adjustment = PriceAdjustment.HFQ
+        self.adjustment = adjustment
 
-    def __call__(self, code, start_date=None, end_date=None):
+    def fetch(self, code, start_date=None, end_date=None):
+        from src.infrastructure.price.fallback_provider import FetchedPrices
+
         self.calls.append(start_date)
         if self.raise_error:
             raise RuntimeError("network down")
 
-        series = make_series(self.closes, start=self.start, code=code)
+        closes = [c * self.scale for c in self.closes]
+        series = make_series(closes, start=self.start, code=code)
         df = series.to_dataframe()
 
         if start_date:
             df = df[pd.to_datetime(df.index) >= pd.to_datetime(start_date)]
         if end_date:
             df = df[pd.to_datetime(df.index) <= pd.to_datetime(end_date)]
-        return df
+
+        return FetchedPrices(frame=df, source_id="fake",
+                             adjustment=self.adjustment, probes=())
 
 
 # ----------------------------------------------------------------------
@@ -324,19 +340,13 @@ class TestSeriesMerger(unittest.TestCase):
 class TestPriceQueryServiceCache(unittest.TestCase):
     """验证应用的编排行为（用替身替换仓储与数据源）"""
 
-    def setUp(self):
-        import src.application.price.query_service as qs
-        self.qs = qs
-        self._orig_fetch = qs.fetch_adjusted_kline
-
-    def tearDown(self):
-        self.qs.fetch_adjusted_kline = self._orig_fetch
-
-    def _service(self, repository, policy=None):
+    def _service(self, repository, provider=None, policy=None):
+        """构造服务并注入主备 provider 替身"""
         return PriceQueryService(
             repository=repository,
             cache_policy=policy or CachePolicy(overlap_days=5),
             persist_cache=False,
+            price_provider=provider,
         )
 
     def test_cache_hit_does_not_fetch(self):
@@ -344,9 +354,8 @@ class TestPriceQueryServiceCache(unittest.TestCase):
         cached = make_series([10, 11, 12])
         repo = FakePriceRepository(cached)
         fetcher = FakeFetcher([10, 11, 12])
-        self.qs.fetch_adjusted_kline = fetcher
 
-        service = self._service(repo)
+        service = self._service(repo, fetcher)
         service.get_adjusted_prices("515180", start_date="2024-01-01",
                                     end_date="2024-01-03")
 
@@ -357,9 +366,8 @@ class TestPriceQueryServiceCache(unittest.TestCase):
         cached = make_series([10, 11, 12])
         repo = FakePriceRepository(cached)
         fetcher = FakeFetcher([10, 11, 12, 13, 14])
-        self.qs.fetch_adjusted_kline = fetcher
 
-        service = self._service(repo)
+        service = self._service(repo, fetcher)
         service.get_adjusted_prices("515180", end_date="2024-01-05")
 
         self.assertEqual(len(fetcher.calls), 1)
@@ -374,9 +382,8 @@ class TestPriceQueryServiceCache(unittest.TestCase):
         repo = FakePriceRepository(cached)
         fetcher = FakeFetcher([10, 11, 12, 13])
         fetcher.raise_error = True
-        self.qs.fetch_adjusted_kline = fetcher
 
-        service = self._service(repo)
+        service = self._service(repo, fetcher)
         df = service.get_adjusted_prices("515180", end_date="2024-01-04")
 
         self.assertFalse(df.empty)
@@ -390,18 +397,21 @@ class TestPriceQueryServiceCache(unittest.TestCase):
         # 第一次(增量)返回放大10%的价格，第二次(全量)返回重建后的完整序列
         calls = {'n': 0}
 
-        def fetcher(code, start_date=None, end_date=None):
-            calls['n'] += 1
-            closes = [11, 12.1, 13.2, 14, 15] if calls['n'] >= 1 else [11, 12.1]
-            series = make_series(closes, code=code)
-            df = series.to_dataframe()
-            if start_date and calls['n'] == 1:
-                df = df[pd.to_datetime(df.index) >= pd.to_datetime(start_date)]
-            return df
+        class RebasingFetcher(FakeFetcher):
+            """第一次返回放大 10% 的价格（模拟后复权口径变化）"""
+            def fetch(self, code, start_date=None, end_date=None):
+                from src.infrastructure.price.fallback_provider import FetchedPrices
+                calls['n'] += 1
+                series = make_series([11, 12.1, 13.2, 14, 15], code=code)
+                df = series.to_dataframe()
+                if start_date and calls['n'] == 1:
+                    df = df[pd.to_datetime(df.index) >= pd.to_datetime(start_date)]
+                return FetchedPrices(frame=df, source_id="fake",
+                                     adjustment=self.adjustment, probes=())
 
-        self.qs.fetch_adjusted_kline = fetcher
+        fetcher = RebasingFetcher([10])
 
-        service = self._service(repo)
+        service = self._service(repo, fetcher)
         service.get_adjusted_prices("515180", end_date="2024-01-05")
 
         # 增量 + 全量 至少两次调用
@@ -412,9 +422,8 @@ class TestPriceQueryServiceCache(unittest.TestCase):
     def test_slice_frame_filters_dates(self):
         cached = make_series([10, 11, 12, 13, 14])
         repo = FakePriceRepository(cached)
-        self.qs.fetch_adjusted_kline = FakeFetcher([10])
 
-        service = self._service(repo)
+        service = self._service(repo, FakeFetcher([10]))
         df = service.get_adjusted_prices("515180",
                                          start_date="2024-01-02",
                                          end_date="2024-01-04")

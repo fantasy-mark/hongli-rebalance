@@ -318,6 +318,8 @@ class AdjustedPriceSeries:
         records = [p.to_dict() for p in self.prices]
         df = pd.DataFrame(records)
         df.set_index('date', inplace=True)
+        # 保留数据来源，便于下游排查"这批数据来自哪个源"
+        df['source'] = self.source.value
         return df
     
     @classmethod
