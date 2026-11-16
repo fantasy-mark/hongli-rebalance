@@ -31,6 +31,7 @@ from src.domain.price.sources import (
 from src.infrastructure.price.sources import (
     default_sources,
     PriceSource,
+    RealtimeQuoteSource,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,12 +74,15 @@ class FallbackPriceProvider:
                  probe_trading_days: int = 2,
                  probe_lookback_days: int = 15,
                  health_ttl_seconds: int = 300,
-                 target_adjustment: PriceAdjustment = PriceAdjustment.HFQ):
+                 target_adjustment: PriceAdjustment = PriceAdjustment.HFQ,
+                 realtime_source: Optional[PriceSource] = None):
         self.sources: List[PriceSource] = list(sources or default_sources())
         self.probe_trading_days = max(1, probe_trading_days)
         self.probe_lookback_days = max(1, probe_lookback_days)
         self.health_ttl_seconds = max(0, health_ttl_seconds)
         self.target_adjustment = target_adjustment
+        # 当日行情补齐用（历史接口盘中通常不含当天）
+        self.realtime_source: PriceSource = realtime_source or RealtimeQuoteSource()
 
         # (code) -> (探测时间, 探测结果)
         self._health_cache: Dict[str, tuple] = {}
@@ -218,6 +222,26 @@ class FallbackPriceProvider:
 
         self._health_cache[code] = (datetime.now(), healths)
         return list(healths)
+
+    def fetch_today_bar(self, code: str):
+        """
+        取"当日"这一根 K 线（实时报价源）
+
+        历史 K 线接口盘中通常不含当天，用它把当天补上。
+
+        Returns:
+            (frame, prev_close)；不可用时返回 (None, None)
+            注意：frame 为**不复权**口径，调用方需换算到缓存口径。
+        """
+        try:
+            frame = self.realtime_source.fetch(code)
+            if frame is None or frame.empty:
+                return None, None
+            prev_close = frame.attrs.get('prev_close')
+            return frame, (Decimal(str(prev_close)) if prev_close else None)
+        except Exception as error:
+            logger.info(f'{code} 当日行情不可用：{error}')
+            return None, None
 
     def invalidate_health(self, code: Optional[str] = None) -> None:
         """清除探测缓存（code 为 None 时清除全部）"""

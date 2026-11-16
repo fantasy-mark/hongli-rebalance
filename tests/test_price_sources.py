@@ -278,5 +278,193 @@ class TestFallbackProvider(unittest.TestCase):
             ['open', 'high', 'low', 'close', 'volume', 'amount', 'source'])
 
 
+# ----------------------------------------------------------------------
+# 当日 bar 补齐 / 增量包含最后交易日
+# ----------------------------------------------------------------------
+
+class TestTodayBarRefresh(unittest.TestCase):
+    """
+    历史接口盘中通常不含当天，需要实时报价补齐；
+    且增量必须**包含**缓存最后交易日（该 bar 可能是盘中价）。
+    """
+
+    def test_planner_refreshes_today_bar(self):
+        """缓存末条恰好是今天 -> 需要增量刷新（含该日）"""
+        from src.domain.price.services import PriceCachePlanner
+        from src.domain.price.value_objects import CachePolicy
+
+        today = date(2024, 6, 5)          # 周三
+        cached = make_series_like([10, 11, 12], end=today)
+
+        plan = PriceCachePlanner.plan(
+            cached, requested_end=today,
+            policy=CachePolicy(refresh_today=True), today=today)
+
+        self.assertEqual(plan.mode.value, 'incremental')
+        # 起点必须 <= 缓存最后交易日（确保覆盖它）
+        self.assertLessEqual(plan.fetch_start, cached.end_date)
+
+    def test_planner_skips_when_refresh_disabled(self):
+        """关闭 refresh_today -> 缓存已覆盖则不刷新"""
+        from src.domain.price.services import PriceCachePlanner
+        from src.domain.price.value_objects import CachePolicy
+
+        today = date(2024, 6, 5)
+        cached = make_series_like([10, 11, 12], end=today)
+
+        plan = PriceCachePlanner.plan(
+            cached, requested_end=today,
+            policy=CachePolicy(refresh_today=False), today=today)
+
+        self.assertEqual(plan.mode.value, 'none')
+
+    def test_planner_history_range_not_refreshed(self):
+        """历史区间请求不受 refresh_today 影响"""
+        from src.domain.price.services import PriceCachePlanner
+        from src.domain.price.value_objects import CachePolicy
+
+        cached = make_series_like([10, 11, 12], end=date(2024, 6, 5))
+
+        plan = PriceCachePlanner.plan(
+            cached, requested_end=date(2024, 6, 5),
+            policy=CachePolicy(refresh_today=True), today=date(2026, 1, 1))
+
+        self.assertEqual(plan.mode.value, 'none')
+
+
+class TestTodayBarFill(unittest.TestCase):
+    """应用层用实时报价补齐当日 bar"""
+
+    class ProviderWithQuote:
+        """历史 + 实时报价替身"""
+
+        def __init__(self, closes, quote_close, prev_close, start=None):
+            self.closes = closes
+            self.quote_close = quote_close
+            self.prev_close = prev_close
+            self.start = start or date(2024, 6, 1)
+            self.sources = []
+
+        def fetch(self, code, start_date=None, end_date=None):
+            from src.infrastructure.price.fallback_provider import FetchedPrices
+            frame = make_frame(self.closes, start=self.start)
+            return FetchedPrices(frame=frame, source_id='fake',
+                                 adjustment=PriceAdjustment.HFQ, probes=())
+
+        def fetch_today_bar(self, code):
+            today = date.today()
+            frame = pd.DataFrame([{
+                'open': self.quote_close, 'high': self.quote_close,
+                'low': self.quote_close, 'close': self.quote_close,
+                'volume': 1000.0, 'amount': 0.0, 'source': 'realtime',
+            }], index=pd.to_datetime([today]))
+            return frame, Decimal(str(self.prev_close))
+
+    def _service(self, provider):
+        from src.application.price.query_service import PriceQueryService
+        from src.domain.price.value_objects import CachePolicy
+
+        return PriceQueryService(
+            repository=FakePriceRepository(None),
+            cache_policy=CachePolicy(overlap_days=0, refresh_today=True),
+            persist_cache=False,
+            price_provider=provider,
+        ), None
+
+    def test_appends_today_bar_with_basis_factor(self):
+        """
+        实时报价为不复权，需按"缓存末值 / 报价昨收"换算到缓存口径
+        """
+        from src.application.price.query_service import PriceQueryService
+        from src.domain.price.value_objects import CachePolicy
+
+        today = date.today()
+        yesterday = today - timedelta(days=1)
+        # 历史到昨天：hfq 20.0；实时报价：不复权 10.0，昨收 10.0 -> 倍率 2.0
+        provider = self.ProviderWithQuote(
+            closes=[19.0, 20.0], quote_close=10.5, prev_close=10.0,
+            start=yesterday - timedelta(days=1))
+
+        repo = FakeRepository()
+        service = PriceQueryService(
+            repository=repo, cache_policy=CachePolicy(overlap_days=0),
+            persist_cache=False, price_provider=provider)
+
+        service.get_adjusted_prices('515180')
+
+        series = repo.find_by_code(None)
+        self.assertIsNotNone(series)
+        self.assertEqual(series.end_date, today)
+        # 倍率 20.0/10.0 = 2.0 -> 当日收盘 10.5*2 = 21.0
+        self.assertAlmostEqual(float(series.latest_price.close), 21.0, places=6)
+
+    def test_skips_when_history_already_has_today(self):
+        """历史接口已含当日 -> 不重复追加"""
+        from src.application.price.query_service import PriceQueryService
+        from src.domain.price.value_objects import CachePolicy
+
+        today = date.today()
+        provider = self.ProviderWithQuote(
+            closes=[19.0, 20.0], quote_close=10.5, prev_close=10.0,
+            start=today - timedelta(days=1))    # 历史已到 today
+
+        repo = FakeRepository()
+        service = PriceQueryService(
+            repository=repo, cache_policy=CachePolicy(overlap_days=0),
+            persist_cache=False, price_provider=provider)
+
+        service.get_adjusted_prices('515180')
+
+        series = repo.find_by_code(None)
+        self.assertEqual(series.count, 2)
+        self.assertEqual(series.end_date, today)
+
+
+class FakeRepository:
+    """内存仓储替身（含口径与完整历史标记）"""
+
+    def __init__(self, series=None):
+        self._series = series
+        self._history_complete = False
+        self._adjustment = None
+
+    def save(self, series):
+        self._series = series
+
+    def find_by_code(self, asset_code):
+        return self._series
+
+    def exists(self, asset_code):
+        return self._series is not None
+
+    def delete(self, asset_code):
+        self._series = None
+
+    def clear(self):
+        self._series = None
+
+    def find_by_date_range(self, asset_code, date_range):
+        return self._series
+
+    def mark_history_complete(self, asset_code):
+        self._history_complete = True
+
+    def is_history_complete(self, asset_code):
+        return self._history_complete
+
+    def get_adjustment(self, asset_code):
+        return self._adjustment
+
+    def set_adjustment(self, asset_code, adjustment):
+        self._adjustment = adjustment
+
+
+def make_series_like(closes, end=None, code='515180'):
+    """构造以 end（默认今天）为最后一个交易日的序列"""
+    end = end or date.today()
+    start = end - timedelta(days=len(closes) - 1)
+    return to_series(make_frame(closes, start=start), code=code)
+
+
 if __name__ == '__main__':
     unittest.main()

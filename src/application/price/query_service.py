@@ -400,6 +400,9 @@ class PriceQueryService:
         if errors:
             logger.warning(f"{key} 数据验证警告: {errors[:3]}")
 
+        # ---- 补齐当日行情（历史接口盘中通常不含当天）----
+        series = self._fill_today_bar(asset_code, key, series, cached_basis)
+
         self.repository.save(series)
 
         # 全量拉取（无起始限制）得到的即为完整历史，打标记避免反复重拉
@@ -414,6 +417,81 @@ class PriceQueryService:
         )
 
         return series
+
+    def _fill_today_bar(self, asset_code: AssetCode, key: str,
+                        series: AdjustedPriceSeries,
+                        cache_basis: PriceAdjustment) -> AdjustedPriceSeries:
+        """
+        用实时报价补齐"当日"这根 K 线
+
+        处理要点:
+        - 实时报价是**不复权**口径，需换算到缓存口径
+        - 换算倍率 = 缓存最后交易日收盘价 / 报价昨收
+          （仅在"缓存末日 = 今日的前一交易日"时成立，跨除权日不保证）
+        - 历史接口已包含当日时不重复追加
+        """
+        today = date.today()
+        fetch_today = getattr(self.price_provider, 'fetch_today_bar', None)
+        if not callable(fetch_today):
+            return series
+
+        if series.end_date is not None and series.end_date >= today:
+            return series                      # 已有当日数据
+
+        bar, prev_close = fetch_today(key)
+        if bar is None or bar.empty:
+            return series
+
+        bar_date = bar.index[-1].date() if hasattr(bar.index[-1], 'date') else bar.index[-1]
+        if bar_date != today:
+            return series                      # 报价日期不是今天（非交易日/休市）
+
+        # ---- 换算到缓存口径 ----
+        close = Decimal(str(bar['close'].iloc[-1]))
+        factor = Decimal('1')
+        if cache_basis is not PriceAdjustment.NONE:
+            last_close = series.latest_close if series.count else None
+            gap_ok = (series.end_date is not None
+                      and 0 < (today - series.end_date).days <= 5)
+            if last_close is None or prev_close is None or prev_close <= 0 or not gap_ok:
+                logger.info(
+                    f'{key} 当日 bar 未补齐：无法确定口径倍率'
+                    f'（缓存末日 {series.end_date}，报价昨收 {prev_close}）'
+                )
+                return series
+            factor = last_close / prev_close
+            close = close * factor
+
+        # ---- 组装并追加 ----
+        from src.domain.price.entities import PricePoint
+
+        point = PricePoint(
+            date=bar_date,
+            open=Decimal(str(bar['open'].iloc[-1])) * factor,
+            high=Decimal(str(bar['high'].iloc[-1])) * factor,
+            low=Decimal(str(bar['low'].iloc[-1])) * factor,
+            close=close,
+            volume=int(bar['volume'].iloc[-1]),
+            amount=Decimal(str(bar['amount'].iloc[-1])),
+        )
+
+        if series.end_date is not None and series.end_date == bar_date:
+            logger.info(f'{key} 当日 bar 已存在，跳过补齐')
+            return series
+
+        merged = series.merged_with(
+            AdjustedPriceSeries(
+                asset_code=asset_code,
+                asset_type=series.asset_type,
+                prices=[point],
+                source=series.source,
+            )
+        )
+        logger.info(
+            f'{key} 已用实时报价补齐当日 bar {bar_date}'
+            f'（口径 {cache_basis.label}，倍率 {float(factor):.6f}）'
+        )
+        return merged
 
     def _fetch_full(self,
                     asset_code: AssetCode,

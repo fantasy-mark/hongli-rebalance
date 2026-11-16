@@ -188,10 +188,13 @@ class CachePolicy:
       超过则判定为后复权口径已变，需全量重建
     - min_refresh_interval_hours: 最小刷新间隔，避免同日重复拉取
       0 表示不限制
+    - refresh_today: 缓存末条恰好是"今天"时是否重新拉取
+      （该 bar 可能是盘中未收盘数据，需要覆盖为收盘价）
     """
     overlap_days: int = 5
     seam_tolerance: Decimal = Decimal("0.001")
     min_refresh_interval_hours: int = 0
+    refresh_today: bool = True
 
     def __post_init__(self):
         if self.overlap_days < 0:

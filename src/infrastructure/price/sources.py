@@ -219,6 +219,97 @@ class SinaPriceSource:
         return df
 
 
+class RealtimeQuoteSource:
+    """
+    实时报价源（仅用于补齐"当日"这根 K 线）
+
+    背景:
+    历史 K 线接口（东财/腾讯/新浪）在盘中往往**不包含当天**这条记录，
+    导致缓存永远落后一个交易日。因此用实时报价把当天补上。
+
+    口径:
+    实时报价是**不复权**的成交价，与后复权缓存相差一个局部倍率，
+    由调用方（领域层对齐器）用"缓存最后交易日收盘价 / 报价昨收"换算。
+    该倍率仅在相邻交易日内有效（跨除权日会变化）。
+
+    能力:
+    provides_full_history = False, max_bars = 1 —— 只提供一根当日 bar
+    """
+
+    source_id = 'realtime'
+    adjustment = PriceAdjustment.NONE
+    provides_full_history = False
+    max_bars = 1
+
+    SINA_URL = 'https://hq.sinajs.cn/list={symbol}'
+    HEADERS = {'Referer': 'https://finance.sina.com.cn'}
+
+    def fetch(self, code: str,
+              start_date: Optional[str] = None,
+              end_date: Optional[str] = None) -> pd.DataFrame:
+        """
+        返回只含"当日"一根 bar 的 DataFrame
+
+        实时接口没有历史，start/end 仅用于过滤（通常传当天）。
+        """
+        import requests
+
+        symbol = _to_sina_symbol(code)
+        response = requests.get(self.SINA_URL.format(symbol=symbol),
+                                headers=self.HEADERS, timeout=10)
+        response.raise_for_status()
+        response.encoding = 'gbk'
+
+        text = response.text
+        if '="' not in text:
+            raise ValueError(f'实时接口返回格式异常: {text[:60]}')
+
+        payload = text.split('="', 1)[1].strip().rstrip(';').rstrip('"')
+        fields = payload.split(',')
+        if len(fields) < 32:
+            raise ValueError(f'实时接口字段不足: {len(fields)}')
+
+        name = fields[0]
+        open_ = float(fields[1])
+        prev_close = float(fields[2])
+        current = float(fields[3])
+        high = float(fields[4])
+        low = float(fields[5])
+        volume_shares = float(fields[8])       # 股
+        amount = float(fields[9])              # 元
+        day = fields[30]                       # YYYY-MM-DD
+        clock = fields[31]                     # HH:MM:SS
+
+        if current <= 0 or open_ <= 0:
+            raise ValueError(f'{code} 实时报价无效（可能停牌或未开盘）')
+
+        # 未开盘时 最高/最低 可能为 0，退化为开盘价
+        high = high if high > 0 else max(open_, current)
+        low = low if low > 0 else min(open_, current)
+
+        records = [{
+            'date': day,
+            'open': open_,
+            'high': high,
+            'low': low,
+            'close': current,
+            'volume': volume_shares / 100.0,   # 股 -> 手
+            'amount': amount,
+        }]
+
+        df = _finalize(records, self.source_id)
+        df.attrs['quote_time'] = f'{day} {clock}'
+        df.attrs['prev_close'] = prev_close
+        df.attrs['name'] = name
+
+        if start_date:
+            df = df[df.index >= pd.to_datetime(start_date)]
+        if end_date:
+            df = df[df.index <= pd.to_datetime(end_date)]
+
+        return df
+
+
 # ----------------------------------------------------------------------
 # 工具
 # ----------------------------------------------------------------------

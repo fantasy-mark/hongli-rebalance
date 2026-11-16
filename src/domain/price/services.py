@@ -536,6 +536,17 @@ class PriceCalculator:
         )
 
 
+def is_trading_day(day: date) -> bool:
+    """
+    是否为潜在交易日
+
+    简化实现：仅排除周六周日。
+    法定节假日无法在此判断，由数据源返回空数据的分支兜底
+    （拉取后若无新数据，缓存保持不变）。
+    """
+    return day.weekday() < 5
+
+
 class PriceCachePlanner:
     """
     价格缓存规划器（领域服务）
@@ -608,20 +619,34 @@ class PriceCachePlanner:
                 f"缓存起始 {cached.start_date} 晚于请求 {requested_start}，需全量",
             )
 
-        # 4. 缓存尾部已覆盖到目标结束日 -> 无需刷新
+        # 4. 缓存尾部已覆盖到目标结束日
         if cached.end_date is not None and cached.end_date >= target_end:
+            # 例外：缓存最后一条可能就是"今天"的盘中 bar（未收盘），
+            # 需要重新拉取覆盖为收盘价，或由实时接口补齐。
+            if (policy.refresh_today
+                    and target_end == today          # 仅当请求区间到"今天"
+                    and cached.end_date == today     # 且缓存末条就是今天
+                    and is_trading_day(today)):
+                return RefreshPlan(
+                    RefreshMode.INCREMENTAL,
+                    cached.end_date,        # 必须包含该日
+                    f"刷新当日 bar（{cached.end_date} 可能为盘中价）",
+                )
             return RefreshPlan(
                 RefreshMode.NONE, None,
                 f"缓存已覆盖至 {cached.end_date}",
             )
 
-        # 5. 增量：从缓存末日向前多取 overlap_days，用于接缝校验
+        # 5. 增量：起点必须"包含"缓存最后交易日
+        #    该日可能是盘中未收盘的不完整 bar，必须重新拉取并被覆盖；
+        #    向回多取 overlap_days 只是为接缝校验提供更多重叠点。
         fetch_start = cached.end_date - timedelta(days=policy.overlap_days)
 
         return RefreshPlan(
             RefreshMode.INCREMENTAL,
             fetch_start,
-            f"增量更新 {fetch_start} ~ {target_end}（缓存至 {cached.end_date}）",
+            f"增量更新 {fetch_start} ~ {target_end}"
+            f"（含已缓存的最后交易日 {cached.end_date}）",
         )
 
 
