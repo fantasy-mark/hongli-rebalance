@@ -18,6 +18,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 import uuid
 
+from src.domain.portfolio.entities import Portfolio, Position
 from src.domain.grid.value_objects import (
     GridAction,
     GridAnchor,
@@ -92,9 +93,8 @@ class GridState:
     filled_levels: List[int] = field(default_factory=list)   # 已成交档位
     skipped_levels: List[int] = field(default_factory=list)  # 已跳过档位
     tranches: List[GridTranche] = field(default_factory=list)  # 持仓批次
-    shares: Decimal = Decimal("0")             # 网格持仓数量
-    cost_basis: Decimal = Decimal("0")         # 网格持仓成本（含手续费）
-    realized_pnl: Decimal = Decimal("0")        # 累计已实现盈亏
+    # 注：持仓数量/成本/已实现盈亏由 Portfolio 统一持有（见 GridStrategy.portfolio），
+    #     此处只保留"轮次"相关状态，避免两套账本。
     last_price: Optional[Decimal] = None       # 最近价格
     last_action: Optional[GridAction] = None   # 最近动作
     triggered_at: Optional[date] = None        # 本轮触发日期
@@ -198,31 +198,26 @@ class GridState:
     # 成交记录
     # ------------------------------------------------------------------
 
-    def record_buy(self, order: GridOrder) -> GridTradeType:
+    def record_buy(self, order: GridOrder,
+                   was_flat: bool) -> GridTradeType:
         """
-        记录一笔网格买入，并判定交易类型
+        记录一笔网格买入（批次与档位层面）
 
-        判定规则（业务规则，仅有一份实现）:
-        - 买入前持仓为 0   -> 开仓 OPEN
-        - 买入前持仓 > 0   -> 加仓 ADD（持仓中再买只能是加仓）
-
-        同时累计持仓成本（含手续费）与持仓批次。
+        持仓数量/成本由 Portfolio 记账，本方法只维护网格轮次维度：
+        - 追加持仓批次（按档位精确记录成本，供止盈时平仓）
+        - 推进已成交档位
 
         Args:
             order: 买入成交记录
+            was_flat: 买入前是否空仓（由 Portfolio 判定）
 
         Returns:
-            GridTradeType
+            GridTradeType（空仓 -> 开仓 OPEN，否则 -> 加仓 ADD）
         """
         if order.side != GridOrderSide.BUY:
             raise ValueError(f"只能记录买入成交: {order.side}")
 
-        # 交易类型由领域层判定：持仓为 0 才是开仓
-        trade_type = (GridTradeType.OPEN if self.shares == 0
-                      else GridTradeType.ADD)
-
-        self.shares += order.shares
-        self.cost_basis += order.amount + order.cost
+        trade_type = GridTradeType.OPEN if was_flat else GridTradeType.ADD
 
         if order.level is not None:
             self.filled_levels.append(order.level)
@@ -240,12 +235,9 @@ class GridState:
 
     def record_sell(self, order: GridOrder) -> GridTradeType:
         """
-        记录一笔网格卖出（止盈），并结算已实现盈亏
+        记录一笔网格卖出（止盈），移除对应持仓批次
 
-        盈亏口径:
-        - 已实现盈亏 = (卖出净额 - 对应批次总支出)
-          卖出净额 = 金额 - 手续费；总支出 = 买入金额 + 买入手续费
-        - 持仓成本同步扣减该批次总支出
+        持仓数量/成本/已实现盈亏由 Portfolio 记账（按批次精确释放成本）。
 
         Args:
             order: 卖出成交记录
@@ -256,15 +248,8 @@ class GridState:
         if order.side != GridOrderSide.SELL:
             raise ValueError(f"只能记录卖出成交: {order.side}")
 
-        self.shares -= order.shares
-        if self.shares < 0:
-            raise ValueError("卖出数量超过持仓数量")
-
         for tranche in list(self.tranches):
             if order.level is not None and tranche.level == order.level:
-                # 扣减该批次总支出，并结算已实现盈亏
-                self.cost_basis -= tranche.total_outlay
-                self.realized_pnl += (order.amount - order.cost) - tranche.total_outlay
                 self.tranches.remove(tranche)
                 break
 
@@ -279,21 +264,8 @@ class GridState:
     # 估值
     # ------------------------------------------------------------------
 
-    def market_value(self, price: Optional[Decimal]) -> Decimal:
-        """按给定价格计算持仓市值"""
-        if price is None or self.shares <= 0:
-            return Decimal("0")
-        return self.shares * price
-
-    def unrealized_pnl(self, price: Optional[Decimal]) -> Decimal:
-        """浮动盈亏 = 持仓市值 - 持仓成本（含手续费）"""
-        if price is None:
-            return Decimal("0")
-        return self.market_value(price) - self.cost_basis
-
-    def total_pnl(self, price: Optional[Decimal]) -> Decimal:
-        """总盈亏 = 已实现 + 浮动"""
-        return self.realized_pnl + self.unrealized_pnl(price)
+    # 注：持仓数量/成本/盈亏由 Portfolio 持有（GridStrategy.portfolio），
+    #     此处不再重复维护，避免两套账本。
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -308,9 +280,6 @@ class GridState:
             'filled_levels': list(self.filled_levels),
             'skipped_levels': list(self.skipped_levels),
             'tranches': [t.to_dict() for t in self.tranches],
-            'shares': float(self.shares),
-            'cost_basis': float(self.cost_basis),
-            'realized_pnl': float(self.realized_pnl),
             'last_price': float(self.last_price) if self.last_price is not None else None,
             'last_action': self.last_action.value if self.last_action else None,
             'triggered_at': self.triggered_at.isoformat() if self.triggered_at else None,
@@ -335,9 +304,6 @@ class GridState:
             next_level=int(data.get('next_level', 1)),
             filled_levels=list(data.get('filled_levels', [])),
             skipped_levels=list(data.get('skipped_levels', [])),
-            shares=Decimal(str(data.get('shares', 0))),
-            cost_basis=Decimal(str(data.get('cost_basis', 0))),
-            realized_pnl=Decimal(str(data.get('realized_pnl', 0))),
             last_price=Decimal(str(data['last_price'])) if data.get('last_price') is not None else None,
             last_action=GridAction(last_action) if last_action else None,
             triggered_at=date.fromisoformat(triggered_at) if triggered_at else None,
@@ -377,7 +343,8 @@ class GridStrategy:
     trigger: GridTrigger
     asset_codes: List[str] = field(default_factory=list)
     cost_model: GridCostModel = field(default_factory=GridCostModel)
-    cash: Decimal = Decimal("0")
+    # 组合：网格的现金与持仓（独立于再平衡组合的 Portfolio 实例）
+    portfolio: Portfolio = field(default_factory=Portfolio)
     status: GridStrategyStatus = GridStrategyStatus.ACTIVE
     states: Dict[str, GridState] = field(default_factory=dict)
     strategy_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -387,8 +354,10 @@ class GridStrategy:
     def __post_init__(self):
         if not self.name:
             raise ValueError("策略名称不能为空")
-        if self.cash < 0:
-            raise ValueError(f"网格资金不能为负: {self.cash}")
+
+        # 组合标识为网格专用，便于与再平衡组合区分
+        if not self.portfolio.name or self.portfolio.name == "组合":
+            self.portfolio.name = "网格组合"
 
         # 预初始化各资产状态
         for code in self.asset_codes:
@@ -425,22 +394,23 @@ class GridStrategy:
 
     def positions_value(self, prices: Dict[str, Decimal]) -> Decimal:
         """网格持仓总市值"""
-        total = Decimal("0")
-        for code, state in self.states.items():
-            total += state.market_value(prices.get(code))
-        return total
+        return self.portfolio.market_value(prices)
 
     def total_value(self, prices: Dict[str, Decimal]) -> Decimal:
         """网格组合总市值（现金 + 持仓）"""
-        return self.cash + self.positions_value(prices)
+        return self.portfolio.total_value(prices)
 
     def total_cost_basis(self) -> Decimal:
         """网格持仓总成本"""
-        return sum((s.cost_basis for s in self.states.values()), Decimal("0"))
+        return self.portfolio.total_cost_basis()
 
     def unrealized_pnl(self, prices: Dict[str, Decimal]) -> Decimal:
         """网格浮动盈亏"""
-        return self.positions_value(prices) - self.total_cost_basis()
+        return self.portfolio.unrealized_pnl(prices)
+
+    def realized_pnl(self) -> Decimal:
+        """网格累计已实现盈亏"""
+        return self.portfolio.realized_pnl()
 
     # ------------------------------------------------------------------
     # 校验与序列化
@@ -461,8 +431,7 @@ class GridStrategy:
         if not self.asset_codes:
             errors.append("监控资产列表不能为空")
 
-        if self.cash < 0:
-            errors.append(f"网格资金不能为负: {self.cash}")
+        errors.extend(self.portfolio.validate())
 
         for code, state in self.states.items():
             if state.status == GridStatus.ACTIVE and not state.step:
@@ -478,7 +447,7 @@ class GridStrategy:
             'trigger': self.trigger.to_dict(),
             'asset_codes': list(self.asset_codes),
             'cost_model': self.cost_model.to_dict(),
-            'cash': float(self.cash),
+            'portfolio': self.portfolio.to_dict(),
             'status': self.status.value,
             'states': {code: state.to_dict() for code, state in self.states.items()},
             'created_at': self.created_at.isoformat(),
@@ -493,7 +462,6 @@ class GridStrategy:
             trigger=GridTrigger.from_dict(data['trigger']),
             asset_codes=list(data.get('asset_codes', [])),
             cost_model=GridCostModel.from_dict(data.get('cost_model', {})),
-            cash=Decimal(str(data.get('cash', 0))),
             status=GridStrategyStatus(data.get('status', GridStrategyStatus.ACTIVE.value)),
             strategy_id=data.get('strategy_id', str(uuid.uuid4())),
             created_at=datetime.fromisoformat(data['created_at']) if data.get('created_at') else datetime.now(),
@@ -503,11 +471,29 @@ class GridStrategy:
         for code, state_data in data.get('states', {}).items():
             strategy.states[code] = GridState.from_dict(state_data)
 
+        portfolio_data = data.get('portfolio')
+        if portfolio_data:
+            positions = {
+                code: Position(
+                    asset_code=code,
+                    shares=Decimal(str(p.get('shares', 0))),
+                    cost_basis=Decimal(str(p.get('cost_basis', 0))),
+                    realized_pnl=Decimal(str(p.get('realized_pnl', 0))),
+                )
+                for code, p in portfolio_data.get('positions', {}).items()
+            }
+            strategy.portfolio = Portfolio(
+                portfolio_id=portfolio_data.get('portfolio_id', strategy.portfolio.portfolio_id),
+                name=portfolio_data.get('name', '网格组合'),
+                cash=Decimal(str(portfolio_data.get('cash', 0))),
+                positions=positions,
+            )
+
         return strategy
 
     def __repr__(self) -> str:
         return (
             f"GridStrategy(id={self.strategy_id}, name={self.name}, "
             f"assets={len(self.asset_codes)}, active={len(self.active_assets())}, "
-            f"cash={self.cash:.2f})"
+            f"cash={self.portfolio.cash:.2f})"
         )

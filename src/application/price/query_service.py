@@ -386,11 +386,17 @@ class PriceQueryService:
                     f"（重叠{result.overlap_points}点，"
                     f"最大偏差{float(result.max_deviation):.4%}），改为全量重建"
                 )
-                series = self._fetch_full(asset_code, key, start_date, end_date)
-                if series is None:
-                    # 重建失败：保留原缓存，绝不用残缺窗口覆盖
-                    logger.warning(f"{key} 全量重建失败，保留原缓存")
+                rebuilt = self._fetch_full(asset_code, key, start_date, end_date,
+                                          preferred_adjustment=cached_basis)
+                if rebuilt is None or rebuilt.count < cached.count:
+                    # 重建失败或重建结果比原缓存更短：
+                    # 保留原缓存，绝不用残缺窗口覆盖（否则历史会被静默截断）
+                    logger.warning(
+                        f"{key} 全量重建未获得更完整的数据，保留原缓存"
+                        f"（原 {cached.count} 条）"
+                    )
                     return cached
+                series = rebuilt
             else:
                 series = result.series
         else:
@@ -399,6 +405,14 @@ class PriceQueryService:
         errors = series.validate()
         if errors:
             logger.warning(f"{key} 数据验证警告: {errors[:3]}")
+
+        # ---- 安全网：合并结果不得比原缓存更短（防止历史被静默截断）----
+        if cached is not None and cached.count > 0 and series.count < cached.count:
+            logger.warning(
+                f"{key} 合并结果({series.count}条)少于原缓存({cached.count}条)，"
+                f"保留原缓存"
+            )
+            return cached
 
         # ---- 补齐当日行情（历史接口盘中通常不含当天）----
         series = self._fill_today_bar(asset_code, key, series, cached_basis)
@@ -497,10 +511,14 @@ class PriceQueryService:
                     asset_code: AssetCode,
                     key: str,
                     start_date: Optional[str],
-                    end_date: Optional[str]) -> Optional[AdjustedPriceSeries]:
+                    end_date: Optional[str],
+                    preferred_adjustment: Optional[PriceAdjustment] = None
+                    ) -> Optional[AdjustedPriceSeries]:
         """全量重建（后复权口径变化时使用）：拉全历史，不带起始限制"""
         try:
-            fetched = self.price_provider.fetch(key, start_date=None, end_date=end_date)
+            fetched = self.price_provider.fetch(
+                key, start_date=None, end_date=end_date,
+                preferred_adjustment=preferred_adjustment)
             df_raw = fetched.frame
             if df_raw is None or df_raw.empty:
                 return None

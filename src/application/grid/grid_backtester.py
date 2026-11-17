@@ -26,6 +26,7 @@ from src.domain.grid.entities import GridStrategy, GridStrategyStatus
 from src.domain.grid.services import GridEngine
 from src.domain.performance.value_objects import PerformanceCalculator, ReturnStatistics
 from src.domain.trading.value_objects import LotSize
+from src.domain.portfolio.entities import Portfolio
 from src.domain.grid.value_objects import (
     GridCostModel,
     GridMarketSnapshot,
@@ -393,7 +394,7 @@ class GridBacktestResult:
             lines.append(
                 f"  {name}({code}): {state.status.value}, "
                 f"轮次{state.round_no}(完成{state.rounds_completed}), "
-                f"持仓{state.shares}股"
+                f"持仓{self.strategy.portfolio.shares_of(code)}股"
             )
 
         return "\n".join(lines)
@@ -426,7 +427,11 @@ class GridBacktester:
             trigger=self.config.trigger,
             asset_codes=self.config.asset_codes,
             cost_model=self.config.cost_model,
-            cash=self.config.initial_capital,
+            portfolio=Portfolio(
+                portfolio_id='grid',
+                name='网格组合',
+                cash=Decimal(str(self.config.initial_capital)),
+            ),
             status=GridStrategyStatus.ACTIVE,
         )
 
@@ -513,12 +518,12 @@ class GridBacktester:
                         shares=order.shares,
                         amount=order.amount,
                         cost=order.cost,
-                        cash_after=self.strategy.cash,
+                        cash_after=self.strategy.portfolio.cash,
                         trade_type=trade_type,
                         round_no=state.round_no,
                         shares_after=(order.shares_after
                                       if order.shares_after is not None
-                                      else state.shares),
+                                      else self.strategy.portfolio.shares_of(code)),
                     )
                     day_trades.append(trade)
 
@@ -552,26 +557,25 @@ class GridBacktester:
                 if code in last_close
             }
             positions = {
-                code: state.shares
-                for code, state in self.strategy.states.items()
-                if state.shares > 0
+                code: shares
+                for code, shares in self.strategy.portfolio.position_snapshot().items()
+                if shares > 0
             }
             market_value = self.strategy.positions_value(prices)
 
-            # ---- 网格交易盈亏（已实现 + 浮动，均取自领域层状态）----
-            cost_basis = sum((st.cost_basis for st in self.strategy.states.values()),
-                             Decimal("0"))
-            realized_pnl = sum((st.realized_pnl for st in self.strategy.states.values()),
-                               Decimal("0"))
+            # ---- 网格交易盈亏（已实现 + 浮动，取自组合）----
+            portfolio = self.strategy.portfolio
+            cost_basis = portfolio.total_cost_basis()
+            realized_pnl = portfolio.realized_pnl()
             floating_pnl = market_value - cost_basis
             total_pnl = realized_pnl + floating_pnl
 
             snapshots.append(GridSnapshot(
                 date=current_date,
-                cash=self.strategy.cash,
+                cash=self.strategy.portfolio.cash,
                 positions=positions,
                 market_value=market_value,
-                total_value=self.strategy.cash + market_value,
+                total_value=self.strategy.portfolio.cash + market_value,
                 trades=day_trades,
                 realized_pnl=realized_pnl,
                 floating_pnl=floating_pnl,

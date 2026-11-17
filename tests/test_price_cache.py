@@ -112,7 +112,8 @@ class FakeFetcher:
             adjustment = PriceAdjustment.HFQ
         self.adjustment = adjustment
 
-    def fetch(self, code, start_date=None, end_date=None):
+    def fetch(self, code, start_date=None, end_date=None,
+              preferred_adjustment=None):
         from src.infrastructure.price.fallback_provider import FetchedPrices
 
         self.calls.append(start_date)
@@ -399,7 +400,8 @@ class TestPriceQueryServiceCache(unittest.TestCase):
 
         class RebasingFetcher(FakeFetcher):
             """第一次返回放大 10% 的价格（模拟后复权口径变化）"""
-            def fetch(self, code, start_date=None, end_date=None):
+            def fetch(self, code, start_date=None, end_date=None,
+                      preferred_adjustment=None):
                 from src.infrastructure.price.fallback_provider import FetchedPrices
                 calls['n'] += 1
                 series = make_series([11, 12.1, 13.2, 14, 15], code=code)
@@ -418,6 +420,38 @@ class TestPriceQueryServiceCache(unittest.TestCase):
         self.assertGreaterEqual(calls['n'], 2)
         # 最终缓存以重建数据为准
         self.assertEqual(repo.find_by_code(None).count, 5)
+
+    def test_conflict_rebuild_failure_keeps_cache(self):
+        """
+        全量重建失败时不得用残缺窗口覆盖缓存
+
+        否则历史会被静默截断（缓存只剩增量窗口的几天），
+        导致 ATR/前低无法计算、策略不再触发。
+        """
+        cached = make_series([10, 11, 12])
+        repo = FakePriceRepository(cached)
+
+        class FailingRebuildFetcher(FakeFetcher):
+            """增量正常返回，但全量重建（start_date=None）失败"""
+            def fetch(self, code, start_date=None, end_date=None,
+                      preferred_adjustment=None):
+                from src.infrastructure.price.fallback_provider import FetchedPrices
+                self.calls.append(start_date)
+                if start_date is None:
+                    raise RuntimeError("rebuild failed")
+                series = make_series([11, 12.1, 13.2, 14, 15], code=code)
+                df = series.to_dataframe()
+                if start_date:
+                    df = df[pd.to_datetime(df.index) >= pd.to_datetime(start_date)]
+                return FetchedPrices(frame=df, source_id="fake",
+                                     adjustment=self.adjustment, probes=())
+
+        fetcher = FailingRebuildFetcher([10])
+        service = self._service(repo, fetcher)
+        service.get_adjusted_prices("515180", end_date="2024-01-05")
+
+        # 缓存未被残缺窗口覆盖
+        self.assertEqual(repo.find_by_code(None).count, cached.count)
 
     def test_slice_frame_filters_dates(self):
         cached = make_series([10, 11, 12, 13, 14])

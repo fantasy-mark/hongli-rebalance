@@ -552,12 +552,14 @@ class GridChartRenderer:
             # 浮动盈亏：当前持仓市值 - 持仓成本
             state = grid_result.strategy.states.get(code)
             unrealized = 0.0
-            if state is not None and state.shares > 0:
+            position = grid_result.strategy.portfolio.position_for(code)
+            if position.shares > 0:
                 close_col = f'{code}_close'
                 if close_col in df.columns:
                     last_close = df[close_col].iloc[-1]
                     if last_close == last_close:  # 非 NaN
-                        unrealized = float(state.shares) * float(last_close) - float(state.cost_basis)
+                        unrealized = (float(position.shares) * float(last_close)
+                              - float(position.cost_basis))
 
             lines.append(
                 f"{'小计':<12}| {name:<13}| {code:<7}| "

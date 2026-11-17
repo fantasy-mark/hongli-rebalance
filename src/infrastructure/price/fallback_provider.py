@@ -94,9 +94,18 @@ class FallbackPriceProvider:
     def fetch(self,
               code: str,
               start_date: Optional[str] = None,
-              end_date: Optional[str] = None) -> FetchedPrices:
+              end_date: Optional[str] = None,
+              preferred_adjustment: Optional[PriceAdjustment] = None
+              ) -> FetchedPrices:
         """
         取数（主源优先，失败自动降级）
+
+        Args:
+            code: 资产代码
+            start_date: 起始日期（None 表示全历史）
+            end_date: 结束日期
+            preferred_adjustment: 优先选择该复权口径的源
+                （全量重建时用于保持与缓存同口径）
 
         Raises:
             ValueError: 所有源均不可用
@@ -105,7 +114,9 @@ class FallbackPriceProvider:
         # 全历史请求（start_date 为空）必须选能提供全历史的源，
         # 否则缓存会被静默截断（如腾讯仅 ~640 根）
         require_full_history = start_date is None
-        selection = self._select(probes, require_full_history=require_full_history)
+        selection = self._select(probes,
+                                  require_full_history=require_full_history,
+                                  preferred_adjustment=preferred_adjustment)
 
         if not selection.available and require_full_history:
             logger.warning(
@@ -118,7 +129,8 @@ class FallbackPriceProvider:
             raise ValueError(selection.reason)
 
         # 优先尝试选中的源，失败则按原优先级顺延
-        candidates = self._ordered_candidates(selection, probes)
+        candidates = self._ordered_candidates(selection, probes,
+                                            preferred_adjustment)
 
         last_error: Optional[BaseException] = None
         for source_id in candidates:
@@ -255,12 +267,32 @@ class FallbackPriceProvider:
     # ------------------------------------------------------------------
 
     def _select(self, healths: Sequence[SourceHealth],
-                require_full_history: bool = False) -> SourceSelection:
+                require_full_history: bool = False,
+                preferred_adjustment: Optional[PriceAdjustment] = None
+                ) -> SourceSelection:
         profiles = [self._profile_of(h.source_id) for h in healths]
         profiles = [p for p in profiles if p is not None]
-        return PriceSourceSelector.select(
+        selection = PriceSourceSelector.select(
             healths, require_full_history=require_full_history, profiles=profiles
         )
+
+        # 若首选源的复权口径与偏好不符，则改选口径匹配的源
+        if (preferred_adjustment is not None
+                and selection.available
+                and selection.adjustment is not preferred_adjustment):
+            for index, health in enumerate(healths):
+                if not health.healthy:
+                    continue
+                profile = profiles[index] if index < len(profiles) else None
+                if profile is not None and profile.adjustment is preferred_adjustment:
+                    return SourceSelection(
+                        source_id=health.source_id,
+                        adjustment=profile.adjustment,
+                        reason=f"选用 {health.source_id}（复权口径匹配）",
+                        skipped=selection.skipped,
+                    )
+
+        return selection
 
     def _profile_of(self, source_id: str) -> Optional[SourceProfile]:
         source = self._source_by_id(source_id)
@@ -274,12 +306,23 @@ class FallbackPriceProvider:
         )
 
     def _ordered_candidates(self, selection: SourceSelection,
-                            healths: Sequence[SourceHealth]) -> List[str]:
+                            healths: Sequence[SourceHealth],
+                            preferred_adjustment: Optional[PriceAdjustment] = None
+                            ) -> List[str]:
         """候选顺序：选中的源优先，其余健康源按原优先级跟随"""
         healthy_ids = [h.source_id for h in healths if h.healthy]
         if selection.source_id in healthy_ids:
             healthy_ids.remove(selection.source_id)
             healthy_ids.insert(0, selection.source_id)
+
+        # 口径偏好：同口径的源优先（保证重建后口径不变）
+        if preferred_adjustment is not None:
+            def matches(source_id: str) -> bool:
+                profile = self._profile_of(source_id)
+                return profile is not None and profile.adjustment is preferred_adjustment
+
+            healthy_ids.sort(key=lambda sid: not matches(sid))
+
         return healthy_ids
 
     def _source_by_id(self, source_id: str) -> Optional[PriceSource]:

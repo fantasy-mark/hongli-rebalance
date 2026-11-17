@@ -23,6 +23,10 @@ src/domain/performance/     # ★ 绩效统计（三个策略共享内核）
 src/domain/trading/         # ★ 交易内核（整手取整等市场规则共享）
 └── value_objects.py         # 值对象: LotSize
 
+src/domain/portfolio/       # ★ 组合与持仓（两策略共享内核）
+└── entities.py              # 聚合根: Portfolio, 值对象: Position
+                             #   每策略一个实例 -> 持仓隔离
+
 src/domain/grid/            # ★ 网格策略上下文
 ├── entities.py              # 聚合根: GridStrategy, GridState
 ├── value_objects.py         # 值对象: GridTrigger, GridCostModel, GridMarketSnapshot,

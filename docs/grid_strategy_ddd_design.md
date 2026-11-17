@@ -234,7 +234,33 @@ IDLE ──> MONITORING ──跌破前N日最低价──> ACTIVE(第N轮)
     例: 已实现收益 1930.28 元 / 峰值持仓 102793.60 元 = 1.88%
 ```
 
-### 规则 6：资金隔离 ★
+### 规则 6：资金与持仓隔离 ★
+
+两个策略通过**各自持有一个 `Portfolio` 实例**在类型层面隔离：
+
+```
+Portfolio (聚合根，共享内核)
+├── cash
+└── positions: {asset_code: Position}
+      └── Position: shares / cost_basis / realized_pnl
+
+再平衡组合: Portfolio(portfolio_id="rebalance")
+网格组合:   Portfolio(portfolio_id="grid")   ← GridStrategy.portfolio
+```
+
+职责划分：
+
+| 关注点 | 归属 |
+|---|---|
+| 持仓数量 / 成本 / 已实现盈亏 | `Portfolio`（两策略同构） |
+| 现金 | `Portfolio.cash` |
+| 网格档位 / 持仓批次 / 轮次 | `GridState`（网格专属） |
+| 交易类型判定（开仓/加仓） | `GridState.record_buy(order, was_flat)`，`was_flat` 由 `Portfolio` 提供 |
+
+`Portfolio` 的不变量（卖出超持仓、数量为负等）统一由 `buy()/sell()` 保护，
+两个策略享受同一套校验，不再出现"网格有校验、再平衡没有"的不一致。
+
+### 规则 7：资金隔离（历史说明）
 
 | | 再平衡子组合 | 网格子组合 |
 |---|---|---|

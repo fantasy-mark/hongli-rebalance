@@ -15,7 +15,7 @@
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import logging
 
 import pandas as pd
@@ -150,6 +150,32 @@ class CombinedBacktestResult:
         """组合夏普比率"""
         return self.statistics.sharpe_ratio
 
+    def position_breakdown(self) -> Dict[str, Dict[str, Any]]:
+        """
+        持仓明细（按策略拆分）
+
+        展示两个策略各自的现金与持仓，直观验证持仓隔离。
+
+        Returns:
+            {策略名: {'cash': 金额, 'positions': {代码: 数量}, 'market_value': 金额}}
+        """
+        rebalance_snapshot = self.rebalance_result.snapshots[-1]
+        grid_snapshot = self.grid_result.snapshots[-1]
+
+        return {
+            '再平衡组合': {
+                'cash': rebalance_snapshot.cash,
+                'positions': dict(rebalance_snapshot.asset_shares),
+                'market_value': (rebalance_snapshot.total_value
+                                 - rebalance_snapshot.cash),
+            },
+            '网格组合': {
+                'cash': grid_snapshot.cash,
+                'positions': dict(grid_snapshot.positions),
+                'market_value': grid_snapshot.market_value,
+            },
+        }
+
     def summary(self) -> str:
         """生成组合摘要"""
         max_dd, dd_start, dd_end = self.max_drawdown
@@ -178,7 +204,16 @@ class CombinedBacktestResult:
             f"  网格组合:   初始 ¥{self.config.grid_initial_capital:,.0f}, "
             f"收益 {self.grid_result.total_return:.2%}",
             f"  网格成交:   买入{self.grid_result.buy_count}次 / 卖出{self.grid_result.sell_count}次",
+            "",
+            "持仓明细（两策略隔离）:",
         ]
+
+        for name, detail in self.position_breakdown().items():
+            positions = {k: float(v) for k, v in detail["positions"].items() if v > 0}
+            lines.append(
+                f"  {name}: 现金 ¥{float(detail['cash']):,.2f}  "
+                f"持仓市值 ¥{float(detail['market_value']):,.2f}  {positions}"
+            )
 
         return "\n".join(lines)
 

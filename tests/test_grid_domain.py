@@ -50,6 +50,7 @@ from src.application.grid.combined_backtester import (
     CombinedConfig,
 )
 from src.domain.allocation.entities import AllocationPlan
+from src.domain.portfolio.entities import Portfolio
 from src.domain.grid.value_objects import GridTradeType
 
 
@@ -319,7 +320,7 @@ class TestGridEngine(unittest.TestCase):
             name="测试网格",
             trigger=self.trigger,
             asset_codes=["515180"],
-            cash=Decimal("100000"),
+            portfolio=Portfolio(cash=Decimal("100000"), name="网格组合"),
         )
 
     def test_monitor_when_not_broken(self):
@@ -381,7 +382,7 @@ class TestGridEngine(unittest.TestCase):
         state = self.strategy.state_for("515180")
         self.assertEqual(state.filled_levels, [1])
         self.assertEqual(state.next_level, 2)
-        self.assertEqual(state.shares, Decimal("10200"))
+        self.assertEqual(self.strategy.portfolio.shares_of("515180"), Decimal("10200"))
 
     def test_no_buy_above_level(self):
         """未跌到档位价格不买入"""
@@ -417,7 +418,7 @@ class TestGridEngine(unittest.TestCase):
 
     def test_insufficient_cash_skips_level(self):
         """网格资金不足时跳过档位，且不会动用再平衡资金"""
-        self.strategy.cash = Decimal("5000")
+        self.strategy.portfolio.cash = Decimal("5000")
 
         GridEngine.evaluate(self.strategy, "515180", GridMarketSnapshot(
             date=date(2024, 1, 10), close=Decimal("1.000"),
@@ -430,7 +431,7 @@ class TestGridEngine(unittest.TestCase):
         ))
 
         self.assertFalse(decision.has_orders)
-        self.assertGreaterEqual(self.strategy.cash, Decimal("0"))
+        self.assertGreaterEqual(self.strategy.portfolio.cash, Decimal("0"))
         self.assertEqual(self.strategy.state_for("515180").filled_levels, [])
 
     def test_anchor_prior_low_variant(self):
@@ -466,7 +467,7 @@ class TestGridEngine(unittest.TestCase):
         ))
 
         state = self.strategy.state_for("515180")
-        self.assertEqual(state.shares, Decimal("10200"))
+        self.assertEqual(self.strategy.portfolio.shares_of("515180"), Decimal("10200"))
 
         # 止盈价 = 0.980 + 0.020 * 1 = 1.000
         decision = GridEngine.evaluate(self.strategy, "515180", GridMarketSnapshot(
@@ -479,7 +480,7 @@ class TestGridEngine(unittest.TestCase):
         self.assertTrue(decision.round_closed)
         self.assertEqual(len(decision.orders), 1)
         self.assertEqual(decision.orders[0].side, GridOrderSide.SELL)
-        self.assertEqual(self.strategy.state_for("515180").shares, Decimal("0"))
+        self.assertEqual(self.strategy.portfolio.shares_of("515180"), Decimal("0"))
 
     def test_paused_strategy_does_not_trade(self):
         """策略暂停后不再推进网格"""
@@ -536,7 +537,7 @@ class TestGridBacktester(unittest.TestCase):
 
         self.assertGreater(result.buy_count, 0)
         self.assertGreater(len(result.snapshots), 0)
-        self.assertGreaterEqual(result.strategy.cash, Decimal("0"))
+        self.assertGreaterEqual(result.strategy.portfolio.cash, Decimal("0"))
 
         # 网格持仓与网格资金独立核算
         final_snapshot = result.snapshots[-1]
@@ -561,8 +562,8 @@ class TestGridBacktester(unittest.TestCase):
         result = GridBacktester(config, price_provider=provider).run()
 
         # 网格现金永远不能为负（不会去动再平衡的钱）
-        self.assertGreaterEqual(result.strategy.cash, Decimal("0"))
-        self.assertLessEqual(result.strategy.cash, config.initial_capital)
+        self.assertGreaterEqual(result.strategy.portfolio.cash, Decimal("0"))
+        self.assertLessEqual(result.strategy.portfolio.cash, config.initial_capital)
 
     def test_strategy_serialization_roundtrip(self):
         """网格策略可序列化/反序列化（用于实盘状态持久化）"""
@@ -570,7 +571,7 @@ class TestGridBacktester(unittest.TestCase):
             name="测试网格",
             trigger=GridTrigger(lookback_days=10, atr_period=5),
             asset_codes=["515180"],
-            cash=Decimal("50000"),
+            portfolio=Portfolio(cash=Decimal("50000"), name="网格组合"),
         )
         state = strategy.state_for("515180")
         state.start_monitoring(date(2024, 1, 2))
@@ -579,7 +580,7 @@ class TestGridBacktester(unittest.TestCase):
         restored = GridStrategy.from_dict(strategy.to_dict())
 
         self.assertEqual(restored.name, "测试网格")
-        self.assertEqual(restored.cash, Decimal("50000"))
+        self.assertEqual(restored.portfolio.cash, Decimal("50000"))
         self.assertEqual(restored.states["515180"].status, GridStatus.ACTIVE)
         self.assertEqual(restored.states["515180"].step, Decimal("0.025"))
 
@@ -600,7 +601,7 @@ class TestGridPriceBasis(unittest.TestCase):
             name="口径测试",
             trigger=trigger,
             asset_codes=["515180"],
-            cash=Decimal("100000"),
+            portfolio=Portfolio(cash=Decimal("100000"), name="网格组合"),
         )
 
     def test_low_basis_triggers_on_intraday_low(self):
@@ -808,7 +809,7 @@ class TestGridRoundLifecycle(unittest.TestCase):
             name="轮次测试",
             trigger=self.trigger,
             asset_codes=["515180"],
-            cash=Decimal("100000"),
+            portfolio=Portfolio(cash=Decimal("100000"), name="网格组合"),
         )
 
     def _activate(self, close="1.000", prior_low="1.050", atr="0.040", on=date(2024, 1, 10)):
@@ -893,7 +894,7 @@ class TestGridRoundLifecycle(unittest.TestCase):
         # 只买不卖
         self.assertEqual(len(decision.orders), 1)
         self.assertEqual(decision.orders[0].side, GridOrderSide.BUY)
-        self.assertEqual(self.strategy.state_for("515180").shares, Decimal("10200"))
+        self.assertEqual(self.strategy.portfolio.shares_of("515180"), Decimal("10200"))
 
 
 class TestOneShotTakeProfit(unittest.TestCase):
@@ -908,7 +909,7 @@ class TestOneShotTakeProfit(unittest.TestCase):
                 price_basis=GridPriceBasis.CLOSE, take_profit_ratio=Decimal("1"),
             ),
             asset_codes=["515180"],
-            cash=Decimal("100000"),
+            portfolio=Portfolio(cash=Decimal("100000"), name="网格组合"),
         )
 
     def _snap(self, on, close, prior_low="1.050", atr="0.040"):
@@ -931,7 +932,7 @@ class TestOneShotTakeProfit(unittest.TestCase):
         state = self.strategy.state_for("515180")
         self.assertEqual(state.filled_levels, [1, 2])
         self.assertEqual(len(state.tranches), 2)
-        self.assertGreater(state.shares, 0)
+        self.assertGreater(self.strategy.portfolio.shares_of("515180"), 0)
 
         # 止盈价 = 开仓价(第1档 0.960) + 0.020 = 0.980
         decision = GridEngine.evaluate(self.strategy, "515180",
@@ -939,7 +940,8 @@ class TestOneShotTakeProfit(unittest.TestCase):
 
         sells = [o for o in decision.orders if o.side == GridOrderSide.SELL]
         self.assertEqual(len(sells), 2)               # 两个批次同时卖出
-        self.assertEqual(state.shares, Decimal("0"))   # 一次清仓
+        self.assertEqual(self.strategy.portfolio.shares_of("515180"),
+                         Decimal("0"))   # 一次清仓
         self.assertEqual(len(state.tranches), 0)
         self.assertTrue(decision.round_closed)
 
@@ -951,14 +953,14 @@ class TestOneShotTakeProfit(unittest.TestCase):
                             self._snap(date(2024, 1, 11), "0.960", prior_low="0.990"))
 
         state = self.strategy.state_for("515180")
-        shares_before = state.shares
+        shares_before = self.strategy.portfolio.shares_of("515180")
 
         # 0.975 < 止盈价 0.980，不应卖出
         decision = GridEngine.evaluate(self.strategy, "515180",
                                        self._snap(date(2024, 1, 12), "0.975", prior_low="0.970"))
 
         self.assertFalse([o for o in decision.orders if o.side == GridOrderSide.SELL])
-        self.assertEqual(state.shares, shares_before)
+        self.assertEqual(self.strategy.portfolio.shares_of("515180"), shares_before)
 
     def test_no_reduce_in_backtest(self):
         """回测成交中不存在减仓类型"""
@@ -1149,18 +1151,48 @@ class TestGridValuationCarryForward(unittest.TestCase):
             )
 
 
+
+# ----------------------------------------------------------------------
+# 持仓辅助（持仓与成本在 Portfolio 中，批次在 GridState 中）
+# ----------------------------------------------------------------------
+
+def state_portfolio_shares(state):
+    """从 GridState 取持仓数量（持仓在 Portfolio 中）"""
+    return state.portfolio.shares_of(state.asset_code)
+
+
+def state_portfolio_cost(state):
+    return state.portfolio.cost_basis_of(state.asset_code)
+
+
+def state_portfolio_realized(state):
+    return state.portfolio.realized_pnl()
+
+
+def state_portfolio_unrealized(state, price):
+    return state.portfolio.position_for(state.asset_code).unrealized_pnl(price)
+
+
+def state_portfolio_total(state, price):
+    position = state.portfolio.position_for(state.asset_code)
+    return position.realized_pnl + position.unrealized_pnl(price)
+
+
 class TestTradeTypeInDomain(unittest.TestCase):
     """
-    交易类型判定与盈亏核算位于领域层
+    交易类型判定与盈亏核算的职责划分
 
-    - 开仓 / 加仓 由 GridState.record_buy 判定（持仓为 0 才是开仓）
-    - 已实现盈亏由 GridState.record_sell 结算（含手续费）
+    - 持仓数量/成本/已实现盈亏 -> Portfolio（共享内核，与再平衡同构）
+    - 网格轮次/持仓批次/交易类型 -> GridState（网格专属）
     应用层不再持有影子持仓，避免两份真相来源。
     """
 
     def _state(self):
+        """GridState（轮次/批次）+ Portfolio（持仓/成本）"""
         from src.domain.grid.entities import GridState
-        return GridState(asset_code="515180")
+        state = GridState(asset_code="515180")
+        state.portfolio = Portfolio(cash=Decimal("100000"), name="网格组合")
+        return state
 
     def _order(self, side, shares, price, level, on=date(2024, 1, 2),
                cost=Decimal("0")):
@@ -1176,79 +1208,95 @@ class TestTradeTypeInDomain(unittest.TestCase):
             level=level,
         )
 
+    def _buy(self, state, shares=100, price="10.00", level=1,
+             cost=Decimal("0"), on=date(2024, 1, 2)):
+        """模拟一次买入：Portfolio 记账 + GridState 记批次"""
+        order = self._order(GridOrderSide.BUY, shares, price, level, on=on, cost=cost)
+        was_flat = state.portfolio.is_flat(order.asset_code)
+        state.portfolio.buy(order.asset_code, order.shares,
+                            order.amount, order.cost)
+        return state.record_buy(order, was_flat)
+
+    def _sell(self, state, shares=100, price="11.00", level=1,
+              cost=Decimal("0"), on=date(2024, 1, 3)):
+        """模拟一次卖出：Portfolio 记账（按批次精确释放成本）+ GridState 移除批次"""
+        order = self._order(GridOrderSide.SELL, shares, price, level, on=on, cost=cost)
+        tranche = next((t for t in state.tranches if t.level == level), None)
+        released = tranche.total_outlay if tranche else None
+        state.portfolio.sell(order.asset_code, order.shares,
+                             order.amount, order.cost,
+                             cost_basis_released=released)
+        return state.record_sell(order)
+
     # ------------------------------------------------------------------
 
     def test_first_buy_is_open(self):
         """持仓为 0 时买入 -> 开仓"""
-        from src.domain.grid.value_objects import GridOrderSide, GridTradeType
+        from src.domain.grid.value_objects import GridTradeType
 
         state = self._state()
-        trade_type = state.record_buy(
-            self._order(GridOrderSide.BUY, 100, "10.00", level=1))
+        trade_type = self._buy(state)
 
         self.assertEqual(trade_type, GridTradeType.OPEN)
-        self.assertEqual(state.shares, Decimal("100"))
+        self.assertEqual(state_portfolio_shares(state), Decimal("100"))
 
     def test_buy_while_holding_is_add(self):
         """持仓 > 0 时再买 -> 加仓（即使换了新轮次也不影响该规则）"""
-        from src.domain.grid.value_objects import GridOrderSide, GridTradeType
+        from src.domain.grid.value_objects import GridTradeType
 
         state = self._state()
-        first = state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1))
-        second = state.record_buy(self._order(GridOrderSide.BUY, 100, "9.80", level=2))
+        first = self._buy(state, level=1)
+        second = self._buy(state, price="9.80", level=2)
 
         self.assertEqual(first, GridTradeType.OPEN)
         self.assertEqual(second, GridTradeType.ADD)
-        self.assertEqual(state.shares, Decimal("200"))
+        self.assertEqual(state_portfolio_shares(state), Decimal("200"))
 
     def test_cost_basis_includes_commission(self):
         """持仓成本含手续费"""
         from src.domain.grid.value_objects import GridOrderSide
 
         state = self._state()
-        state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1, cost="5"))
+        self._buy(state, cost=Decimal("5"))
 
-        self.assertEqual(state.cost_basis, Decimal("1005"))
+        self.assertEqual(state_portfolio_cost(state), Decimal("1005"))
 
     def test_realized_pnl_nets_commission(self):
         """已实现盈亏 = 卖出净额 - 买入总支出（两侧均扣手续费）"""
-        from src.domain.grid.value_objects import GridOrderSide, GridTradeType
+        from src.domain.grid.value_objects import GridTradeType
 
         state = self._state()
         # 买入：1000 + 手续费 5 = 1005 支出
-        state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1, cost="5"))
+        self._buy(state, cost=Decimal("5"))
         # 卖出：1100 - 手续费 6 = 1094 净收入
-        trade_type = state.record_sell(
-            self._order(GridOrderSide.SELL, 100, "11.00", level=1,
-                        on=date(2024, 1, 3), cost="6"))
+        trade_type = self._sell(state, cost=Decimal("6"))
 
         self.assertEqual(trade_type, GridTradeType.TAKE_PROFIT)
-        self.assertEqual(state.realized_pnl, Decimal("89"))      # 1094 - 1005
-        self.assertEqual(state.shares, Decimal("0"))
-        self.assertEqual(state.cost_basis, Decimal("0"))
+        self.assertEqual(state_portfolio_realized(state), Decimal("89"))
+        self.assertEqual(state_portfolio_shares(state), Decimal("0"))
+        self.assertEqual(state_portfolio_cost(state), Decimal("0"))
 
     def test_sell_more_than_held_raises(self):
-        """卖出数量超过持仓 -> 拒绝"""
+        """卖出数量超过持仓 -> 拒绝（由 Portfolio 保护）"""
         from src.domain.grid.value_objects import GridOrderSide
 
         state = self._state()
-        state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1))
+        self._buy(state)
         with self.assertRaises(ValueError):
-            state.record_sell(
-                self._order(GridOrderSide.SELL, 200, "11.00", level=1,
-                            on=date(2024, 1, 3)))
+            state.portfolio.sell(
+                "515180", Decimal("200"), Decimal("2200"), Decimal("0"))
 
     def test_total_pnl_is_realized_plus_floating(self):
         """总盈亏 = 已实现 + 浮动"""
-        from src.domain.grid.value_objects import GridOrderSide
-
         state = self._state()
-        state.record_buy(self._order(GridOrderSide.BUY, 100, "10.00", level=1))
+        self._buy(state)
 
         # 持仓 100 股，现价 10.5 -> 浮动 +50
-        self.assertEqual(state.unrealized_pnl(Decimal("10.5")), Decimal("50.0"))
-        self.assertEqual(state.realized_pnl, Decimal("0"))
-        self.assertEqual(state.total_pnl(Decimal("10.5")), Decimal("50.0"))
+        self.assertEqual(state_portfolio_unrealized(state, Decimal("10.5")),
+                         Decimal("50.0"))
+        self.assertEqual(state_portfolio_realized(state), Decimal("0"))
+        self.assertEqual(state_portfolio_total(state, Decimal("10.5")),
+                         Decimal("50.0"))
 
     def test_order_carries_trade_type_and_shares_after(self):
         """引擎记账后把交易类型与成交后持仓回填到订单上"""
@@ -1263,7 +1311,7 @@ class TestTradeTypeInDomain(unittest.TestCase):
                 price_basis=GridPriceBasis.CLOSE, take_profit_ratio=Decimal("1"),
             ),
             asset_codes=["515180"],
-            cash=Decimal("100000"),
+            portfolio=Portfolio(cash=Decimal("100000"), name="网格组合"),
         )
 
         GridEngine.evaluate(strategy, "515180", GridMarketSnapshot(

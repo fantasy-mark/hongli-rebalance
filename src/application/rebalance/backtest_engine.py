@@ -19,6 +19,7 @@ import pandas as pd
 from src.domain.price.entities import AssetCode, AdjustedPriceSeries
 from src.domain.performance.value_objects import PerformanceCalculator, ReturnStatistics
 from src.domain.trading.value_objects import LotSize
+from src.domain.portfolio.entities import Portfolio
 from src.application.price.query_service import PriceQueryService
 
 logger = logging.getLogger(__name__)
@@ -263,8 +264,13 @@ class RebalanceBacktester:
         # 3. 初始化持仓
         snapshots = []
         all_trades = []
-        current_shares: Dict[str, Decimal] = {code: Decimal("0") for code in self.config.asset_codes}
-        cash = self.config.initial_capital
+        # 组合（独立于网格策略的持仓与现金）
+        portfolio = Portfolio(
+            portfolio_id='rebalance',
+            name='再平衡组合',
+            cash=Decimal(str(self.config.initial_capital)),
+        )
+        cash = portfolio.cash
         
         # 4. 逐日回测
         for i, current_date in enumerate(trading_days):
@@ -274,14 +280,11 @@ class RebalanceBacktester:
             if not prices:
                 continue
             
-            # 计算当前持仓市值
-            asset_values = {}
+            # 计算当前持仓市值（由组合统一维护）
+            asset_values = portfolio.asset_values(prices)
             for code in self.config.asset_codes:
-                if code in prices and current_shares[code] > 0:
-                    asset_values[code] = current_shares[code] * prices[code]
-                else:
-                    asset_values[code] = Decimal("0")
-            
+                asset_values.setdefault(code, Decimal("0"))
+
             total_asset_value = sum(asset_values.values())
             total_value = total_asset_value + cash
             
@@ -302,30 +305,28 @@ class RebalanceBacktester:
             elif self._should_rebalance(asset_weights, prices, total_value):
                 # 触发再平衡
                 trades_today = self._rebalance(
-                    current_shares, asset_values, prices, 
+                    portfolio, asset_values, prices,
                     total_value, cash, current_date
                 )
             
-            # 执行交易
+            # 执行交易（记账与不变量校验由 Portfolio 负责）
             if trades_today:
                 for trade in trades_today:
                     if trade.action == 'buy':
-                        current_shares[trade.asset_code] += trade.shares
-                        cash -= trade.net_amount
+                        portfolio.buy(trade.asset_code, trade.shares,
+                                      trade.amount, trade.cost)
                     else:  # sell
-                        current_shares[trade.asset_code] -= trade.shares
-                        cash += trade.net_amount
+                        portfolio.sell(trade.asset_code, trade.shares,
+                                       trade.amount, trade.cost)
+                cash = portfolio.cash
                 
                 all_trades.extend(trades_today)
                 
                 # 重新计算交易后的持仓
-                asset_values = {}
+                asset_values = portfolio.asset_values(prices)
                 for code in self.config.asset_codes:
-                    if code in prices and current_shares[code] > 0:
-                        asset_values[code] = current_shares[code] * prices[code]
-                    else:
-                        asset_values[code] = Decimal("0")
-                
+                    asset_values.setdefault(code, Decimal("0"))
+
                 total_asset_value = sum(asset_values.values())
                 total_value = total_asset_value + cash
                 
@@ -340,7 +341,7 @@ class RebalanceBacktester:
                 total_value=total_value,
                 asset_values=asset_values,
                 asset_weights=asset_weights,
-                asset_shares=dict(current_shares),
+                asset_shares=portfolio.position_snapshot(),
                 cash=cash,
                 trades=trades_today,
             )
@@ -540,7 +541,7 @@ class RebalanceBacktester:
         
         return trades
     
-    def _rebalance(self, current_shares: Dict[str, Decimal],
+    def _rebalance(self, portfolio: Portfolio,
                    current_values: Dict[str, Decimal],
                    prices: Dict[str, Decimal],
                    total_value: Decimal,

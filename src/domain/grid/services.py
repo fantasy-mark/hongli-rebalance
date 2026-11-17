@@ -168,7 +168,8 @@ class GridEngine:
 
         # ---- 本轮是否完全止盈？----
         round_closed = False
-        if state.shares <= 0 and not state.tranches and state.filled_levels:
+        if (strategy.portfolio.shares_of(asset_code) <= 0
+                and not state.tranches and state.filled_levels):
             state.complete_round(snapshot.date)
             round_closed = True
 
@@ -301,7 +302,7 @@ class GridEngine:
             cost = strategy.cost_model.calculate_cost(amount)
 
             # 网格资金隔离：仅消耗网格资金池
-            if strategy.cash < amount + cost:
+            if strategy.portfolio.cash < amount + cost:
                 state.skip_level(state.next_level)
                 state.next_level += 1
                 continue
@@ -318,11 +319,13 @@ class GridEngine:
                 order_id=f"grid-{state.asset_code}-{snapshot.date}-{state.next_level}",
             )
 
-            strategy.cash -= (amount + cost)
-            # 由领域状态判定交易类型（开仓 / 加仓）并记账
+            # 持仓与现金由组合记账（与再平衡组合完全隔离）
+            was_flat = strategy.portfolio.is_flat(order.asset_code)
+            strategy.portfolio.buy(order.asset_code, order.shares, amount, cost)
+            # 轮次维度：批次与档位由网格状态维护，并判定交易类型
             order = replace(order,
-                            trade_type=state.record_buy(order),
-                            shares_after=state.shares)
+                            trade_type=state.record_buy(order, was_flat),
+                            shares_after=strategy.portfolio.shares_of(order.asset_code))
             orders.append(order)
 
             state.next_level += 1
@@ -411,11 +414,15 @@ class GridEngine:
                 order_id=f"grid-tp-{state.asset_code}-{snapshot.date}-{tranche.level}",
             )
 
-            strategy.cash += (amount - cost)
-            # 由领域状态记账并结算已实现盈亏
+            # 按批次精确释放持仓成本（网格的批次成本是精确值）
+            released = tranche.total_outlay
+            strategy.portfolio.sell(order.asset_code, tranche.shares,
+                                    amount, cost,
+                                    cost_basis_released=released)
+            # 轮次维度：移除批次
             order = replace(order,
                             trade_type=state.record_sell(order),
-                            shares_after=state.shares)
+                            shares_after=strategy.portfolio.shares_of(order.asset_code))
             orders.append(order)
 
         return orders
