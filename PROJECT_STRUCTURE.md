@@ -20,8 +20,10 @@ src/domain/performance/     # ★ 绩效统计（三个策略共享内核）
 ├── value_objects.py         # 值对象: ReturnStatistics
 └── services.py              # （见 value_objects 内 PerformanceCalculator）
 
-src/domain/trading/         # ★ 交易内核（整手取整等市场规则共享）
-└── value_objects.py         # 值对象: LotSize
+src/domain/trading/         # ★ 交易内核
+├── value_objects.py         # 值对象: LotSize
+├── trade.py                 # 值对象: Trade / TradeSide / TradeId / CashFlowType
+└── ledger.py                # 聚合根: TradeLedger（追加式账本）+ LedgerSnapshot
 
 src/domain/portfolio/       # ★ 组合与持仓（两策略共享内核）
 └── entities.py              # 聚合根: Portfolio, 值对象: Position
@@ -48,6 +50,9 @@ src/application/grid/        # ★ 网格策略上下文
 ├── grid_backtester.py       # 应用服务: GridBacktester
 ├── grid_chart.py            # 应用服务: GridChartRenderer（多面板图 + 触发日志）
 └── combined_backtester.py   # 应用服务: CombinedBacktester（共享配置，持仓隔离）
+
+src/infrastructure/trading/  # ★ 交易账本仓储
+└── repositories.py          # trades.json（真相源）+ holdings.json（派生视图）
 
 src/application/chart/       # ★ 图表（技术关注点，由领域层迁出）
 ├── entities.py              # ChartConfig, ChartSeries, ChartMarkerGroup ...
@@ -238,6 +243,7 @@ print(GridChartRenderer.trigger_log(result))
 | [docs/grid_strategy_ddd_design.md](docs/grid_strategy_ddd_design.md) | ★ 网格策略DDD设计 |
 | [docs/price_cache_design.md](docs/price_cache_design.md) | ★ 价格缓存与增量同步设计 |
 | [docs/price_sources_design.md](docs/price_sources_design.md) | ★ 多数据源容灾与复权口径设计 |
+| [docs/trading_ledger_design.md](docs/trading_ledger_design.md) | ★ 交易流水与持仓设计 |
 | [docs/ddd_implementation_summary.md](docs/ddd_implementation_summary.md) | 实现总结 |
 | [docs/migration_summary.md](docs/migration_summary.md) | 迁移报告 |
 | [docs/adjusted_price_provider_usage.md](docs/adjusted_price_provider_usage.md) | API详细文档 |
