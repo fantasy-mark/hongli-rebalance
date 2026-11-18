@@ -55,3 +55,8 @@ Thumbs.db
 # Temporary files
 temp_*.py
 *.tmp
+
+# GitHub Pages 站点数据（必须入库，供 Pages 直接静态访问）
+!pages/data/
+!pages/data/**
+!pages/data/*.png

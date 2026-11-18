@@ -1,0 +1,298 @@
+/* GitHub Pages 站点专用样式（在 master style.css 基础上叠加） */
+
+body {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 1.2em 3em;
+}
+
+/* ---------------- ① 策略全景图 ---------------- */
+.chart-frame {
+  border: 1px solid #e3e3e3;
+  border-radius: 8px;
+  background: #fafafa;
+  padding: 0.4em;
+  overflow: hidden;
+}
+
+.chart-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6em 1.6em;
+  margin-top: 0.8em;
+  font-size: 0.93em;
+}
+
+.chart-summary .chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4em;
+  padding: 0.32em 0.8em;
+  border-radius: 999px;
+  background: #f4f6f8;
+  border: 1px solid #e5e9ed;
+}
+
+.chart-summary .chip-label { color: #666; }
+
+.chart-summary .up   { color: #1e8449; font-weight: 600; }
+.chart-summary .down { color: #c0392b; font-weight: 600; }
+
+/* ---------------- ② 交易记录 ---------------- */
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1.2em;
+  margin: 0.6em 0 0.2em;
+  font-size: 0.92em;
+}
+
+.filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  color: #555;
+}
+
+.filter-label select {
+  padding: 0.28em 0.5em;
+  border: 1px solid #d5d9dd;
+  border-radius: 5px;
+  background: #fff;
+  font-size: 0.95em;
+  color: #333;
+}
+
+.table-scroll {
+  max-height: 560px;
+  overflow-y: auto;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+}
+
+.table-scroll table {
+  margin: 0;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f5f6f7;
+  box-shadow: inset 0 -1px 0 #e0e0e0;
+}
+
+.table-scroll tbody tr:hover { background: #fafcfe; }
+
+td.num, th.num { text-align: right; }
+
+/* 交易表：日期与资产左对齐，其余右对齐 */
+#trades-table th,
+#trades-table td { text-align: right; white-space: nowrap; }
+
+#trades-table th:nth-child(1),
+#trades-table td:nth-child(1),
+#trades-table th:nth-child(2),
+#trades-table td:nth-child(2),
+#trades-table th:nth-child(3),
+#trades-table td:nth-child(3),
+#trades-table th:nth-child(4),
+#trades-table td:nth-child(4) { text-align: left; }
+td.pos { color: #1e8449; }
+td.neg { color: #c0392b; }
+
+.side-buy  { color: #1e8449; font-weight: 600; }
+.side-sell { color: #c0392b; font-weight: 600; }
+
+.asset-dot {
+  display: inline-block;
+  width: 0.62em;
+  height: 0.62em;
+  border-radius: 50%;
+  margin-right: 0.42em;
+  vertical-align: middle;
+}
+
+/* ---------------- ③ 持仓 ---------------- */
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 1.4em;
+  margin-top: 1em;
+}
+
+.strategy-card {
+  border: 1px solid #e5e8eb;
+  border-radius: 8px;
+  padding: 1em 1.1em 1.2em;
+  background: #fdfefe;
+}
+
+.strategy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  border-bottom: 1px solid #eef0f2;
+  padding-bottom: 0.55em;
+  margin-bottom: 0.7em;
+}
+
+.strategy-head h3 {
+  margin: 0;
+  font-size: 1.06em;
+}
+
+#card-rebalance .strategy-head h3 { color: #2C5F8D; }
+#card-grid .strategy-head h3      { color: #C0392B; }
+
+.strategy-tag {
+  font-size: 0.78em;
+  color: #667;
+  background: #f0f3f6;
+  border-radius: 999px;
+  padding: 0.18em 0.6em;
+}
+
+.strategy-card table,
+.combined-row table {
+  width: 100%;
+  margin: 0.2em 0 0;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+}
+
+.strategy-card th,
+.strategy-card td,
+.combined-row th,
+.combined-row td {
+  border: 0;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 0.4em 0.35em;
+  text-align: right;
+  background: transparent;
+}
+
+.strategy-card th,
+.combined-row th {
+  background: transparent;
+  color: #777;
+  font-size: 0.86em;
+  font-weight: 600;
+  text-align: right;
+}
+
+.strategy-card th:first-child,
+.strategy-card td:first-child,
+.combined-row th:first-child,
+.combined-row td:first-child {
+  text-align: left;
+  width: 34%;
+}
+
+.strategy-card td.num,
+.combined-row td.num {
+  white-space: nowrap;
+}
+
+.bar-wrap {
+  position: relative;
+  background: #f1f4f7;
+  border-radius: 3px;
+  height: 0.5em;
+  margin-top: 0.3em;
+  overflow: hidden;
+}
+
+.bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: #7aa9cf;
+}
+
+.totals {
+  margin-top: 0.85em;
+  padding-top: 0.75em;
+  border-top: 1px solid #e9ecef;
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+}
+
+.totals .row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.15em 0;
+}
+
+.totals .row.grand {
+  font-weight: 700;
+  color: #1B4F72;
+  border-top: 1px dashed #dbe2e8;
+  margin-top: 0.35em;
+  padding-top: 0.4em;
+}
+
+.stat-block {
+  margin-top: 1em;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 0.55em;
+}
+
+.stat-item {
+  background: #f7f9fb;
+  border: 1px solid #eef1f4;
+  border-radius: 6px;
+  padding: 0.5em 0.6em;
+}
+
+.stat-item .k {
+  display: block;
+  color: #7b8794;
+  font-size: 0.78em;
+  margin-bottom: 0.18em;
+}
+
+.stat-item .v {
+  font-size: 1.0em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.combined-row {
+  margin-top: 1.6em;
+  border: 1px solid #e0e6ec;
+  border-radius: 8px;
+  padding: 1em 1.1em 1.2em;
+  background: #fbfcfd;
+}
+
+.combined-row h3 {
+  margin: 0 0 0.6em;
+  font-size: 1.04em;
+  color: #1B4F72;
+}
+
+.empty-note {
+  color: #999;
+  font-size: 0.9em;
+  padding: 0.6em 0;
+}
+
+@media (max-width: 720px) {
+  body { padding: 0 0.7em 2em; }
+  .strategy-grid { grid-template-columns: 1fr; }
+  .table-scroll { max-height: 420px; }
+}

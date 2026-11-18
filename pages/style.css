@@ -1,0 +1,301 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  margin: 2em auto;
+  max-width: 1080px;
+  padding: 0 1em;
+  color: #222;
+  background: #fafafa;
+  line-height: 1.5;
+}
+
+header h1 { margin-bottom: 0.2em; }
+header p { margin-top: 0; }
+
+main section { background: #fff; border-radius: 8px; padding: 1em 1.2em; margin: 1.5em 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+
+h2 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 0.4em; }
+
+.muted { color: #888; font-size: 0.9em; }
+code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.95em; }
+
+/* status badge: state-driven left border + two-row layout for hierarchy.
+   Row 1 = action badge | date | total (with prominent number).
+   Row 2 = ETF + cash breakdown, muted and below a dashed separator. */
+#status-badge {
+  font-size: 1.05em;
+  padding: 1em 1.2em 1em 1.4em;
+  border-left: 4px solid #d0d0d0;
+}
+#status-badge.loading { color: #888; border-left-color: #d0d0d0; }
+#status-badge.ok      { border-left-color: #2c7a2c; }
+#status-badge.warn    { border-left-color: #c0392b; }
+#status-badge.info    { border-left-color: #2c5f8d; }
+#status-badge.err     { border-left-color: #c0881d; }
+#status-badge .status-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5em 1em;
+}
+#status-badge .status-date {
+  color: #666;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95em;
+}
+#status-badge .status-total {
+  font-size: 1.1em;
+  margin-left: auto;
+}
+#status-badge .status-total strong {
+  color: #2c5f8d;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 1.15em;
+  margin-left: 0.15em;
+}
+#status-badge .status-error {
+  color: #c0392b;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.92em;
+}
+#status-badge .status-breakdown {
+  margin-top: 0.55em;
+  padding-top: 0.5em;
+  border-top: 1px dashed #e0e0e0;
+  font-size: 0.88em;
+  color: #666;
+  line-height: 1.5;
+}
+#status-badge .status-breakdown .status-pool {
+  color: #999;
+  font-size: 0.95em;
+}
+
+/* Holdings editor */
+#holdings-table { width: 100%; border-collapse: collapse; margin: 0.5em 0 1em; }
+#holdings-table th, #holdings-table td { padding: 0.5em 0.4em; border-bottom: 1px solid #eee; }
+#holdings-table input {
+  width: 100%; box-sizing: border-box; padding: 0.3em 0.4em;
+  border: 1px solid #ddd; border-radius: 3px; font: inherit;
+}
+#holdings-table td.del-cell { width: 2.5em; text-align: center; }
+#holdings-table .row-del-btn {
+  background: #fee; color: #c0392b; border: 1px solid #fcc;
+  padding: 0.2em 0.6em; border-radius: 3px; cursor: pointer; font-size: 0.95em;
+}
+#holdings-table .row-del-btn:hover { background: #fdd; }
+
+.editor-actions { margin-top: 0.8em; display: flex; align-items: center; flex-wrap: wrap; gap: 0.4em; }
+.editor-actions input[type="number"] {
+  padding: 0.3em 0.4em; border: 1px solid #ddd; border-radius: 3px; font: inherit;
+}
+.btn-primary, .btn-secondary {
+  border: 0; padding: 0.5em 1.1em; border-radius: 4px; cursor: pointer;
+  font: inherit; font-weight: 600; transition: background 0.15s;
+}
+.btn-primary { background: #2c5f8d; color: #fff; }
+.btn-primary:hover { background: #234a6e; }
+.btn-primary:disabled { background: #aaa; cursor: not-allowed; }
+.btn-secondary { background: #f0f0f0; color: #333; }
+.btn-secondary:hover { background: #e3e3e3; }
+#save-status.ok { color: #2c7a2c; }
+#save-status.err { color: #c0392b; }
+
+.btn-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: #2c5f8d; text-decoration: underline; font: inherit;
+}
+.btn-link:hover { color: #1d3f5e; }
+
+.badge {
+  display: inline-block;
+  padding: 0.25em 0.7em;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 0.95em;
+}
+.badge-ok    { background: #d4edda; color: #155724; }
+.badge-warn  { background: #f8d7da; color: #721c24; }
+.badge-info  { background: #d1ecf1; color: #0c5460; }
+.badge-err   { background: #fff3cd; color: #856404; }
+
+table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.95em; }
+th, td { border: 1px solid #e0e0e0; padding: 0.5em 0.7em; }
+th { background: #f5f5f5; text-align: center; font-weight: 600; }
+td { text-align: right; }
+td:first-child { text-align: left; }
+td.warn { color: #c00; font-weight: bold; }
+td.ok { color: #2c7a2c; }
+
+footer { text-align: center; padding: 1em; }
+
+/* Cash pool table (再平衡 / 网格 × 市值 / 余额) */
+.cash-pool-table { width: auto; min-width: 320px; border-collapse: collapse; margin: 0.4em 0 0.6em; font-size: 0.95em; }
+.cash-pool-table th, .cash-pool-table td { padding: 0.55em 1em; border-bottom: 1px solid #e9ecef; font-variant-numeric: tabular-nums; }
+.cash-pool-table thead th { background: #f8f9fa; color: #666; font-weight: 600; font-size: 0.88em; border-bottom: 2px solid #dee2e6; }
+.cash-pool-table tbody th { text-align: left; font-weight: 600; color: #333; }
+.cash-pool-table tbody td { text-align: right; }
+.cash-pool-table tbody tr:last-child th,
+.cash-pool-table tbody tr:last-child td { border-bottom: 0; }
+.cash-pool-table tbody th { width: 7em; }
+
+/* "资产" column: one chip per ETF.  Chips wrap so long lists don't
+   expand the table. */
+.cash-pool-table .assets-cell { text-align: left; line-height: 1.7; }
+.cash-pool-table .asset-tag {
+  display: inline-block;
+  background: #eef2f7;
+  color: #2c5f8d;
+  border-radius: 3px;
+  padding: 0.1em 0.55em;
+  margin: 0.08em 0.3em 0.08em 0;
+  font-size: 0.85em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* "合计" row: visually distinct — heavier top border, slightly muted
+   text so the eye reads it as a summary, not a peer of 再平衡/网格. */
+.cash-pool-table tr.total-row th { border-top: 2px solid #adb5bd; color: #555; }
+.cash-pool-table tr.total-row td { border-top: 2px solid #adb5bd; color: #555; font-weight: 600; }
+
+/* Nested editor sections (3pp 再平衡 / 复合网格 under 交易记录) */
+main section.nested {
+  background: #fafbfc;
+  margin: 1em 0;
+  padding: 0.8em 1.2em;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+main section.nested h3 {
+  margin-top: 0;
+  font-size: 1.05em;
+  color: #444;
+  font-weight: 600;
+}
+
+/* Editor tables can exceed main width when form controls (date inputs,
+   long-option selects) push the natural width past 100%.  Wrap each
+   editor table in this div to allow horizontal scroll without
+   expanding <body> and triggering a page-wide horizontal scrollbar. */
+.table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  /* Add a subtle fade on the right edge to hint that content scrolls. */
+  background: linear-gradient(to right, #fafbfc 30%, rgba(250,251,252,0)) 0 0 / 12px 100% no-repeat,
+              linear-gradient(to left,  #fafbfc 30%, rgba(250,251,252,0)) 100% 0 / 12px 100% no-repeat,
+              radial-gradient(farthest-side at 0 50%, rgba(0,0,0,0.06), rgba(0,0,0,0)) 0 0 / 12px 100% no-repeat,
+              radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,0.06), rgba(0,0,0,0)) 100% 0 / 12px 100% no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+.table-wrap table { min-width: 100%; }
+
+/* Card-based editor (3pp 再平衡 + 复合网格):
+   Each trade/op is a multi-line card.  Replaces the wide single-row
+   table layout, so no horizontal scroll is needed.  Both editors share
+   the same shape: 3 lines — (header | values | note) — with the same
+   field set, only the 操作 options differ. */
+.trade-list { display: flex; flex-direction: column; gap: 0.6em; margin: 0.5em 0 1em; }
+.trade-card {
+  background: #fff;
+  border: 1px solid #e3e6ea;
+  border-radius: 6px;
+  padding: 0.65em 0.9em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+  transition: outline-color 0.15s;
+}
+.trade-card.invalid { outline: 2px solid #c0392b; }
+.trade-card .card-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em 1em;
+  align-items: center;
+}
+.trade-card .card-line label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-size: 0.92em;
+  color: #555;
+  white-space: nowrap;
+}
+.trade-card .card-line label.grow { flex: 1 1 12em; min-width: 12em; }
+.trade-card .card-line input,
+.trade-card .card-line select {
+  font: inherit;
+  padding: 0.25em 0.45em;
+  border: 1px solid #d0d4d9;
+  border-radius: 3px;
+  background: #fcfcfd;
+}
+.trade-card .card-line input[type="number"] { text-align: right; }
+.trade-card .card-line input[type="date"] { width: 9em; }
+.trade-card .card-line input[type="text"][data-k="note"] { flex: 1; min-width: 14em; }
+.trade-card .amount-readout { color: #888; font-size: 0.9em; }
+.trade-card .row-del-btn {
+  background: #fee; color: #c0392b; border: 1px solid #fcc;
+  padding: 0.2em 0.6em; border-radius: 3px; cursor: pointer; font-size: 0.95em;
+  margin-left: auto;
+}
+.trade-card .row-del-btn:hover { background: #fdd; }
+
+/* ---- Grid operations log (inside 策略全景图 section) ----
+   First vertical-scroll-with-max-height pattern in this project.  Sized
+   for ~10 rows × ~34px line-height (header + 10 data rows).  Re-uses
+   the cash-pool-table border/bg palette (#e9ecef separators,
+   #f8f9fa header, #dee2e6 header bottom) so the two tables read as
+   one design system. */
+.grid-ops-table { width: 100%; border-collapse: collapse;
+                  font-size: 0.92em; font-variant-numeric: tabular-nums; }
+.grid-ops-table th, .grid-ops-table td {
+  padding: 0.4em 0.65em; border-bottom: 1px solid #e9ecef;
+  text-align: right;
+}
+.grid-ops-table th { background: #f8f9fa; color: #666; font-weight: 600;
+                     font-size: 0.85em; border-bottom: 2px solid #dee2e6; }
+.grid-ops-table td:first-child,
+.grid-ops-table th:first-child { text-align: left; }
+.grid-ops-table td.col-op { text-align: center; }
+.grid-ops-table td.col-shares { font-variant-numeric: tabular-nums; }
+.grid-ops-table tr:last-child td { border-bottom: 0; }
+
+/* Vertical scroll container: clip after ~10 rows. */
+.grid-ops-scroll {
+  max-height: 360px;        /* ~10 rows × 34px + header ≈ 360px */
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid #e3e6ea;
+  border-radius: 6px;
+  background: #fafbfc;
+  margin-top: 0.5em;
+}
+.grid-ops-scroll .grid-ops-table { margin: 0; }   /* table fills container */
+
+/* Source chip: blue for auto, orange-tinted for manual (matches status palette). */
+.grid-ops-table .src-chip {
+  display: inline-block; padding: 0.05em 0.5em; border-radius: 3px;
+  font-size: 0.82em; font-weight: 500;
+}
+.grid-ops-table .src-chip.auto   { background: #eef2f7; color: #2c5f8d; }
+.grid-ops-table .src-chip.manual { background: #fdf3e3; color: #c0881d; }
+/* Backtest ops are SIMULATED (replayed from historical prices), not live
+   trades — kept visually distinct from the two live tiers on purpose. */
+.grid-ops-table .src-chip.backtest { background: #f0eef6; color: #6b5b95; }
+
+/* tp P&L cell: green if positive, red if negative. */
+.grid-ops-table td.col-pnl.pos { color: #2c7a2c; }
+.grid-ops-table td.col-pnl.neg { color: #c0392b; }
+.grid-ops-table td.col-pnl.muted { color: #888; }
+
+/* Empty state — centered, matches the muted em-dash pattern at index.html:106. */
+.grid-ops-empty {
+  text-align: center; color: #888; font-size: 0.92em;
+  padding: 1.4em 1em; margin: 0;
+}
+
+/* Footer ("共 N 笔，显示最新 10 笔" — empty in v1). */
+.grid-ops-footer {
+  font-size: 0.85em; color: #888; margin-top: 0.35em; text-align: right;
+}

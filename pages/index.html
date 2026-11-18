@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>策略追踪 · 再平衡 + 网格</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="pages.css">
+</head>
+<body>
+  <header>
+    <h1>策略追踪 · 再平衡 + 网格</h1>
+    <p class="muted">4 资产等权 · 3pp 再平衡 · 复合网格 · 持仓隔离 · DDD 架构</p>
+  </header>
+
+  <main>
+    <section id="status-badge" class="loading">加载中…</section>
+
+    <!-- ① 策略全景图 -->
+    <section id="section-overview">
+      <h2>① 策略全景图</h2>
+      <p class="muted">
+        上：各资产买入持有收益（虚线）· 3pp 再平衡（黑色粗线）· 网格 ROI（绿线），收益 % 对数刻度<br>
+        下：网格资金占用堆叠（各资产 持仓数量 × 收盘价）· 网格累计收益（红色虚线）
+      </p>
+      <div class="chart-frame">
+        <img id="grid-chart" src="data/grid_chart.png" alt="策略全景图">
+      </div>
+      <div id="chart-summary" class="chart-summary"></div>
+    </section>
+
+    <!-- ② 交易记录 -->
+    <section id="section-trades">
+      <h2>② 交易记录</h2>
+      <p class="muted">网格策略成交明细（开仓 / 加仓 / 止盈），按时间倒序</p>
+      <div class="table-toolbar">
+        <label class="filter-label">
+          资产
+          <select id="trade-asset-filter">
+            <option value="">全部</option>
+          </select>
+        </label>
+        <label class="filter-label">
+          方向
+          <select id="trade-side-filter">
+            <option value="">全部</option>
+            <option value="buy">买入</option>
+            <option value="sell">卖出</option>
+          </select>
+        </label>
+        <span id="trade-count" class="muted"></span>
+      </div>
+      <div id="trades-table" class="table-scroll"></div>
+    </section>
+
+    <!-- ③ 持仓 —— 再平衡 / 网格 分开 -->
+    <section id="section-holdings">
+      <h2>③ 持仓</h2>
+      <p class="muted">再平衡组合与网格组合各自独立管理现金与持仓，互不影响</p>
+
+      <div class="strategy-grid">
+        <article class="strategy-card" id="card-rebalance">
+          <header class="strategy-head">
+            <h3>再平衡组合</h3>
+            <span class="strategy-tag">3pp 阈值</span>
+          </header>
+          <div id="rebalance-holdings"></div>
+          <div id="rebalance-stats" class="stat-block"></div>
+        </article>
+
+        <article class="strategy-card" id="card-grid">
+          <header class="strategy-head">
+            <h3>网格组合</h3>
+            <span class="strategy-tag">复合网格</span>
+          </header>
+          <div id="grid-holdings"></div>
+          <div id="grid-stats" class="stat-block"></div>
+        </article>
+      </div>
+
+      <div class="combined-row">
+        <h3>组合合计</h3>
+        <div id="combined-holdings"></div>
+        <div id="combined-stats" class="stat-block"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p class="muted">
+      <a href="https://github.com/fantasy-mark/hongli-rebalance/tree/ddd">ddd 分支</a> ·
+      <a href="https://github.com/fantasy-mark/hongli-rebalance">main 分支</a>
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
