@@ -45,6 +45,11 @@ data/*.json
 data/*.csv
 *.xlsx
 
+# 价格缓存需要入库：CI 无行情访问权限，靠缓存保证回测可重现
+!data/
+!data/price_cache/
+!data/price_cache/*.json
+
 # Logs
 *.log
 

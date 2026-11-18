@@ -1,10 +1,18 @@
-name: Build & Deploy Pages
+name: Refresh Pages Data
+
+# 说明:
+#   本仓库的 GitHub Pages 使用「分支部署」（Source = ddd 分支根目录 /），
+#   站点入口是 ddd 分支的 pages/index.html。
+#   因此这里不需要 actions/deploy-pages —— 只要本工作流把刷新后的
+#   pages/data/* 提交回 ddd，GitHub 会自动重新构建 Pages。
+#
+#   价格缓存 data/price_cache/*.json 已入库，CI 无需访问行情接口，
+#   回测可离线复现；需要最新行情时再手动触发。
 
 on:
-  # 每天收盘后自动刷新（北京时间 08:10 ≈ UTC 00:10）
+  # 每个交易日收盘后刷新（北京时间 08:10 ≈ UTC 00:10）
   schedule:
-    - cron: "10 0 * * 1-5"
-  # 允许手动触发
+    - cron: "10 0 * * 2-6"
   workflow_dispatch:
     inputs:
       start_date:
@@ -15,26 +23,16 @@ on:
         description: "策略全景图 DPI"
         required: false
         default: "150"
-  # 允许 data 目录外的手动推送触发
-  push:
-    branches: [ddd]
-    paths:
-      - "pages/**"
-      - "scripts/build_pages.py"
-      - "src/**"
-      - ".github/workflows/pages.yml"
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: refresh-pages-data
   cancel-in-progress: false
 
 jobs:
-  build:
+  refresh:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -59,6 +57,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Sanity test (domain + use case)
+        run: python -m pytest tests/test_pages_site.py -q
+
       - name: Build pages data (backtest + chart)
         env:
           START_DATE: ${{ github.event.inputs.start_date }}
@@ -69,30 +70,31 @@ jobs:
           if [ -n "$DPI" ]; then ARGS="$ARGS --dpi $DPI"; fi
           python scripts/build_pages.py $ARGS
 
+      - name: Verify generated artifacts
+        run: |
+          set -e
+          test -s pages/data/summary.json
+          test -s pages/data/trades.json
+          test -s pages/data/grid_chart.png
+          python - <<'PY'
+          import json, pathlib
+          s = json.loads(pathlib.Path("pages/data/summary.json").read_text(encoding="utf-8"))
+          assert {"combined", "rebalance", "grid"} <= set(s), s.keys()
+          assert s["grid"]["total_rounds"] > 0
+          t = json.loads(pathlib.Path("pages/data/trades.json").read_text(encoding="utf-8"))
+          assert len(t["trades"]) > 0
+          print(f"OK: {len(t['trades'])} trades, "
+                f"combined {s['combined']['total_return']:+.2%}")
+          PY
+
       - name: Commit refreshed data
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pages/data
+          git add pages/data data/price_cache
           if git diff --staged --quiet; then
-            echo "no data changes"
+            echo "no changes"
           else
             git commit -m "chore(pages): refresh site data $(date -u +%Y-%m-%d)"
             git push origin HEAD:ddd
           fi
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: pages
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
