@@ -1,5 +1,5 @@
 /* 策略追踪站点前端逻辑
- * 数据来源: data/summary.json, data/trades.json
+ * 数据来源: data/site/summary.json, data/site/trades.json
  * 渲染: ① 全景图摘要 ② 交易记录 ③ 持仓（再平衡 / 网格 分开）
  */
 
@@ -58,8 +58,8 @@ async function init() {
   const badge = document.getElementById('status-badge');
   try {
     const [summaryRes, tradesRes] = await Promise.all([
-      fetch('data/summary.json'),
-      fetch('data/trades.json').catch(() => null),
+      fetch('data/site/summary.json'),
+      fetch('data/site/trades.json').catch(() => null),
     ]);
 
     if (!summaryRes.ok) throw new Error(`summary.json HTTP ${summaryRes.status}`);

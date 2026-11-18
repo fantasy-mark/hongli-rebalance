@@ -6,9 +6,9 @@
     python scripts/build_pages.py --offline  # 只用本地缓存
 
 产物:
-    pages/data/grid_chart.png   策略全景图
-    pages/data/summary.json     策略汇总（组合 / 再平衡 / 网格）
-    pages/data/trades.json      网格成交明细
+    data/site/grid_chart.png   策略全景图
+    data/site/summary.json     策略汇总（组合 / 再平衡 / 网格）
+    data/site/trades.json      网格成交明细
 
 分层:
     application/pages/site_builder.py      用例（编排 + 领域翻译）
