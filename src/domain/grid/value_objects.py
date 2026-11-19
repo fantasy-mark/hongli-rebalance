@@ -53,22 +53,23 @@ class GridTradeType(Enum):
     """
     网格交易类型
 
-    - OPEN:        开仓（本轮网格的首笔买入）
+    - OPEN:        建仓（本轮网格的首笔买入）
     - ADD:         加仓（本轮网格的后续买入，档位更深）
+    - REDUCE:      减仓（卖出部分持仓，本网格策略不触发）
     - TAKE_PROFIT: 止盈（一次性卖出本轮全部持仓，本轮结束）
-
-    注：不再有减仓——止盈触发时整轮持仓一次性卖出
     """
     OPEN = "open"
     ADD = "add"
+    REDUCE = "reduce"
     TAKE_PROFIT = "take_profit"
 
     @property
     def label(self) -> str:
         """中文标签"""
         return {
-            GridTradeType.OPEN: "开仓",
+            GridTradeType.OPEN: "建仓",
             GridTradeType.ADD: "加仓",
+            GridTradeType.REDUCE: "减仓",
             GridTradeType.TAKE_PROFIT: "止盈",
         }[self]
 

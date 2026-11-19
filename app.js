@@ -11,7 +11,7 @@ const ASSET_COLORS = {
 };
 
 const ACTION_LABELS = {
-  open: '开仓',
+  open: '建仓',
   add: '加仓',
   reduce: '减仓',
   take_profit: '止盈',

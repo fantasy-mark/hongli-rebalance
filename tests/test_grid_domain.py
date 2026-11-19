@@ -986,8 +986,10 @@ class TestOneShotTakeProfit(unittest.TestCase):
             if trade.side == 'sell':
                 self.assertEqual(trade.trade_type, GridTradeType.TAKE_PROFIT)
 
-        # 不存在 REDUCE 枚举
-        self.assertFalse(hasattr(GridTradeType, 'REDUCE'))
+        # REDUCE 枚举存在但本策略不触发
+        self.assertTrue(hasattr(GridTradeType, 'REDUCE'))
+        for trade in result.trades:
+            self.assertNotEqual(trade.trade_type, GridTradeType.REDUCE)
 
 
 class TestTriggerLogAggregation(unittest.TestCase):
@@ -1383,8 +1385,9 @@ class TestTradeTypeClassification(unittest.TestCase):
 
     def test_trade_type_labels(self):
         """中文标签"""
-        self.assertEqual(GridTradeType.OPEN.label, "开仓")
+        self.assertEqual(GridTradeType.OPEN.label, "建仓")
         self.assertEqual(GridTradeType.ADD.label, "加仓")
+        self.assertEqual(GridTradeType.REDUCE.label, "减仓")
         self.assertEqual(GridTradeType.TAKE_PROFIT.label, "止盈")
 
     def test_open_only_when_flat(self):
