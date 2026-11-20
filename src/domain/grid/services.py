@@ -357,12 +357,17 @@ class GridEngine:
                               snapshot: GridMarketSnapshot) -> List[GridOrder]:
         """
         处理网格止盈（整轮一次性清仓）
-        
+
         止盈价 = 开仓价（该轮首笔买入价）+ 步长 × take_profit_ratio
         
-        触发后**一次性卖出本轮全部持仓**（不产生减仓）：
-        - LOW 口径：各批次按自己的止盈限价成交（限价卖单撮合）
+        触发后**一次性卖出本轮全部持仓**，合并为**一条**止盈成交：
+        - LOW 口径：各批次按自己的止盈限价成交（限价卖单撮合），
+                    合并后取加权平均成交价
         - CLOSE 口径：全部按当日收盘价成交
+        
+        因此一轮网格的成交序列恒为：
+            1 条建仓 + N 条加仓 + 1 条止盈
+        不产生减仓（REDUCE）。
         
         T+1 规则: 当日买入的批次当日不可卖出（A 股限制）
         """
@@ -390,7 +395,12 @@ class GridEngine:
             if snapshot.close < target_price:
                 return orders
 
-        # 一次性清仓：全部批次同时卖出
+        # ---- 汇总各批次的成交金额，合并为一条止盈成交 ----
+        total_shares = Decimal("0")
+        total_amount = Decimal("0")
+        total_cost = Decimal("0")
+        total_outlay = Decimal("0")
+
         for tranche in sellable:
             if trigger.price_basis == GridPriceBasis.LOW:
                 # 各批次按自己的止盈限价成交
@@ -398,32 +408,38 @@ class GridEngine:
             else:
                 fill_price = snapshot.close
 
-            shares = tranche.shares
-            amount = shares * fill_price
-            cost = strategy.cost_model.calculate_cost(amount)
+            total_shares += tranche.shares
+            total_amount += tranche.shares * fill_price
+            total_cost += strategy.cost_model.calculate_cost(tranche.shares * fill_price)
+            total_outlay += tranche.total_outlay
 
-            order = GridOrder(
-                asset_code=state.asset_code,
-                side=GridOrderSide.SELL,
-                price=fill_price,
-                shares=shares,
-                amount=amount,
-                cost=cost,
-                date=snapshot.date,
-                level=tranche.level,
-                order_id=f"grid-tp-{state.asset_code}-{snapshot.date}-{tranche.level}",
-            )
+        if total_shares <= 0:
+            return orders
 
-            # 按批次精确释放持仓成本（网格的批次成本是精确值）
-            released = tranche.total_outlay
-            strategy.portfolio.sell(order.asset_code, tranche.shares,
-                                    amount, cost,
-                                    cost_basis_released=released)
-            # 轮次维度：移除批次
-            order = replace(order,
-                            trade_type=state.record_sell(order),
-                            shares_after=strategy.portfolio.shares_of(order.asset_code))
-            orders.append(order)
+        # 合并成交价 = 加权平均成交价
+        avg_price = total_amount / total_shares
+
+        order = GridOrder(
+            asset_code=state.asset_code,
+            side=GridOrderSide.SELL,
+            price=avg_price,
+            shares=total_shares,
+            amount=total_amount,
+            cost=total_cost,
+            date=snapshot.date,
+            level=None,  # 整轮清仓：不绑定单个档位
+            order_id=f"grid-tp-{state.asset_code}-{snapshot.date}",
+        )
+
+        # 按批次精确释放持仓成本（网格的批次成本是精确值）
+        strategy.portfolio.sell(order.asset_code, total_shares,
+                                total_amount, total_cost,
+                                cost_basis_released=total_outlay)
+        # 轮次维度：移除本轮全部批次
+        order = replace(order,
+                        trade_type=state.record_sell(order),
+                        shares_after=strategy.portfolio.shares_of(order.asset_code))
+        orders.append(order)
 
         return orders
 

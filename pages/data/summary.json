@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-19",
+  "generated_at": "2026-11-20",
   "window": {
     "start": "2020-11-05",
     "end": "2026-11-17"
@@ -16,7 +16,7 @@
     "max_drawdown": -0.10505892139540203,
     "sharpe_ratio": 0.6646315906086738,
     "volatility": 0.0916217688175718,
-    "trade_count": 195,
+    "trade_count": 149,
     "positions": [
       {
         "code": "159937",
@@ -108,11 +108,11 @@
     "cash": 192611.54204868153,
     "market_value": 9637.6,
     "total_return": 0.011245710243407567,
-    "annualized_return": 0.0018541301647880815,
+    "annualized_return": 0.0018532888922477841,
     "max_drawdown": -0.01250974572762584,
-    "sharpe_ratio": -2.376780855194479,
-    "volatility": 0.011842013020972814,
-    "trade_count": 129,
+    "sharpe_ratio": -2.3776639875448886,
+    "volatility": 0.01183796838207393,
+    "trade_count": 83,
     "positions": [
       {
         "code": "511380",
@@ -124,7 +124,7 @@
       }
     ],
     "buy_count": 65,
-    "sell_count": 64,
+    "sell_count": 18,
     "completed_rounds": 18,
     "total_rounds": 22
   }

@@ -73,64 +73,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 1,
-      "price": 3.745,
-      "shares": 2600.0,
-      "amount": 9737.0
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.693148330968907,
-      "shares": 2700.0,
-      "amount": 9971.50049361605
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.693148330968907,
-      "shares": 2700.0,
-      "amount": 9971.50049361605
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.6755550070932794,
-      "shares": 2700.0,
-      "amount": 9923.998519151854
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.6524066761243725,
-      "shares": 2700.0,
-      "amount": 9861.498025535806
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.6292583451554656,
-      "shares": 2700.0,
-      "amount": 9798.997531919757
+      "price": 3.6810245381266777,
+      "shares": 16100.0,
+      "amount": 59264.49506383952
     },
     {
       "date": "2021-03-01",
@@ -205,64 +150,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 2,
-      "price": 3.6,
-      "shares": 2700.0,
-      "amount": 9720.0
-    },
-    {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 3.5559581049851667,
-      "shares": 2800.0,
-      "amount": 9956.682693958466
-    },
-    {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 3.5559581049851667,
-      "shares": 2800.0,
-      "amount": 9956.682693958466
-    },
-    {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 3.5341256850444998,
-      "shares": 2800.0,
-      "amount": 9895.551918124598
-    },
-    {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 3.4999581049851667,
-      "shares": 2800.0,
-      "amount": 9799.882693958467
-    },
-    {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 3.490209475074166,
-      "shares": 2800.0,
-      "amount": 9772.586530207665
+      "price": 3.5390051814495607,
+      "shares": 16700.0,
+      "amount": 59101.38653020767
     },
     {
       "date": "2022-01-24",
@@ -359,86 +249,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 1,
-      "price": 1.173250365708908,
-      "shares": 8500.0,
-      "amount": 9972.628108525718
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.162250365708908,
-      "shares": 8600.0,
-      "amount": 9995.35314509661
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.160499268582184,
-      "shares": 8600.0,
-      "amount": 9980.293709806781
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.153248902873276,
-      "shares": 8700.0,
-      "amount": 10033.265454997501
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.145998537164368,
-      "shares": 8700.0,
-      "amount": 9970.18727333
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.131250365708908,
-      "shares": 8800.0,
-      "amount": 9955.003218238391
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.131250365708908,
-      "shares": 8800.0,
-      "amount": 9955.003218238391
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.1242474400376439,
-      "shares": 8900.0,
-      "amount": 10005.80221633503
+      "price": 1.1475220739162129,
+      "shares": 69600.0,
+      "amount": 79867.53634456842
     },
     {
       "date": "2022-02-24",
@@ -502,53 +315,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 2,
-      "price": 1.0878902420722234,
-      "shares": 9200.0,
-      "amount": 10008.590227064456
-    },
-    {
-      "date": "2022-02-25",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 1.0878902420722234,
-      "shares": 9200.0,
-      "amount": 10008.590227064456
-    },
-    {
-      "date": "2022-02-25",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 1.0842195158555532,
-      "shares": 9200.0,
-      "amount": 9974.819545871089
-    },
-    {
-      "date": "2022-02-25",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 1.0763292737833297,
-      "shares": 9300.0,
-      "amount": 10009.862246184966
-    },
-    {
-      "date": "2022-02-25",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 1.068439031711106,
-      "shares": 9400.0,
-      "amount": 10043.326898084399
+      "price": 1.0808896143470705,
+      "shares": 46300.0,
+      "amount": 50045.18914426937
     },
     {
       "date": "2022-03-16",
@@ -579,20 +348,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 1,
-      "price": 1.252,
-      "shares": 8000.0,
-      "amount": 10016.0
-    },
-    {
-      "date": "2022-03-17",
-      "asset_code": "515180",
-      "asset_name": "红利ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.2417356562550423,
-      "shares": 8100.0,
-      "amount": 10058.058815665843
+      "price": 1.2468359512835927,
+      "shares": 16100.0,
+      "amount": 20074.05881566584
     },
     {
       "date": "2022-05-10",
@@ -645,20 +403,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 4,
-      "price": 1.018,
-      "shares": 9900.0,
-      "amount": 10078.2
-    },
-    {
-      "date": "2022-05-27",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 1.0085433743871595,
-      "shares": 10000.0,
-      "amount": 10085.433743871596
+      "price": 1.0132479268277184,
+      "shares": 19900.0,
+      "amount": 20163.633743871596
     },
     {
       "date": "2022-06-14",
@@ -689,20 +436,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 5,
-      "price": 0.9804652833797967,
-      "shares": 10200.0,
-      "amount": 10000.745890473925
-    },
-    {
-      "date": "2022-06-15",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 5,
-      "price": 0.9795347166202034,
-      "shares": 10300.0,
-      "amount": 10089.207581188095
+      "price": 0.9799977303249766,
+      "shares": 20500.0,
+      "amount": 20089.953471662022
     },
     {
       "date": "2024-01-18",
@@ -777,20 +513,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 3,
-      "price": 10.424,
-      "shares": 900.0,
-      "amount": 9381.6
-    },
-    {
-      "date": "2024-08-19",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 10.390002816341319,
-      "shares": 900.0,
-      "amount": 9351.002534707188
+      "price": 10.40700140817066,
+      "shares": 1800.0,
+      "amount": 18732.602534707188
     },
     {
       "date": "2024-08-22",
@@ -865,64 +590,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 4,
-      "price": 10.305,
-      "shares": 900.0,
-      "amount": 9274.5
-    },
-    {
-      "date": "2024-08-26",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 10.268836502282124,
-      "shares": 900.0,
-      "amount": 9241.952852053912
-    },
-    {
-      "date": "2024-08-26",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 10.232673004564248,
-      "shares": 900.0,
-      "amount": 9209.405704107823
-    },
-    {
-      "date": "2024-08-26",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 10.196509506846372,
-      "shares": 900.0,
-      "amount": 9176.858556161735
-    },
-    {
-      "date": "2024-08-26",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 10.160346009128496,
-      "shares": 900.0,
-      "amount": 9144.311408215646
-    },
-    {
-      "date": "2024-08-26",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 10.12418251141062,
-      "shares": 900.0,
-      "amount": 9111.764260269558
+      "price": 10.21459125570531,
+      "shares": 5400.0,
+      "amount": 55158.792780808675
     },
     {
       "date": "2026-06-10",
@@ -997,64 +667,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 3,
-      "price": 8.829902031234184,
-      "shares": 1100.0,
-      "amount": 9712.892234357603
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.792097968765816,
-      "shares": 1100.0,
-      "amount": 9671.307765642397
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.621902031234184,
-      "shares": 1100.0,
-      "amount": 9484.092234357602
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.621902031234184,
-      "shares": 1100.0,
-      "amount": 9484.092234357602
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.561391875063265,
-      "shares": 1100.0,
-      "amount": 9417.531062569591
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.48448984382908,
-      "shares": 1100.0,
-      "amount": 9332.938828211989
+      "price": 8.651947630226786,
+      "shares": 6600.0,
+      "amount": 57102.854359496785
     },
     {
       "date": "2026-09-10",
@@ -1096,31 +711,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 5,
-      "price": 13.356,
-      "shares": 700.0,
-      "amount": 9349.2
-    },
-    {
-      "date": "2026-09-14",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 5,
       "price": 13.28408978716118,
-      "shares": 700.0,
-      "amount": 9298.862851012826
-    },
-    {
-      "date": "2026-09-14",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 5,
-      "price": 13.21217957432236,
-      "shares": 700.0,
-      "amount": 9248.525702025652
+      "shares": 2100.0,
+      "amount": 27896.588553038477
     },
     {
       "date": "2026-09-28",
@@ -1295,19 +888,8 @@
       "side": "sell",
       "round_no": 5,
       "price": 8.014560916236137,
-      "shares": 1200.0,
-      "amount": 9617.473099483364
-    },
-    {
-      "date": "2026-11-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 5,
-      "price": 8.014560916236137,
-      "shares": 1200.0,
-      "amount": 9617.473099483364
+      "shares": 2400.0,
+      "amount": 19234.94619896673
     },
     {
       "date": "2026-11-12",
@@ -1316,97 +898,9 @@
       "action": "take_profit",
       "side": "sell",
       "round_no": 7,
-      "price": 12.846,
-      "shares": 700.0,
-      "amount": 8992.2
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.772349040606795,
-      "shares": 700.0,
-      "amount": 8940.644328424756
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.703301918786412,
-      "shares": 700.0,
-      "amount": 8892.311343150488
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.621349040606795,
-      "shares": 700.0,
-      "amount": 8834.944328424755
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.560603837572824,
-      "shares": 800.0,
-      "amount": 10048.483070058259
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.48925479696603,
-      "shares": 800.0,
-      "amount": 9991.403837572823
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.417905756359236,
-      "shares": 800.0,
-      "amount": 9934.324605087388
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.301349040606794,
-      "shares": 800.0,
-      "amount": 9841.079232485436
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.275207675145648,
-      "shares": 800.0,
-      "amount": 9820.166140116518
+      "price": 12.54346424784124,
+      "shares": 6800.0,
+      "amount": 85295.55688532043
     },
     {
       "date": "2026-11-17",

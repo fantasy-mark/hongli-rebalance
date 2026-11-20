@@ -415,31 +415,23 @@ class GridChartRenderer:
         return ",".join(str(x) for x in levels)
 
     @staticmethod
-    def trigger_log(grid_result, aggregate_take_profit: bool = True) -> str:
+    def trigger_log(grid_result) -> str:
         """
         生成网格触发日志
 
         展示每个触发网格的资产：代码、名称、触发日期、交易类型
-        （开仓 / 加仓 / 止盈）
+        （建仓 / 加仓 / 止盈）
+
+        领域层保证「一轮网格 = 1 条建仓 + N 条加仓 + 1 条止盈」，
+        因此这里无需再做止盈聚合。
 
         Args:
             grid_result: 网格回测结果
-            aggregate_take_profit: 是否把"同日同轮"的多笔止盈聚合成一行
-                （整轮一次性清仓时，每个持仓批次各产生一笔卖出，
-                  聚合后按加权均价与合计股数展示，避免滚屏）
 
         Returns:
             可直接打印的文本
         """
         names = grid_result.config.asset_names
-
-        # ---- 先按 (日期, 资产, 轮次) 归并止盈 ----
-        tp_groups: Dict[Tuple, List] = {}
-        if aggregate_take_profit:
-            for trade in grid_result.trades:
-                if trade.trade_type == GridTradeType.TAKE_PROFIT:
-                    key = (trade.date, trade.asset_code, trade.round_no)
-                    tp_groups.setdefault(key, []).append(trade)
 
         lines = [
             "网格触发日志（资产代码 / 名称 / 触发日期 / 交易类型）",
@@ -449,27 +441,11 @@ class GridChartRenderer:
             "-" * 104,
         ]
 
-        emitted = set()
         for trade in grid_result.trades:
             level_txt = str(trade.level or '-')
             price = trade.price
             shares = trade.shares
             amount = trade.amount
-
-            # 止盈聚合
-            if aggregate_take_profit and trade.trade_type == GridTradeType.TAKE_PROFIT:
-                key = (trade.date, trade.asset_code, trade.round_no)
-                if key in emitted:
-                    continue
-                emitted.add(key)
-
-                group = tp_groups[key]
-                level_txt = GridChartRenderer._format_levels(
-                    [g.level for g in group if g.level is not None]
-                )
-                shares = sum((g.shares for g in group), Decimal("0"))
-                amount = sum((g.amount for g in group), Decimal("0"))
-                price = amount / shares if shares > 0 else Decimal("0")
 
             lines.append(
                 f"{str(trade.date):<12}| {trade.asset_code:<9}| "

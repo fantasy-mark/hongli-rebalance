@@ -939,7 +939,11 @@ class TestOneShotTakeProfit(unittest.TestCase):
                                        self._snap(date(2024, 1, 12), "0.985", prior_low="0.970"))
 
         sells = [o for o in decision.orders if o.side == GridOrderSide.SELL]
-        self.assertEqual(len(sells), 2)               # 两个批次同时卖出
+        self.assertEqual(len(sells), 1)               # 整轮合并为一条止盈成交
+        # CLOSE 口径：两批次均按当日收盘价 0.985 成交，合并后加权均价 = 0.985
+        self.assertEqual(sells[0].price, Decimal("0.985"))
+        self.assertEqual(sells[0].shares, Decimal("20800"))  # 10400 + 10400
+        self.assertIsNone(sells[0].level)              # 整轮清仓不绑定单档位
         self.assertEqual(self.strategy.portfolio.shares_of("515180"),
                          Decimal("0"))   # 一次清仓
         self.assertEqual(len(state.tranches), 0)
@@ -992,8 +996,8 @@ class TestOneShotTakeProfit(unittest.TestCase):
             self.assertNotEqual(trade.trade_type, GridTradeType.REDUCE)
 
 
-class TestTriggerLogAggregation(unittest.TestCase):
-    """触发日志：同日同轮止盈聚合"""
+class TestTriggerLogInvariant(unittest.TestCase):
+    """触发日志：一轮网格 = 1 条建仓 + N 条加仓 + 1 条止盈"""
 
     def _run(self):
         # 先横盘，再持续下跌触发多档，最后反弹一次性止盈
@@ -1015,46 +1019,25 @@ class TestTriggerLogAggregation(unittest.TestCase):
         )
         return GridBacktester(config, price_provider=provider).run()
 
-    def test_aggregates_same_day_take_profit(self):
-        """同日同轮的多笔止盈聚合为一行"""
+    def test_one_take_profit_per_round(self):
+        """一轮网格只有 1 条止盈成交（领域层保证）"""
         from src.application.grid.grid_chart import GridChartRenderer
-
         result = self._run()
-        sells = [t for t in result.trades if t.side == 'sell']
-        self.assertGreater(len(sells), 1, "需要多笔止盈才能验证聚合")
+        from collections import defaultdict
+        rounds = defaultdict(list)
+        for t in result.trades:
+            if t.side == 'sell':
+                rounds[(t.asset_code, t.round_no)].append(t)
 
-        aggregated = GridChartRenderer.trigger_log(result)
-        raw = GridChartRenderer.trigger_log(result, aggregate_take_profit=False)
+        # 每个 (资产, 轮次) 只有 1 条止盈
+        for key, trades in rounds.items():
+            self.assertEqual(len(trades), 1,
+                             f"{key} 应有 1 条止盈，实际 {len(trades)} 条")
 
-        tp_rows = [l for l in aggregated.split('\n') if '| 止盈' in l]
-        groups = {(t.date, t.asset_code, t.round_no) for t in sells}
-
-        self.assertEqual(len(tp_rows), len(groups))
-        self.assertLess(len(tp_rows), len(sells))            # 确实折叠了
-        self.assertEqual(
-            len([l for l in raw.split('\n') if '| 止盈' in l]), len(sells)
-        )
-
-    def test_aggregated_shares_and_amount(self):
-        """聚合行的股数/价格等于明细之和与加权均价"""
-        from src.application.grid.grid_chart import GridChartRenderer
-
-        result = self._run()
-        sells = [t for t in result.trades if t.side == 'sell']
-        key = (sells[0].date, sells[0].asset_code, sells[0].round_no)
-        group = [t for t in sells
-                 if (t.date, t.asset_code, t.round_no) == key]
-
-        total_shares = sum(t.shares for t in group)
-        total_amount = sum(t.amount for t in group)
-        avg_price = total_amount / total_shares
-
+        # 触发日志中，每个止盈行直接对应一笔成交
         log = GridChartRenderer.trigger_log(result)
-        row = next(l for l in log.split('\n')
-                   if '| 止盈' in l and str(key[0]) in l)
-
-        self.assertIn(f"{float(total_shares):,.0f}", row)
-        self.assertIn(f"{float(avg_price):.4f}", row)
+        tp_rows = [l for l in log.split('\n') if '| 止盈' in l]
+        self.assertEqual(len(tp_rows), len(rounds))
 
     def test_format_levels(self):
         """档位文本：连续区间 / 离散枚举 / 单档 / 空"""

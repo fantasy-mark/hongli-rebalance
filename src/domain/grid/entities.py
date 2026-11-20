@@ -241,6 +241,8 @@ class GridState:
 
         Args:
             order: 卖出成交记录
+                - level 为 None  -> 整轮清仓：移除本轮全部批次
+                - level 有值    -> 仅移除该档位批次
 
         Returns:
             GridTradeType（止盈 TAKE_PROFIT）
@@ -248,10 +250,14 @@ class GridState:
         if order.side != GridOrderSide.SELL:
             raise ValueError(f"只能记录卖出成交: {order.side}")
 
-        for tranche in list(self.tranches):
-            if order.level is not None and tranche.level == order.level:
-                self.tranches.remove(tranche)
-                break
+        if order.level is None:
+            # 整轮一次性清仓：移除本轮全部批次
+            self.tranches.clear()
+        else:
+            for tranche in list(self.tranches):
+                if tranche.level == order.level:
+                    self.tranches.remove(tranche)
+                    break
 
         # 卖出只发生在整轮止盈场景（引擎保证一次性清仓）
         return GridTradeType.TAKE_PROFIT
