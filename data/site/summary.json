@@ -8,15 +8,15 @@
     "key": "combined",
     "label": "组合合计",
     "initial_capital": 1200000.0,
-    "total_value": 2027155.8397986814,
-    "cash": 193868.0397986815,
-    "market_value": 1833287.8,
-    "total_return": 0.6899997741816005,
-    "annualized_return": 0.09089472194360293,
-    "max_drawdown": -0.10505892139540203,
-    "sharpe_ratio": 0.6646315906086738,
-    "volatility": 0.0916217688175718,
-    "trade_count": 149,
+    "total_value": 2025706.007926154,
+    "cash": 156277.20792615402,
+    "market_value": 1869428.8,
+    "total_return": 0.6887910779930451,
+    "annualized_return": 0.09076532659435133,
+    "max_drawdown": -0.10503607764164398,
+    "sharpe_ratio": 0.6643327627760677,
+    "volatility": 0.09146820689744309,
+    "trade_count": 91,
     "positions": [
       {
         "code": "159937",
@@ -24,15 +24,15 @@
         "shares": 55000.0,
         "price": 7.881,
         "market_value": 433455.0,
-        "weight": 0.21382421197723347
+        "weight": 0.2139772495633539
       },
       {
         "code": "511380",
         "name": "可转债ETF",
-        "shares": 37600.0,
+        "shares": 40600.0,
         "price": 12.047,
-        "market_value": 452967.2,
-        "weight": 0.22344961897205917
+        "market_value": 489108.2,
+        "weight": 0.24145073277475818
       },
       {
         "code": "513300",
@@ -40,7 +40,7 @@
         "shares": 173000.0,
         "price": 2.606,
         "market_value": 450838.0,
-        "weight": 0.22239928038525794
+        "weight": 0.22255845529211415
       },
       {
         "code": "515180",
@@ -48,7 +48,7 @@
         "shares": 280400.0,
         "price": 1.769,
         "market_value": 496027.6,
-        "weight": 0.2446913997738136
+        "weight": 0.24486652952558277
       }
     ]
   },
@@ -104,41 +104,41 @@
     "key": "grid",
     "label": "网格组合",
     "initial_capital": 200000.0,
-    "total_value": 202249.1420486815,
-    "cash": 192611.54204868153,
-    "market_value": 9637.6,
-    "total_return": 0.011245710243407567,
-    "annualized_return": 0.0018532888922477841,
-    "max_drawdown": -0.01250974572762584,
-    "sharpe_ratio": -2.3776639875448886,
-    "volatility": 0.01183796838207393,
-    "trade_count": 83,
+    "total_value": 200799.31017615402,
+    "cash": 155020.710176154,
+    "market_value": 45778.6,
+    "total_return": 0.003996550880770072,
+    "annualized_return": 0.000660612938608196,
+    "max_drawdown": -0.011833970953138045,
+    "sharpe_ratio": -5.432993347584196,
+    "volatility": 0.005400225103245836,
+    "trade_count": 25,
     "positions": [
       {
         "code": "511380",
         "name": "可转债ETF",
-        "shares": 800.0,
+        "shares": 3800.0,
         "price": 12.047,
-        "market_value": 9637.6,
-        "weight": 0.047652118087503297
+        "market_value": 45778.6,
+        "weight": 0.22798185890100958
       }
     ],
-    "buy_count": 65,
-    "sell_count": 18,
-    "completed_rounds": 18,
-    "total_rounds": 22
+    "buy_count": 16,
+    "sell_count": 9,
+    "completed_rounds": 9,
+    "total_rounds": 13
   },
   "strategies": {
     "grid": {
       "strategy_id": "grid",
       "name": "复合网格",
-      "summary": "跌破前 120 日最低价开轮，每跌 0.5×ATR(120) 加一档，回升至建仓价 +1×步长 整轮止盈",
+      "summary": "跌破前 120 日最低价开轮，每跌 2×ATR(120) 加一档，回升至建仓价 +1×步长 整轮止盈",
       "rules": [
         {
           "rule_id": "grid.trigger",
           "title": "触发条件",
           "description": "当当日最低价跌破前 120 个交易日的最低价时，网格被激活，开启新一轮；激活瞬间计算 ATR(120) 与网格步长，并以「触发日价格」作为锚点。",
-          "formula": "触发: price <= min(close[-120:-1])\n步长: step = ATR(120) × 0.5",
+          "formula": "触发: price <= min(close[-120:-1])\n步长: step = ATR(120) × 2",
           "implementation": "src/strategy/grid/engine.py::GridEngine.evaluate",
           "parameters": [
             {
@@ -156,7 +156,7 @@
             {
               "name": "步长倍数",
               "key": "step_ratio",
-              "value": "0.5",
+              "value": "2",
               "meaning": "网格步长 = ATR × 该倍数"
             },
             {
@@ -176,7 +176,7 @@
         {
           "rule_id": "grid.add",
           "title": "加仓规则",
-          "description": "网格激活后，每再下跌 0.5×ATR(120) 加一档仓位；每档买入 10,000 元，股数向下取整到 100 股的整数倍；档位价格 = 锚点 − 步长 × 档位序号。",
+          "description": "网格激活后，每再下跌 2×ATR(120) 加一档仓位；每档买入 10,000 元，股数向下取整到 100 股的整数倍；档位价格 = 锚点 − 步长 × 档位序号。",
           "formula": "档位N价格 = 锚点 − N × step\n单档金额 = 10,000 元（向下取整到 100 股）",
           "implementation": "src/strategy/grid/engine.py::GridEngine._process_levels",
           "parameters": [

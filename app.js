@@ -190,32 +190,52 @@ function filteredTrades() {
 function renderTrades() {
   const container = document.getElementById('trades-table');
   const counter = document.getElementById('trade-count');
-  const rows = filteredTrades().slice().reverse();
+  const chronologicalTrades = filteredTrades();
 
-  const gridCount = rows.filter((t) => t.strategy === 'grid').length;
-  const rebCount = rows.length - gridCount;
+  const gridCount = chronologicalTrades.filter((t) => t.strategy === 'grid').length;
+  const rebCount = chronologicalTrades.length - gridCount;
   counter.textContent =
-    `共 ${rows.length} 笔（网格 ${gridCount} · 再平衡 ${rebCount}）`;
+    `共 ${chronologicalTrades.length} 笔（网格 ${gridCount} · 再平衡 ${rebCount}）`;
 
-  if (!rows.length) {
+  if (!chronologicalTrades.length) {
     container.innerHTML = '<p class="empty-note">暂无符合条件的交易记录</p>';
     return;
   }
 
-  const body = rows
+  // 计算每轮的深度：按(资产,轮次)分组，每笔买入深度+1
+  // 必须在正序（时间早->晚）上计算，否则早的买入会被编号为大数字
+  const depthByRound = {};
+  chronologicalTrades.forEach((t) => {
+    if (!t.round_no) return;
+    const key = `${t.asset_code}-${t.round_no}`;
+    if (!(key in depthByRound)) depthByRound[key] = 0;
+    if (t.side === 'buy') {
+      depthByRound[key] += 1;
+      t.depth = depthByRound[key];
+    }
+  });
+
+  const reversedTrades = chronologicalTrades.slice().reverse();
+  const body = reversedTrades
     .map((t) => {
       const action = ACTION_LABELS[t.action] || t.action || '';
       const side = SIDE_LABELS[t.side] || t.side || '';
       const sideCls = t.side === 'sell' ? 'side-sell' : 'side-buy';
       const stratName = t.strategy_name || STRATEGY_LABELS[t.strategy] || t.strategy;
       const stratCls = t.strategy === 'grid' ? 'strat-grid' : 'strat-rebalance';
-      // 步长：网格专有；再平衡不适用
-      const stepCell = (t.strategy === 'grid' && t.step !== null && t.step !== undefined)
-        ? `<td class="num">${Number(t.step).toFixed(4)}</td>`
-        : '<td class="num muted">—</td>';
-      const roundCell = t.round_no
-        ? `<td class="num">${t.round_no}</td>`
-        : '<td class="num muted">—</td>';
+      // 步长：网格专有，显示绝对值 + 占价格百分比（如 0.0231 (0.62%)）
+      let stepCell = '<td class="num muted">—</td>';
+      if (t.strategy === 'grid' && t.step !== null && t.step !== undefined) {
+        const stepPct = (t.step / t.price * 100).toFixed(2);
+        stepCell = `<td class="num">${Number(t.step).toFixed(4)}<br><span class="muted" style="font-size:0.85em">(${stepPct}%)</span></td>`;
+      }
+      // 轮次/深度：买入显示 轮次/深度（每买一次深度+1），卖出/再平衡只显示轮次
+      let roundCell = '<td class="num muted">—</td>';
+      if (t.round_no) {
+        roundCell = t.depth
+          ? `<td class="num">${t.round_no}/${t.depth}</td>`
+          : `<td class="num">${t.round_no}</td>`;
+      }
 
       return `
         <tr>
@@ -249,7 +269,7 @@ function renderTrades() {
           <th class="num">数量</th>
           <th class="num">金额</th>
           <th class="num">步长</th>
-          <th class="num">轮次</th>
+          <th class="num">轮次/深度</th>
         </tr>
       </thead>
       <tbody>${body}</tbody>

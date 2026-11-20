@@ -124,7 +124,7 @@ class TestGridTrigger(unittest.TestCase):
         self.assertEqual(trigger.lookback_days, 120)
         self.assertEqual(trigger.atr_period, 120)
         self.assertEqual(trigger.buy_amount, Decimal("10000"))
-        self.assertEqual(trigger.step_ratio, Decimal("0.5"))
+        self.assertEqual(trigger.step_ratio, Decimal("2"))
         self.assertEqual(trigger.anchor, GridAnchor.TRIGGER_PRICE)
 
     def test_invalid_step_ratio(self):

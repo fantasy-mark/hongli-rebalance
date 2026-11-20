@@ -652,7 +652,7 @@ def default_config(
         grid_trigger=GridTrigger(
             lookback_days=120,
             atr_period=120,
-            step_ratio=Decimal("0.5"),
+            step_ratio=Decimal("2"),
             buy_amount=Decimal("10000"),
             price_basis=GridPriceBasis.LOW,
             take_profit_ratio=Decimal("1"),

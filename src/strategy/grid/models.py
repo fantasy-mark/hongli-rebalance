@@ -96,7 +96,7 @@ class GridTrigger:
     """
     lookback_days: int = 120
     atr_period: int = 120
-    step_ratio: Decimal = Decimal("0.5")
+    step_ratio: Decimal = Decimal("2")
     buy_amount: Decimal = Decimal("10000")
     lot_size: int = 100
     anchor: GridAnchor = GridAnchor.TRIGGER_PRICE
@@ -143,7 +143,7 @@ class GridTrigger:
         return cls(
             lookback_days=int(data.get('lookback_days', 120)),
             atr_period=int(data.get('atr_period', 120)),
-            step_ratio=Decimal(str(data.get('step_ratio', 0.5))),
+            step_ratio=Decimal(str(data.get('step_ratio', 2))),
             buy_amount=Decimal(str(data.get('buy_amount', 10000))),
             lot_size=int(data.get('lot_size', 100)),
             anchor=GridAnchor(data.get('anchor', GridAnchor.TRIGGER_PRICE.value)),
