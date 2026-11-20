@@ -62,18 +62,18 @@
       <div id="trades-table" class="table-scroll"></div>
     </section>
 
-    <!-- ③ 持仓 —— 再平衡 / 网格 分开 -->
+    <!-- ③ 真实持仓 —— 显示实际交易记录 -->
     <section id="section-holdings">
-      <h2>③ 持仓</h2>
-      <p class="muted">再平衡组合与网格组合各自独立管理现金与持仓，互不影响</p>
+      <h2>③ 真实持仓</h2>
+      <p class="muted">显示实际交易记录，包括策略、交易方向、数量、价格和历史交易</p>
 
-      <div class="strategy-grid">
+      <div class="strategy-grid-two">
         <article class="strategy-card" id="card-rebalance">
           <header class="strategy-head">
             <h3>再平衡组合</h3>
             <span class="strategy-tag">3pp 阈值</span>
           </header>
-          <div id="rebalance-holdings"></div>
+          <div id="rebalance-holdings" class="holdings-scroll"></div>
           <div id="rebalance-stats" class="stat-block"></div>
         </article>
 
@@ -82,15 +82,57 @@
             <h3>网格组合</h3>
             <span class="strategy-tag">复合网格</span>
           </header>
-          <div id="grid-holdings"></div>
+          <div id="grid-holdings" class="holdings-scroll"></div>
           <div id="grid-stats" class="stat-block"></div>
         </article>
       </div>
 
-      <div class="combined-row">
-        <h3>组合合计</h3>
-        <div id="combined-holdings"></div>
-        <div id="combined-stats" class="stat-block"></div>
+      <!-- 交易表单 -->
+      <div id="trade-form-section" class="trade-form-section">
+        <h3>添加交易记录</h3>
+        <form id="trade-form" class="trade-form">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="trade-strategy">策略</label>
+              <select id="trade-strategy" required>
+                <option value="">选择策略</option>
+                <option value="rebalance">再平衡组合</option>
+                <option value="grid">网格组合</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="trade-asset">资产</label>
+              <select id="trade-asset" required>
+                <option value="">选择资产</option>
+                <option value="515180">红利ETF (515180)</option>
+                <option value="159937">黄金ETF (159937)</option>
+                <option value="511380">可转债ETF (511380)</option>
+                <option value="513300">纳指ETF (513300)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="trade-action">交易方向</label>
+              <select id="trade-action" required>
+                <option value="">选择方向</option>
+                <option value="open">开仓</option>
+                <option value="add">加仓</option>
+                <option value="reduce">减仓</option>
+                <option value="take_profit">止盈</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="trade-shares">数量</label>
+              <input type="number" id="trade-shares" min="1" step="1" required placeholder="股数">
+            </div>
+            <div class="form-group">
+              <label for="trade-price">价格</label>
+              <input type="number" id="trade-price" min="0.0001" step="0.0001" required placeholder="价格">
+            </div>
+            <div class="form-group">
+              <button type="submit" class="submit-btn">添加交易</button>
+            </div>
+          </div>
+        </form>
       </div>
     </section>
 

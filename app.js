@@ -302,81 +302,133 @@ function renderTrades() {
     </table>`;
 }
 
-/* ------------------------------------------------------- ③ 持仓 */
+/* ------------------------------------------------------- ③ 真实持仓（交易记录） */
 function renderHoldings() {
   const s = state.summary;
 
-  renderStrategyCard('rebalance', s.rebalance);
-  renderStrategyCard('grid', s.grid);
-
-  document.getElementById('combined-holdings').innerHTML =
-    holdingsTable(s.combined, '组合');
-  document.getElementById('combined-stats').innerHTML =
-    statBlock(s.combined, [
-      ['初始资金', money(s.combined.initial_capital)],
-      ['总市值', money(s.combined.total_value)],
-      ['累计收益', pct(s.combined.total_return)],
-      ['年化收益', pct(s.combined.annualized_return)],
-      ['最大回撤', pct(s.combined.max_drawdown)],
-      ['夏普比率', Number(s.combined.sharpe_ratio).toFixed(2)],
-      ['波动率', plainPct(s.combined.volatility)],
-      ['成交笔数', s.combined.trade_count],
+  // 显示再平衡组合的交易记录
+  const rebalanceTrades = state.trades.filter(t => t.strategy === 'rebalance');
+  document.getElementById('rebalance-holdings').innerHTML = 
+    tradeHistoryTable(rebalanceTrades, '再平衡');
+  document.getElementById('rebalance-stats').innerHTML =
+    statBlock(s.rebalance, [
+      ['初始资金', money(s.rebalance.initial_capital)],
+      ['总市值', money(s.rebalance.total_value)],
+      ['累计收益', pct(s.rebalance.total_return)],
+      ['年化收益', pct(s.rebalance.annualized_return)],
+      ['最大回撤', pct(s.rebalance.max_drawdown)],
+      ['夏普比率', Number(s.rebalance.sharpe_ratio).toFixed(2)],
+      ['波动率', plainPct(s.rebalance.volatility)],
+      ['成交笔数', s.rebalance.trade_count],
     ]);
-}
 
-function renderStrategyCard(key, data) {
-  const holdingsEl = document.getElementById(`${key}-holdings`);
-  const statsEl = document.getElementById(`${key}-stats`);
-
-  holdingsEl.innerHTML = holdingsTable(data, key === 'grid' ? '网格' : '再平衡');
-
-  const stats = [
-    ['初始资金', money(data.initial_capital)],
-    ['总市值', money(data.total_value)],
-    ['累计收益', pct(data.total_return)],
-    ['年化收益', pct(data.annualized_return)],
-    ['最大回撤', pct(data.max_drawdown)],
-    ['夏普比率', Number(data.sharpe_ratio).toFixed(2)],
-    ['波动率', plainPct(data.volatility)],
-    ['成交笔数', data.trade_count],
+  // 显示网格组合的交易记录
+  const gridTrades = state.trades.filter(t => t.strategy === 'grid');
+  document.getElementById('grid-holdings').innerHTML = 
+    tradeHistoryTable(gridTrades, '网格');
+  
+  const gridStats = [
+    ['初始资金', money(s.grid.initial_capital)],
+    ['总市值', money(s.grid.total_value)],
+    ['累计收益', pct(s.grid.total_return)],
+    ['年化收益', pct(s.grid.annualized_return)],
+    ['最大回撤', pct(s.grid.max_drawdown)],
+    ['夏普比率', Number(s.grid.sharpe_ratio).toFixed(2)],
+    ['波动率', plainPct(s.grid.volatility)],
+    ['成交笔数', s.grid.trade_count],
+    ['买入/卖出', `${s.grid.buy_count} / ${s.grid.sell_count}`],
+    ['完成轮次', `${s.grid.completed_rounds}/${s.grid.total_rounds}`],
   ];
+  document.getElementById('grid-stats').innerHTML = statBlock(s.grid, gridStats);
 
-  if (key === 'grid') {
-    stats.push(
-      ['买入/卖出', `${data.buy_count} / ${data.sell_count}`],
-      ['完成轮次', `${data.completed_rounds}/${data.total_rounds}`],
-    );
-  }
-
-  statsEl.innerHTML = statBlock(data, stats);
+  // 初始化表单提交处理
+  initTradeForm();
 }
 
-function holdingsTable(data, scopeLabel) {
-  const positions = data.positions || [];
-  const maxWeight = positions.reduce(
-    (m, p) => Math.max(m, Math.abs(p.weight || 0)), 0) || 1;
+/* ------------------------------------------------------- 交易表单处理 */
+function initTradeForm() {
+  const form = document.getElementById('trade-form');
+  if (!form) return;
 
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const strategy = document.getElementById('trade-strategy').value;
+    const asset = document.getElementById('trade-asset').value;
+    const action = document.getElementById('trade-action').value;
+    const shares = parseFloat(document.getElementById('trade-shares').value);
+    const price = parseFloat(document.getElementById('trade-price').value);
+
+    // 构建交易记录
+    const newTrade = {
+      date: new Date().toISOString().split('T')[0],
+      strategy: strategy,
+      strategy_name: strategy === 'rebalance' ? '阈值再平衡' : '复合网格',
+      asset_code: asset,
+      asset_name: {
+        '515180': '红利ETF',
+        '159937': '黄金ETF',
+        '511380': '可转债ETF',
+        '513300': '纳指ETF'
+      }[asset],
+      action: action,
+      side: (action === 'reduce' || action === 'take_profit') ? 'sell' : 'buy',
+      round_no: 0,
+      price: price,
+      shares: shares,
+      amount: shares * price,
+      step: null,
+      position_value: null,
+      position_shares: null
+    };
+
+    try {
+      const response = await fetch('/api/trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTrade)
+      });
+
+      if (response.ok) {
+        // 添加到本地状态并重新渲染
+        state.trades.push(newTrade);
+        renderHoldings();
+        form.reset();
+        alert('交易记录添加成功！');
+      } else {
+        alert('添加失败，请重试');
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('添加失败：' + error.message);
+    }
+  });
+}
+
+function tradeHistoryTable(trades, scopeLabel) {
+  // 按时间倒序显示
+  const sortedTrades = [...trades].sort((a, b) => b.date.localeCompare(a.date));
+  
   let rows = '';
-  if (!positions.length) {
-    rows = `<tr><td colspan="4" class="empty-note">当前无持仓</td></tr>`;
+  if (!sortedTrades.length) {
+    rows = `<tr><td colspan="6" class="empty-note">暂无交易记录</td></tr>`;
   } else {
-    rows = positions
-      .map((p) => {
-        const w = Math.abs(p.weight || 0);
-        const barW = Math.min(100, (w / maxWeight) * 100);
+    rows = sortedTrades
+      .map((t) => {
+        const action = ACTION_LABELS[t.action] || t.action || '';
+        const side = SIDE_LABELS[t.side] || t.side || '';
+        const sideCls = t.side === 'sell' ? 'side-sell' : 'side-buy';
         return `
           <tr>
+            <td>${esc(t.date)}</td>
             <td>
-              <span class="asset-dot" style="background:${colorOf(p.code)}"></span>
-              ${esc(p.name || p.code)}
+              <span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
+              ${esc(t.asset_name || t.asset_code)}
             </td>
-            <td class="num">${shares(p.shares)}</td>
-            <td class="num">${money(p.market_value)}</td>
-            <td class="num">
-              ${(w * 100).toFixed(1)}%
-              <div class="bar-wrap"><div class="bar-fill"
-                   style="width:${barW.toFixed(1)}%;background:${colorOf(p.code)}"></div></div>
-            </td>
+            <td class="${sideCls}">${esc(side)}</td>
+            <td>${esc(action)}</td>
+            <td class="num">${shares(t.shares)}</td>
+            <td class="num">${Number(t.price).toFixed(4)}</td>
           </tr>`;
       })
       .join('');
@@ -386,19 +438,19 @@ function holdingsTable(data, scopeLabel) {
     <table>
       <thead>
         <tr>
+          <th>日期</th>
           <th>资产</th>
+          <th>方向</th>
+          <th>类型</th>
           <th class="num">数量</th>
-          <th class="num">市值</th>
-          <th class="num">占比</th>
+          <th class="num">价格</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
-    <div class="totals">
-      <div class="row"><span>持仓市值</span><span>${money(data.market_value)}</span></div>
-      <div class="row"><span>现金</span><span>${money(data.cash)}</span></div>
-      <div class="row grand"><span>${esc(scopeLabel)}总市值</span><span>${money(data.total_value)}</span></div>
-    </div>`;
+    <p class="muted" style="font-size:0.9em; margin-top:0.5em;">
+      共 ${sortedTrades.length} 笔${scopeLabel}交易记录
+    </p>`;
 }
 
 function statBlock(data, pairs) {

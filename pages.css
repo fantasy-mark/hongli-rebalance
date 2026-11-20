@@ -131,6 +131,106 @@ td.neg { color: #c0392b; }
   margin-top: 1em;
 }
 
+/* 左右布局的持仓卡片 */
+.strategy-grid-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.4em;
+  margin-top: 1em;
+}
+
+/* 固定高度和滚动条 */
+.holdings-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  padding: 0.5em;
+}
+
+.holdings-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.holdings-scroll thead {
+  position: sticky;
+  top: 0;
+  background: #f5f6f7;
+  z-index: 1;
+}
+
+.holdings-scroll tbody tr:hover {
+  background: #fafcfe;
+}
+
+/* 交易表单区域 */
+.trade-form-section {
+  margin-top: 2em;
+  padding: 1.5em;
+  background: #f9fafb;
+  border: 1px solid #e5e8eb;
+  border-radius: 8px;
+}
+
+.trade-form-section h3 {
+  margin: 0 0 1em 0;
+  font-size: 1.1em;
+  color: #2c3e50;
+}
+
+.trade-form .form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1em;
+  align-items: end;
+}
+
+.trade-form .form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.trade-form label {
+  font-size: 0.9em;
+  color: #555;
+  margin-bottom: 0.3em;
+  font-weight: 500;
+}
+
+.trade-form select,
+.trade-form input {
+  padding: 0.5em;
+  border: 1px solid #d5d9dd;
+  border-radius: 5px;
+  font-size: 0.95em;
+}
+
+.trade-form input[type="number"] {
+  width: 100%;
+}
+
+.trade-form button.submit-btn {
+  padding: 0.6em 1.5em;
+  background: #2C5F8D;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 0.95em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.trade-form button.submit-btn:hover {
+  background: #1B4F72;
+}
+
+.trade-form button.submit-btn:active {
+  transform: scale(0.98);
+}
+
 .strategy-card {
   border: 1px solid #e5e8eb;
   border-radius: 8px;
