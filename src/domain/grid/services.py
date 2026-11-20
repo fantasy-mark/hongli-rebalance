@@ -317,6 +317,7 @@ class GridEngine:
                 date=snapshot.date,
                 level=state.next_level,
                 order_id=f"grid-{state.asset_code}-{snapshot.date}-{state.next_level}",
+                step=state.step,
             )
 
             # 持仓与现金由组合记账（与再平衡组合完全隔离）
@@ -429,6 +430,7 @@ class GridEngine:
             date=snapshot.date,
             level=None,  # 整轮清仓：不绑定单个档位
             order_id=f"grid-tp-{state.asset_code}-{snapshot.date}",
+            step=state.step,
         )
 
         # 按批次精确释放持仓成本（网格的批次成本是精确值）

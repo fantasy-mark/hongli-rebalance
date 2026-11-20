@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-18",
+  "generated_at": "2026-11-20",
   "window": {
     "start": "2020-11-05",
     "end": "2026-11-17"
@@ -16,7 +16,7 @@
     "max_drawdown": -0.10505892139540203,
     "sharpe_ratio": 0.6646315906086738,
     "volatility": 0.0916217688175718,
-    "trade_count": 195,
+    "trade_count": 149,
     "positions": [
       {
         "code": "159937",
@@ -108,11 +108,11 @@
     "cash": 192611.54204868153,
     "market_value": 9637.6,
     "total_return": 0.011245710243407567,
-    "annualized_return": 0.0018549722014407077,
+    "annualized_return": 0.0018532888922477841,
     "max_drawdown": -0.01250974572762584,
-    "sharpe_ratio": -2.3758974293427606,
-    "volatility": 0.011846061808461567,
-    "trade_count": 129,
+    "sharpe_ratio": -2.3776639875448886,
+    "volatility": 0.01183796838207393,
+    "trade_count": 83,
     "positions": [
       {
         "code": "511380",
@@ -124,8 +124,197 @@
       }
     ],
     "buy_count": 65,
-    "sell_count": 64,
+    "sell_count": 18,
     "completed_rounds": 18,
     "total_rounds": 22
+  },
+  "strategies": {
+    "grid": {
+      "strategy_id": "grid",
+      "name": "复合网格",
+      "summary": "跌破前 120 日最低价开轮，每跌 0.5×ATR(120) 加一档，回升至建仓价 +1×步长 整轮止盈",
+      "rules": [
+        {
+          "rule_id": "grid.trigger",
+          "title": "触发条件",
+          "description": "当当日最低价跌破前 120 个交易日的最低价时，网格被激活，开启新一轮；激活瞬间计算 ATR(120) 与网格步长，并以「触发日价格」作为锚点。",
+          "formula": "触发: price <= min(close[-120:-1])\n步长: step = ATR(120) × 0.5",
+          "implementation": "src/domain/grid/services.py::GridEngine.evaluate",
+          "parameters": [
+            {
+              "name": "回看天数",
+              "key": "lookback_days",
+              "value": "120",
+              "meaning": "跌破前 N 个交易日的最低价即触发"
+            },
+            {
+              "name": "ATR 周期",
+              "key": "atr_period",
+              "value": "120",
+              "meaning": "步长所用的 ATR 周期（Wilder 平滑）"
+            },
+            {
+              "name": "步长倍数",
+              "key": "step_ratio",
+              "value": "0.5",
+              "meaning": "网格步长 = ATR × 该倍数"
+            },
+            {
+              "name": "价格口径",
+              "key": "price_basis",
+              "value": "low",
+              "meaning": "触发判定使用当日最低价"
+            },
+            {
+              "name": "锚点",
+              "key": "anchor",
+              "value": "trigger_price",
+              "meaning": "第一档价格基准：触发日价格"
+            }
+          ]
+        },
+        {
+          "rule_id": "grid.add",
+          "title": "加仓规则",
+          "description": "网格激活后，每再下跌 0.5×ATR(120) 加一档仓位；每档买入 10,000 元，股数向下取整到 100 股的整数倍；档位价格 = 锚点 − 步长 × 档位序号。",
+          "formula": "档位N价格 = 锚点 − N × step\n单档金额 = 10,000 元（向下取整到 100 股）",
+          "implementation": "src/domain/grid/services.py::GridEngine._process_levels",
+          "parameters": [
+            {
+              "name": "单档金额",
+              "key": "buy_amount",
+              "value": "10,000",
+              "meaning": "每档买入金额"
+            },
+            {
+              "name": "最小交易单位",
+              "key": "lot_size",
+              "value": "100",
+              "meaning": "股数向下取整的整倍数"
+            },
+            {
+              "name": "最大档位",
+              "key": "max_levels",
+              "value": "不限",
+              "meaning": "单轮最多加仓层数"
+            }
+          ]
+        },
+        {
+          "rule_id": "grid.take_profit",
+          "title": "止盈规则",
+          "description": "当价格回升至「首次建仓价 + 1×步长」时触发止盈，整轮一次性卖出全部持仓（合并为一笔成交），本轮结束；必须再次跌破前 120 日最低价才能开启下一轮。",
+          "formula": "止盈价 = 首次建仓价 + 1 × step",
+          "implementation": "src/domain/grid/services.py::GridEngine._process_take_profit",
+          "parameters": [
+            {
+              "name": "止盈倍数",
+              "key": "take_profit_ratio",
+              "value": "1",
+              "meaning": "相对一个网格步长的止盈幅度"
+            }
+          ]
+        },
+        {
+          "rule_id": "grid.isolation",
+          "title": "资金隔离",
+          "description": "网格使用独立资金池，只动网格自己的现金与持仓，与再平衡组合完全隔离；单轮止盈后网格现金回到池中，等待下一轮。",
+          "formula": "",
+          "implementation": "src/domain/portfolio/entities.py::Portfolio",
+          "parameters": []
+        }
+      ],
+      "implementation": [
+        "src/domain/grid/services.py::GridEngine.evaluate",
+        "src/domain/grid/services.py::GridEngine._process_levels",
+        "src/domain/grid/services.py::GridEngine._process_take_profit",
+        "src/domain/grid/entities.py::GridState",
+        "src/domain/grid/value_objects.py::GridTrigger"
+      ]
+    },
+    "rebalance": {
+      "strategy_id": "rebalance",
+      "name": "阈值再平衡",
+      "summary": "4 资产固定权重，权重偏离超 3pp 时再平衡回目标",
+      "rules": [
+        {
+          "rule_id": "rebalance.allocation",
+          "title": "目标配置",
+          "description": "组合按固定权重持有 4 个标的：红利ETF 25%、黄金ETF 25%、可转债ETF 25%、纳斯达克ETF 25%；网格与再平衡共用同一份总资产配置，保证监控标的一致。",
+          "formula": "目标权重之和 = 1",
+          "implementation": "src/domain/allocation/entities.py::AllocationPlan",
+          "parameters": [
+            {
+              "name": "红利ETF 目标权重",
+              "key": "weight_515180",
+              "value": "25.0%",
+              "meaning": "该标的的目标仓位"
+            },
+            {
+              "name": "黄金ETF 目标权重",
+              "key": "weight_159937",
+              "value": "25.0%",
+              "meaning": "该标的的目标仓位"
+            },
+            {
+              "name": "可转债ETF 目标权重",
+              "key": "weight_511380",
+              "value": "25.0%",
+              "meaning": "该标的的目标仓位"
+            },
+            {
+              "name": "纳斯达克ETF 目标权重",
+              "key": "weight_513300",
+              "value": "25.0%",
+              "meaning": "该标的的目标仓位"
+            }
+          ]
+        },
+        {
+          "rule_id": "rebalance.trigger",
+          "title": "触发条件",
+          "description": "每日收盘后检查各标的实际权重，当任一标的权重偏离目标权重超过 3 个百分点时触发再平衡。",
+          "formula": "|实际权重 − 目标权重| > 3pp\n→ 卖出超配部分，买入低配部分，恢复目标权重",
+          "implementation": "src/application/rebalance/backtest_engine.py::RebalanceBacktester._check_rebalance",
+          "parameters": [
+            {
+              "name": "再平衡阈值",
+              "key": "threshold_pp",
+              "value": "3pp",
+              "meaning": "权重偏离超过该百分点即触发"
+            }
+          ]
+        },
+        {
+          "rule_id": "rebalance.cost",
+          "title": "交易成本",
+          "description": "每笔成交按 5 个基点（5.00%）计费，成本从组合现金中扣除，已计入净值曲线。",
+          "formula": "cost = amount × 5 / 10000",
+          "implementation": "src/application/rebalance/backtest_engine.py::RebalanceBacktester._rebalance",
+          "parameters": [
+            {
+              "name": "交易成本",
+              "key": "transaction_cost_bps",
+              "value": "5bp",
+              "meaning": "单边交易费率（基点）"
+            }
+          ]
+        },
+        {
+          "rule_id": "rebalance.isolation",
+          "title": "资金隔离",
+          "description": "再平衡组合拥有独立资金池，只动自己的现金与持仓；与网格组合互不读取、互不修改对方的资金。",
+          "formula": "",
+          "implementation": "src/domain/portfolio/entities.py::Portfolio",
+          "parameters": []
+        }
+      ],
+      "implementation": [
+        "src/application/rebalance/backtest_engine.py::RebalanceBacktester._check_rebalance",
+        "src/application/rebalance/backtest_engine.py::RebalanceBacktester._rebalance",
+        "src/domain/portfolio/entities.py::Portfolio",
+        "src/domain/allocation/entities.py::AllocationPlan"
+      ]
+    }
   }
 }

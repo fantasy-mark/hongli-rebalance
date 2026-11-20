@@ -22,6 +22,7 @@ from src.domain.chart.overview import (
     ReturnCurve,
     StrategyOverview,
 )
+from src.domain.grid.value_objects import GridPriceBasis, GridTrigger
 
 
 D1, D2, D3 = date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)
@@ -276,6 +277,21 @@ def _stub_combined_result():
         rebalance_initial_capital=Decimal("1000000"),
         grid_initial_capital=Decimal("200000"),
         initial_capital=Decimal("1200000"),
+        grid_trigger=GridTrigger(
+            lookback_days=120, atr_period=120, step_ratio=Decimal("0.5"),
+            buy_amount=Decimal("10000"), lot_size=100,
+            price_basis=GridPriceBasis.LOW, take_profit_ratio=Decimal("1"),
+        ),
+        build_rebalance_config=lambda: SimpleNamespace(
+            assets=[
+                SimpleNamespace(code="515180", name="红利ETF",
+                                target_weight=Decimal("0.5")),
+                SimpleNamespace(code="159937", name="黄金ETF",
+                                target_weight=Decimal("0.5")),
+            ],
+            threshold_pp=Decimal("3"),
+            transaction_cost_bps=Decimal("5"),
+        ),
     )
 
     return SimpleNamespace(

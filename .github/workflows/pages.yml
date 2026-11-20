@@ -2,9 +2,9 @@ name: Refresh Pages Data
 
 # 说明:
 #   本仓库的 GitHub Pages 使用「分支部署」（Source = ddd 分支根目录 /），
-#   站点入口是 ddd 分支的 pages/index.html。
+#   站点入口是 ddd 分支的 index.html。
 #   因此这里不需要 actions/deploy-pages —— 只要本工作流把刷新后的
-#   pages/data/* 提交回 ddd，GitHub 会自动重新构建 Pages。
+#   data/site/* 提交回 ddd，GitHub 会自动重新构建 Pages。
 #
 #   价格缓存 data/price_cache/*.json 已入库，CI 无需访问行情接口，
 #   回测可离线复现；需要最新行情时再手动触发。
@@ -73,17 +73,21 @@ jobs:
       - name: Verify generated artifacts
         run: |
           set -e
-          test -s pages/data/summary.json
-          test -s pages/data/trades.json
-          test -s pages/data/grid_chart.png
+          test -s data/site/summary.json
+          test -s data/site/trades.json
+          test -s data/site/grid_chart.png
           python - <<'PY'
           import json, pathlib
-          s = json.loads(pathlib.Path("pages/data/summary.json").read_text(encoding="utf-8"))
+          s = json.loads(pathlib.Path("data/site/summary.json").read_text(encoding="utf-8"))
           assert {"combined", "rebalance", "grid"} <= set(s), s.keys()
           assert s["grid"]["total_rounds"] > 0
-          t = json.loads(pathlib.Path("pages/data/trades.json").read_text(encoding="utf-8"))
+          assert {"grid", "rebalance"} <= set(s.get("strategies", {})), s.keys()
+          t = json.loads(pathlib.Path("data/site/trades.json").read_text(encoding="utf-8"))
           assert len(t["trades"]) > 0
-          print(f"OK: {len(t['trades'])} trades, "
+          # 回测交易记录同时含两个策略
+          strategies = {x["strategy"] for x in t["trades"]}
+          assert strategies == {"grid", "rebalance"}, strategies
+          print(f"OK: {len(t['trades'])} trades ({sorted(strategies)}), "
                 f"combined {s['combined']['total_return']:+.2%}")
           PY
 
@@ -91,7 +95,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pages/data data/price_cache
+          git add data/site data/price_cache
           if git diff --staged --quiet; then
             echo "no changes"
           else

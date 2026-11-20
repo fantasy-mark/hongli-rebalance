@@ -40,8 +40,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="构建 GitHub Pages 站点数据")
     parser.add_argument(
         "--pages-dir",
-        default=str(ROOT / "pages"),
-        help="站点根目录（默认 pages/）",
+        default=str(ROOT),
+        help="站点根目录（默认仓库根目录）",
     )
     parser.add_argument(
         "--start",

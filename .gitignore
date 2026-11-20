@@ -65,3 +65,6 @@ temp_*.py
 !data/site/
 !data/site/**
 !data/site/*.png
+
+# Agent runtime artifacts
+.pi/

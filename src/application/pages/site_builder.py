@@ -29,10 +29,15 @@ from src.domain.chart.overview import (
     ReturnCurve,
     StrategyOverview,
 )
+from src.domain.grid.spec import build_grid_spec
 from src.domain.grid.value_objects import GridPriceBasis, GridTrigger
+from src.domain.rebalance.spec import build_rebalance_spec
 
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
+
+GRID_STRATEGY_NAME = "复合网格"
+REBALANCE_STRATEGY_NAME = "阈值再平衡"
 
 
 # --------------------------------------------------------------------- 视图模型
@@ -99,21 +104,32 @@ class StrategyView:
 
 @dataclass(frozen=True)
 class TradeView:
-    """一笔交易"""
+    """
+    一笔回测成交
+
+    涵盖两个策略：
+    - grid:      建仓 / 加仓 / 减仓 / 止盈，携带网格步长
+    - rebalance: 买入 / 卖出（再平衡调仓），无步长
+    """
 
     date: str
+    strategy: str        # 策略标识：grid / rebalance
+    strategy_name: str   # 策略名
     asset_code: str
     asset_name: str
-    action: str          # trade_type：open / add / reduce / take_profit
+    action: str          # open / add / reduce / take_profit / buy / sell
     side: str            # buy / sell
     round_no: int
     price: Decimal
     shares: Decimal
     amount: Decimal
+    step: Optional[Decimal] = None   # 网格步长（网格专有）
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "date": self.date,
+            "strategy": self.strategy,
+            "strategy_name": self.strategy_name,
             "asset_code": self.asset_code,
             "asset_name": self.asset_name,
             "action": self.action,
@@ -122,6 +138,7 @@ class TradeView:
             "price": float(self.price),
             "shares": float(self.shares),
             "amount": float(self.amount),
+            "step": float(self.step) if self.step is not None else None,
         }
 
 
@@ -135,6 +152,7 @@ class SummaryView:
     combined: StrategyView
     rebalance: StrategyView
     grid: StrategyView
+    strategies: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -146,6 +164,7 @@ class SummaryView:
             "combined": self.combined.to_dict(),
             "rebalance": self.rebalance.to_dict(),
             "grid": self.grid.to_dict(),
+            "strategies": self.strategies,
         }
 
 
@@ -172,12 +191,16 @@ class BuildPagesSite:
         overview = self.build_overview(result)
         summary = self.build_summary(result)
         trades = self.build_trades(result)
+        strategies = self.build_strategies(result)
+
+        summary.strategies.update(strategies)
 
         return PagesSiteData(
             overview=overview,
             summary=summary,
             trades=trades,
             result=result,
+            strategies=strategies,
         )
 
     # -------------------------------------------------------------- 全景图
@@ -464,17 +487,28 @@ class BuildPagesSite:
 
     # -------------------------------------------------------------- 交易记录
     def build_trades(self, result: CombinedBacktestResult) -> List[TradeView]:
-        """构建交易记录视图（网格成交明细）"""
+        """
+        构建回测交易记录视图
+
+        包含两个策略的成交：
+        - 网格：建仓 / 加仓 / 减仓 / 止盈，携带网格步长
+        - 再平衡：买入 / 卖出（权重偏离触发调仓）
+        """
         views: List[TradeView] = []
+
+        # ---- 网格成交 ----
         for t in result.grid_result.trades:
             code = getattr(t, "asset_code", "")
             trade_type = getattr(t, "trade_type", None)
             action = (
                 trade_type.value if hasattr(trade_type, "value") else str(trade_type or "")
             )
+            step = getattr(t, "step", None)
             views.append(
                 TradeView(
                     date=t.date.isoformat() if hasattr(t.date, "isoformat") else str(t.date),
+                    strategy="grid",
+                    strategy_name=GRID_STRATEGY_NAME,
                     asset_code=code,
                     asset_name=self._asset_names.get(code, code),
                     action=action,
@@ -483,9 +517,48 @@ class BuildPagesSite:
                     price=Decimal(str(getattr(t, "price", 0) or 0)),
                     shares=Decimal(str(getattr(t, "shares", 0) or 0)),
                     amount=Decimal(str(getattr(t, "amount", 0) or 0)),
+                    step=(Decimal(str(step)) if step is not None else None),
                 )
             )
+
+        # ---- 再平衡成交 ----
+        for t in result.rebalance_result.all_trades:
+            code = getattr(t, "asset_code", "")
+            action = getattr(t, "action", "")
+            views.append(
+                TradeView(
+                    date=t.date.isoformat() if hasattr(t.date, "isoformat") else str(t.date),
+                    strategy="rebalance",
+                    strategy_name=REBALANCE_STRATEGY_NAME,
+                    asset_code=code,
+                    asset_name=self._asset_names.get(code, code),
+                    action=action,      # buy / sell
+                    side=action,        # 再平衡只有买/卖两种
+                    round_no=0,
+                    price=Decimal(str(getattr(t, "price", 0) or 0)),
+                    shares=Decimal(str(getattr(t, "shares", 0) or 0)),
+                    amount=Decimal(str(getattr(t, "amount", 0) or 0)),
+                    step=None,          # 再平衡无网格步长
+                )
+            )
+
+        # 按日期升序（同日按策略、资产排序），前端再倒序展示
+        views.sort(key=lambda v: (v.date, v.strategy, v.asset_code))
         return views
+
+    # -------------------------------------------------------------- 策略规格
+    def build_strategies(self, result: CombinedBacktestResult) -> Dict[str, Any]:
+        """
+        构建策略规格（策略名 / 规则描述 / 规则实现）
+
+        规则描述由**真实参数**推导，与实现同源，不会漂移。
+        """
+        grid_spec = build_grid_spec(result.config.grid_trigger)
+        rebalance_spec = build_rebalance_spec(result.config.build_rebalance_config())
+        return {
+            "grid": grid_spec.to_dict(),
+            "rebalance": rebalance_spec.to_dict(),
+        }
 
     # -------------------------------------------------------------- 工具
     @staticmethod
@@ -505,6 +578,7 @@ class PagesSiteData:
     summary: SummaryView
     trades: List[TradeView]
     result: CombinedBacktestResult
+    strategies: Dict[str, Any] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------- 默认配置

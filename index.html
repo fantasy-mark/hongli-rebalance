@@ -29,11 +29,20 @@
       <div id="chart-summary" class="chart-summary"></div>
     </section>
 
-    <!-- ② 交易记录 -->
+    <!-- ② 回测交易记录 -->
     <section id="section-trades">
-      <h2>② 交易记录</h2>
-      <p class="muted">网格策略成交明细（开仓 / 加仓 / 止盈），按时间倒序</p>
+      <h2>② 回测交易记录</h2>
+      <p class="muted">
+        回测模拟成交，含再平衡调仓与网格建仓 / 加仓 / 止盈，按时间倒序；
+        步长为网格专有（网格步长 = ATR × 步长倍数），再平衡不适用
+      </p>
       <div class="table-toolbar">
+        <label class="filter-label">
+          策略
+          <select id="trade-strategy-filter">
+            <option value="">全部</option>
+          </select>
+        </label>
         <label class="filter-label">
           资产
           <select id="trade-asset-filter">
@@ -83,6 +92,16 @@
         <div id="combined-holdings"></div>
         <div id="combined-stats" class="stat-block"></div>
       </div>
+    </section>
+
+    <!-- ④ 策略说明（策略名 / 规则描述 / 规则实现） -->
+    <section id="section-specs">
+      <h2>④ 策略说明</h2>
+      <p class="muted">
+        策略名 → 规则描述 → 规则实现 三者一一对应；
+        规则描述由代码中的真实参数推导，参数改了描述自动跟着变
+      </p>
+      <div id="strategy-specs" class="spec-list"></div>
     </section>
   </main>
 

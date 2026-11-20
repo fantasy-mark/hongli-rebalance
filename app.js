@@ -1,6 +1,6 @@
 /* 策略追踪站点前端逻辑
  * 数据来源: data/site/summary.json, data/site/trades.json
- * 渲染: ① 全景图摘要 ② 交易记录 ③ 持仓（再平衡 / 网格 分开）
+ * 渲染: ① 全景图摘要 ② 回测交易记录 ③ 持仓（再平衡 / 网格 分开） ④ 策略说明
  */
 
 const ASSET_COLORS = {
@@ -15,13 +15,21 @@ const ACTION_LABELS = {
   add: '加仓',
   reduce: '减仓',
   take_profit: '止盈',
+  buy: '买入',
+  sell: '卖出',
 };
 
 const SIDE_LABELS = { buy: '买入', sell: '卖出' };
 
+const STRATEGY_LABELS = {
+  grid: '复合网格',
+  rebalance: '阈值再平衡',
+};
+
 const state = {
   summary: null,
   trades: [],
+  strategyFilter: '',
   assetFilter: '',
   sideFilter: '',
 };
@@ -73,6 +81,7 @@ async function init() {
     setupTradeFilters();
     renderTrades();
     renderHoldings();
+    renderStrategySpecs(state.summary);
   } catch (err) {
     console.error(err);
     badge.className = 'err';
@@ -126,10 +135,23 @@ function renderChartSummary(s) {
   box.innerHTML = html;
 }
 
-/* ------------------------------------------------------- ② 交易记录 */
+/* ------------------------------------------------------- ② 回测交易记录 */
 function setupTradeFilters() {
+  const strategySel = document.getElementById('trade-strategy-filter');
   const assetSel = document.getElementById('trade-asset-filter');
   const sideSel = document.getElementById('trade-side-filter');
+
+  // 策略下拉：按出现顺序
+  const strategies = [...new Set(state.trades.map((t) => t.strategy))];
+  const strategyNameOf = {};
+  state.trades.forEach((t) => { strategyNameOf[t.strategy] = t.strategy_name; });
+
+  strategies.forEach((key) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = strategyNameOf[key] || STRATEGY_LABELS[key] || key;
+    strategySel.appendChild(opt);
+  });
 
   const codes = [...new Set(state.trades.map((t) => t.asset_code))].sort();
   const nameOf = {};
@@ -142,6 +164,10 @@ function setupTradeFilters() {
     assetSel.appendChild(opt);
   });
 
+  strategySel.addEventListener('change', () => {
+    state.strategyFilter = strategySel.value;
+    renderTrades();
+  });
   assetSel.addEventListener('change', () => {
     state.assetFilter = assetSel.value;
     renderTrades();
@@ -154,6 +180,7 @@ function setupTradeFilters() {
 
 function filteredTrades() {
   return state.trades.filter((t) => {
+    if (state.strategyFilter && t.strategy !== state.strategyFilter) return false;
     if (state.assetFilter && t.asset_code !== state.assetFilter) return false;
     if (state.sideFilter && t.side !== state.sideFilter) return false;
     return true;
@@ -165,7 +192,10 @@ function renderTrades() {
   const counter = document.getElementById('trade-count');
   const rows = filteredTrades().slice().reverse();
 
-  counter.textContent = `共 ${rows.length} 笔`;
+  const gridCount = rows.filter((t) => t.strategy === 'grid').length;
+  const rebCount = rows.length - gridCount;
+  counter.textContent =
+    `共 ${rows.length} 笔（网格 ${gridCount} · 再平衡 ${rebCount}）`;
 
   if (!rows.length) {
     container.innerHTML = '<p class="empty-note">暂无符合条件的交易记录</p>';
@@ -177,9 +207,20 @@ function renderTrades() {
       const action = ACTION_LABELS[t.action] || t.action || '';
       const side = SIDE_LABELS[t.side] || t.side || '';
       const sideCls = t.side === 'sell' ? 'side-sell' : 'side-buy';
+      const stratName = t.strategy_name || STRATEGY_LABELS[t.strategy] || t.strategy;
+      const stratCls = t.strategy === 'grid' ? 'strat-grid' : 'strat-rebalance';
+      // 步长：网格专有；再平衡不适用
+      const stepCell = (t.strategy === 'grid' && t.step !== null && t.step !== undefined)
+        ? `<td class="num">${Number(t.step).toFixed(4)}</td>`
+        : '<td class="num muted">—</td>';
+      const roundCell = t.round_no
+        ? `<td class="num">${t.round_no}</td>`
+        : '<td class="num muted">—</td>';
+
       return `
         <tr>
           <td>${esc(t.date)}</td>
+          <td><span class="strat-tag ${stratCls}">${esc(stratName)}</span></td>
           <td>
             <span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
             ${esc(t.asset_name || t.asset_code)}
@@ -189,7 +230,8 @@ function renderTrades() {
           <td class="num">${Number(t.price).toFixed(4)}</td>
           <td class="num">${shares(t.shares)}</td>
           <td class="num">${money(t.amount, 2)}</td>
-          <td class="num">${t.round_no || '—'}</td>
+          ${stepCell}
+          ${roundCell}
         </tr>`;
     })
     .join('');
@@ -199,12 +241,14 @@ function renderTrades() {
       <thead>
         <tr>
           <th>日期</th>
+          <th>策略</th>
           <th>资产</th>
           <th>方向</th>
           <th>类型</th>
           <th class="num">价格</th>
           <th class="num">数量</th>
           <th class="num">金额</th>
+          <th class="num">步长</th>
           <th class="num">轮次</th>
         </tr>
       </thead>
@@ -327,4 +371,67 @@ function statBlock(data, pairs) {
         </div>`;
     })
     .join('');
+}
+
+/* ------------------------------------------------- ④ 策略说明（规格） */
+function renderStrategySpecs(summary) {
+  const box = document.getElementById('strategy-specs');
+  const specs = summary.strategies || {};
+  const order = ['rebalance', 'grid'];
+  const list = order.filter((k) => specs[k]);
+
+  if (!list.length) {
+    box.innerHTML = '<p class="empty-note">暂无策略规格</p>';
+    return;
+  }
+
+  box.innerHTML = list.map((key) => renderSpecCard(specs[key], key)).join('');
+}
+
+function renderSpecCard(spec, key) {
+  const cls = key === 'grid' ? 'spec-grid' : 'spec-rebalance';
+  const rules = spec.rules || [];
+
+  const rulesHtml = rules.map((r) => {
+    const params = (r.parameters || []).map((p) => `
+        <div class="rule-param">
+          <span class="rp-name">${esc(p.name)}</span>
+          <span class="rp-value">${esc(p.value)}</span>
+          <span class="rp-meaning">${esc(p.meaning)}</span>
+        </div>`).join('');
+
+    return `
+      <div class="rule">
+        <div class="rule-head">
+          <span class="rule-title">${esc(r.title)}</span>
+          <code class="rule-id">${esc(r.rule_id)}</code>
+        </div>
+        <p class="rule-desc">${esc(r.description)}</p>
+        ${r.formula ? `<pre class="rule-formula">${esc(r.formula)}</pre>` : ''}
+        ${params ? `<div class="rule-params">${params}</div>` : ''}
+        <div class="rule-impl">
+          <span class="ri-label">规则实现</span>
+          <code>${esc(r.implementation)}</code>
+        </div>
+      </div>`;
+  }).join('');
+
+  const impls = (spec.implementation || []).map((i) =>
+    `<code class="impl-ref">${esc(i)}</code>`).join('');
+
+  return `
+    <article class="spec-card ${cls}">
+      <header class="spec-head">
+        <div>
+          <span class="spec-name">${esc(spec.name)}</span>
+          <code class="spec-id">${esc(spec.strategy_id)}</code>
+        </div>
+        <p class="spec-summary">${esc(spec.summary)}</p>
+      </header>
+      <div class="rule-list">${rulesHtml}</div>
+      <footer class="spec-foot">
+        <span class="sf-label">策略实现位置</span>
+        <div class="sf-impls">${impls}</div>
+      </footer>
+    </article>`;
 }

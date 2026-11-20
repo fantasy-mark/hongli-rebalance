@@ -19,19 +19,22 @@ from src.infrastructure.chart.strategy_overview_renderer import (
 
 
 class PagesSiteRepository:
-    """把 PagesSiteData 写入 pages/ 目录"""
+    """把 PagesSiteData 写入站点目录"""
 
     CHART_FILENAME = "grid_chart.png"
     SUMMARY_FILENAME = "summary.json"
     TRADES_FILENAME = "trades.json"
+    DATA_SUBDIR = "site"   # 站点数据存放于 <pages_dir>/data/site/
 
     def __init__(
         self,
         pages_dir: Path | str,
         renderer: StrategyOverviewRenderer | None = None,
+        data_subdir: str | None = None,
     ) -> None:
         self.pages_dir = Path(pages_dir)
-        self.data_dir = self.pages_dir / "data"
+        subdir = data_subdir if data_subdir is not None else self.DATA_SUBDIR
+        self.data_dir = self.pages_dir / "data" / subdir
         self.renderer = renderer or StrategyOverviewRenderer()
 
     # ------------------------------------------------------------------ 对外

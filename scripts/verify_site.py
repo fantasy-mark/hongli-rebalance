@@ -33,8 +33,14 @@ for _s in (sys.stdout, sys.stderr):
 
 SECTION_ORDER = [
     ("#section-overview", "① 策略全景图"),
-    ("#section-trades", "② 交易记录"),
+    ("#section-trades", "② 回测交易记录"),
     ("#section-holdings", "③ 持仓"),
+    ("#section-specs", "④ 策略说明"),
+]
+
+TRADE_HEADERS = [
+    "日期", "策略", "资产", "方向", "类型",
+    "价格", "数量", "金额", "步长", "轮次",
 ]
 
 
@@ -138,13 +144,24 @@ def main(argv: list[str] | None = None) -> int:
             check(n_rows > 0, f"交易行渲染（{n_rows} 行）")
             headers = page.locator("#trades-table thead th").all_inner_texts()
             check(
-                [h.strip() for h in headers]
-                == ["日期", "资产", "方向", "类型", "价格", "数量", "金额", "轮次"],
+                [h.strip() for h in headers] == TRADE_HEADERS,
                 f"表头字段正确（{headers}）",
             )
             first = rows.first.inner_text().split("\t")
-            check(len(first) >= 8 and first[0][:2] == "20",
+            check(len(first) >= len(TRADE_HEADERS) and first[0][:2] == "20",
                   f"首行数据形如日期开头（{first[0]}）")
+
+            # 策略筛选（新增列后的核心交互）
+            page.select_option("#trade-strategy-filter", "grid")
+            page.wait_for_timeout(300)
+            grid_rows = page.locator("#trades-table tbody tr").count()
+            page.select_option("#trade-strategy-filter", "rebalance")
+            page.wait_for_timeout(300)
+            reb_rows = page.locator("#trades-table tbody tr").count()
+            check(0 < grid_rows < n_rows and reb_rows > 0,
+                  f"策略筛选生效（网格 {grid_rows} / 再平衡 {reb_rows}）")
+            page.select_option("#trade-strategy-filter", "")
+            page.wait_for_timeout(300)
 
             # 筛选
             page.select_option("#trade-side-filter", "sell")
@@ -190,8 +207,27 @@ def main(argv: list[str] | None = None) -> int:
             combine = page.inner_text("#combined-holdings")
             check("组合总市值" in combine, "组合合计视图渲染")
 
+            # ---- ④ 策略说明 ----
+            print("\n[7] 策略说明（策略名 / 规则描述 / 规则实现）")
+            spec_cards = page.locator("#strategy-specs .spec-card")
+            check(spec_cards.count() >= 2,
+                  f"策略卡片渲染（{spec_cards.count()} 个）")
+            rules = page.locator("#strategy-specs .rule")
+            check(rules.count() >= 6, f"规则条目渲染（{rules.count()} 条）")
+            impls = page.locator("#strategy-specs .rule-impl code")
+            check(impls.count() >= 6, f"规则实现指向源码（{impls.count()} 处）")
+            grid_card = page.locator("#strategy-specs .spec-grid")
+            check(grid_card.count() == 1, "网格策略卡片存在")
+            grid_text = grid_card.inner_text()
+            check("ATR" in grid_text and "最低价" in grid_text,
+                  "网格规则描述含 ATR 步长与前N日最低价")
+            rebalance_card = page.locator("#strategy-specs .spec-rebalance")
+            check(rebalance_card.count() == 1, "再平衡策略卡片存在")
+            check("百分点" in rebalance_card.inner_text(),
+                  "再平衡规则描述含阈值百分点")
+
             # ---- 响应式 ----
-            print("\n[7] 移动端布局")
+            print("\n[8] 移动端布局")
             page.set_viewport_size({"width": 420, "height": 900})
             page.wait_for_timeout(400)
             narrow_boxes = {

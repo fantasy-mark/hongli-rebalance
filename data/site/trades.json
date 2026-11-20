@@ -1,7 +1,65 @@
 {
   "trades": [
     {
+      "date": "2020-11-05",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 3.963,
+      "shares": 63000.0,
+      "amount": 249669.0,
+      "step": null
+    },
+    {
+      "date": "2020-11-05",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 10.341,
+      "shares": 24100.0,
+      "amount": 249218.1,
+      "step": null
+    },
+    {
+      "date": "2020-11-05",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.013,
+      "shares": 246700.0,
+      "amount": 249907.1,
+      "step": null
+    },
+    {
+      "date": "2020-11-05",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.171,
+      "shares": 213400.0,
+      "amount": 249891.4,
+      "step": null
+    },
+    {
       "date": "2020-11-25",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "open",
@@ -9,10 +67,13 @@
       "round_no": 1,
       "price": 3.721851669031093,
       "shares": 2600.0,
-      "amount": 9676.814339480843
+      "amount": 9676.814339480843,
+      "step": 0.02314833096890686
     },
     {
       "date": "2020-11-30",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -20,10 +81,13 @@
       "round_no": 1,
       "price": 3.67,
       "shares": 2700.0,
-      "amount": 9909.0
+      "amount": 9909.0,
+      "step": 0.02314833096890686
     },
     {
       "date": "2020-11-30",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -31,10 +95,13 @@
       "round_no": 1,
       "price": 3.67,
       "shares": 2700.0,
-      "amount": 9909.0
+      "amount": 9909.0,
+      "step": 0.02314833096890686
     },
     {
       "date": "2020-11-30",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -42,10 +109,13 @@
       "round_no": 1,
       "price": 3.6524066761243725,
       "shares": 2700.0,
-      "amount": 9861.498025535806
+      "amount": 9861.498025535806,
+      "step": 0.02314833096890686
     },
     {
       "date": "2020-11-30",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -53,10 +123,13 @@
       "round_no": 1,
       "price": 3.6292583451554656,
       "shares": 2700.0,
-      "amount": 9798.997531919757
+      "amount": 9798.997531919757,
+      "step": 0.02314833096890686
     },
     {
       "date": "2020-11-30",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -64,76 +137,27 @@
       "round_no": 1,
       "price": 3.6061100141865587,
       "shares": 2700.0,
-      "amount": 9736.497038303709
+      "amount": 9736.497038303709,
+      "step": 0.02314833096890686
     },
     {
       "date": "2020-12-03",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 1,
-      "price": 3.745,
-      "shares": 2600.0,
-      "amount": 9737.0
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.693148330968907,
-      "shares": 2700.0,
-      "amount": 9971.50049361605
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.693148330968907,
-      "shares": 2700.0,
-      "amount": 9971.50049361605
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.6755550070932794,
-      "shares": 2700.0,
-      "amount": 9923.998519151854
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.6524066761243725,
-      "shares": 2700.0,
-      "amount": 9861.498025535806
-    },
-    {
-      "date": "2020-12-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 3.6292583451554656,
-      "shares": 2700.0,
-      "amount": 9798.997531919757
+      "price": 3.6810245381266777,
+      "shares": 16100.0,
+      "amount": 59264.49506383952,
+      "step": 0.02314833096890686
     },
     {
       "date": "2021-03-01",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "open",
@@ -141,10 +165,13 @@
       "round_no": 2,
       "price": 3.578041895014833,
       "shares": 2700.0,
-      "amount": 9660.71311654005
+      "amount": 9660.71311654005,
+      "step": 0.021958104985166812
     },
     {
       "date": "2021-03-02",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -152,10 +179,13 @@
       "round_no": 2,
       "price": 3.534,
       "shares": 2800.0,
-      "amount": 9895.2
+      "amount": 9895.2,
+      "step": 0.021958104985166812
     },
     {
       "date": "2021-03-02",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -163,10 +193,13 @@
       "round_no": 2,
       "price": 3.534,
       "shares": 2800.0,
-      "amount": 9895.2
+      "amount": 9895.2,
+      "step": 0.021958104985166812
     },
     {
       "date": "2021-03-02",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -174,10 +207,13 @@
       "round_no": 2,
       "price": 3.512167580059333,
       "shares": 2800.0,
-      "amount": 9834.06922416613
+      "amount": 9834.06922416613,
+      "step": 0.021958104985166812
     },
     {
       "date": "2021-03-05",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -185,10 +221,13 @@
       "round_no": 2,
       "price": 3.478,
       "shares": 2800.0,
-      "amount": 9738.4
+      "amount": 9738.4,
+      "step": 0.021958104985166812
     },
     {
       "date": "2021-03-05",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -196,76 +235,83 @@
       "round_no": 2,
       "price": 3.468251370088999,
       "shares": 2800.0,
-      "amount": 9711.103836249198
+      "amount": 9711.103836249198,
+      "step": 0.021958104985166812
     },
     {
       "date": "2021-03-18",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 2,
-      "price": 3.6,
-      "shares": 2700.0,
-      "amount": 9720.0
+      "price": 3.5390051814495607,
+      "shares": 16700.0,
+      "amount": 59101.38653020767,
+      "step": 0.021958104985166812
     },
     {
-      "date": "2021-03-18",
+      "date": "2021-04-14",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 3.5559581049851667,
-      "shares": 2800.0,
-      "amount": 9956.682693958466
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 3.612,
+      "shares": 7700.0,
+      "amount": 27812.4,
+      "step": null
     },
     {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 3.5559581049851667,
-      "shares": 2800.0,
-      "amount": 9956.682693958466
+      "date": "2021-04-14",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 10.25,
+      "shares": 800.0,
+      "amount": 8200.0,
+      "step": null
     },
     {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
+      "date": "2021-04-14",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
       "side": "sell",
-      "round_no": 2,
-      "price": 3.5341256850444998,
-      "shares": 2800.0,
-      "amount": 9895.551918124598
+      "round_no": 0,
+      "price": 1.162,
+      "shares": 26600.0,
+      "amount": 30909.2,
+      "step": null
     },
     {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
+      "date": "2021-04-14",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "sell",
       "side": "sell",
-      "round_no": 2,
-      "price": 3.4999581049851667,
-      "shares": 2800.0,
-      "amount": 9799.882693958467
-    },
-    {
-      "date": "2021-03-18",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 3.490209475074166,
-      "shares": 2800.0,
-      "amount": 9772.586530207665
+      "round_no": 0,
+      "price": 1.221,
+      "shares": 4000.0,
+      "amount": 4884.0,
+      "step": null
     },
     {
       "date": "2022-01-24",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "open",
@@ -273,10 +319,13 @@
       "round_no": 1,
       "price": 1.166,
       "shares": 8500.0,
-      "amount": 9911.0
+      "amount": 9911.0,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-01-25",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -284,10 +333,13 @@
       "round_no": 1,
       "price": 1.155,
       "shares": 8600.0,
-      "amount": 9933.0
+      "amount": 9933.0,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-01-25",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -295,10 +347,13 @@
       "round_no": 1,
       "price": 1.153248902873276,
       "shares": 8600.0,
-      "amount": 9917.940564710174
+      "amount": 9917.940564710174,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-01-25",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -306,10 +361,13 @@
       "round_no": 1,
       "price": 1.145998537164368,
       "shares": 8700.0,
-      "amount": 9970.18727333
+      "amount": 9970.18727333,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-01-25",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -317,10 +375,13 @@
       "round_no": 1,
       "price": 1.13874817145546,
       "shares": 8700.0,
-      "amount": 9907.109091662502
+      "amount": 9907.109091662502,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-01-27",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -328,10 +389,13 @@
       "round_no": 1,
       "price": 1.124,
       "shares": 8800.0,
-      "amount": 9891.2
+      "amount": 9891.2,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-01-27",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -339,10 +403,13 @@
       "round_no": 1,
       "price": 1.124,
       "shares": 8800.0,
-      "amount": 9891.2
+      "amount": 9891.2,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-01-27",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -350,98 +417,27 @@
       "round_no": 1,
       "price": 1.1169970743287359,
       "shares": 8900.0,
-      "amount": 9941.273961525749
+      "amount": 9941.273961525749,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-02-07",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 1,
-      "price": 1.173250365708908,
-      "shares": 8500.0,
-      "amount": 9972.628108525718
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.162250365708908,
-      "shares": 8600.0,
-      "amount": 9995.35314509661
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.160499268582184,
-      "shares": 8600.0,
-      "amount": 9980.293709806781
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.153248902873276,
-      "shares": 8700.0,
-      "amount": 10033.265454997501
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.145998537164368,
-      "shares": 8700.0,
-      "amount": 9970.18727333
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.131250365708908,
-      "shares": 8800.0,
-      "amount": 9955.003218238391
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.131250365708908,
-      "shares": 8800.0,
-      "amount": 9955.003218238391
-    },
-    {
-      "date": "2022-02-07",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.1242474400376439,
-      "shares": 8900.0,
-      "amount": 10005.80221633503
+      "price": 1.1475220739162129,
+      "shares": 69600.0,
+      "amount": 79867.53634456842,
+      "step": 0.007250365708908021
     },
     {
       "date": "2022-02-24",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "open",
@@ -449,10 +445,13 @@
       "round_no": 2,
       "price": 1.08,
       "shares": 9200.0,
-      "amount": 9936.0
+      "amount": 9936.0,
+      "step": 0.00789024207222345
     },
     {
       "date": "2022-02-24",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -460,10 +459,13 @@
       "round_no": 2,
       "price": 1.08,
       "shares": 9200.0,
-      "amount": 9936.0
+      "amount": 9936.0,
+      "step": 0.00789024207222345
     },
     {
       "date": "2022-02-24",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -471,10 +473,13 @@
       "round_no": 2,
       "price": 1.0763292737833297,
       "shares": 9200.0,
-      "amount": 9902.229318806632
+      "amount": 9902.229318806632,
+      "step": 0.00789024207222345
     },
     {
       "date": "2022-02-24",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -482,10 +487,13 @@
       "round_no": 2,
       "price": 1.068439031711106,
       "shares": 9300.0,
-      "amount": 9936.482994913287
+      "amount": 9936.482994913287,
+      "step": 0.00789024207222345
     },
     {
       "date": "2022-02-24",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -493,65 +501,83 @@
       "round_no": 2,
       "price": 1.0605487896388828,
       "shares": 9400.0,
-      "amount": 9969.158622605499
+      "amount": 9969.158622605499,
+      "step": 0.00789024207222345
+    },
+    {
+      "date": "2022-02-24",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 3.852,
+      "shares": 200.0,
+      "amount": 770.4,
+      "step": null
+    },
+    {
+      "date": "2022-02-24",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 11.624,
+      "shares": 1500.0,
+      "amount": 17436.0,
+      "step": null
+    },
+    {
+      "date": "2022-02-24",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.058,
+      "shares": 36200.0,
+      "amount": 38299.6,
+      "step": null
+    },
+    {
+      "date": "2022-02-24",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.383,
+      "shares": 13300.0,
+      "amount": 18393.9,
+      "step": null
     },
     {
       "date": "2022-02-25",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 2,
-      "price": 1.0878902420722234,
-      "shares": 9200.0,
-      "amount": 10008.590227064456
-    },
-    {
-      "date": "2022-02-25",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 1.0878902420722234,
-      "shares": 9200.0,
-      "amount": 10008.590227064456
-    },
-    {
-      "date": "2022-02-25",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 1.0842195158555532,
-      "shares": 9200.0,
-      "amount": 9974.819545871089
-    },
-    {
-      "date": "2022-02-25",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 1.0763292737833297,
-      "shares": 9300.0,
-      "amount": 10009.862246184966
-    },
-    {
-      "date": "2022-02-25",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 2,
-      "price": 1.068439031711106,
-      "shares": 9400.0,
-      "amount": 10043.326898084399
+      "price": 1.0808896143470705,
+      "shares": 46300.0,
+      "amount": 50045.18914426937,
+      "step": 0.00789024207222345
     },
     {
       "date": "2022-03-16",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "515180",
       "asset_name": "红利ETF",
       "action": "open",
@@ -559,10 +585,13 @@
       "round_no": 1,
       "price": 1.2417356562550423,
       "shares": 8000.0,
-      "amount": 9933.885250040339
+      "amount": 9933.885250040339,
+      "step": 0.01026434374495771
     },
     {
       "date": "2022-03-16",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "515180",
       "asset_name": "红利ETF",
       "action": "add",
@@ -570,32 +599,83 @@
       "round_no": 1,
       "price": 1.2314713125100847,
       "shares": 8100.0,
-      "amount": 9974.917631331686
+      "amount": 9974.917631331686,
+      "step": 0.01026434374495771
     },
     {
       "date": "2022-03-17",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "515180",
       "asset_name": "红利ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 1,
-      "price": 1.252,
-      "shares": 8000.0,
-      "amount": 10016.0
+      "price": 1.2468359512835927,
+      "shares": 16100.0,
+      "amount": 20074.05881566584,
+      "step": 0.01026434374495771
     },
     {
-      "date": "2022-03-17",
+      "date": "2022-03-29",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 3.849,
+      "shares": 1000.0,
+      "amount": 3849.0,
+      "step": null
+    },
+    {
+      "date": "2022-03-29",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 10.869,
+      "shares": 1900.0,
+      "amount": 20651.1,
+      "step": null
+    },
+    {
+      "date": "2022-03-29",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.209,
+      "shares": 28300.0,
+      "amount": 34214.7,
+      "step": null
+    },
+    {
+      "date": "2022-03-29",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
       "asset_code": "515180",
       "asset_name": "红利ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 1,
-      "price": 1.2417356562550423,
-      "shares": 8100.0,
-      "amount": 10058.058815665843
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.366,
+      "shares": 5600.0,
+      "amount": 7649.6,
+      "step": null
     },
     {
       "date": "2022-05-10",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "open",
@@ -603,10 +683,13 @@
       "round_no": 3,
       "price": 1.0394802741649947,
       "shares": 9600.0,
-      "amount": 9979.010631983949
+      "amount": 9979.010631983949,
+      "step": 0.008519725835005279
     },
     {
       "date": "2022-05-11",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "take_profit",
@@ -614,10 +697,69 @@
       "round_no": 3,
       "price": 1.048,
       "shares": 9600.0,
-      "amount": 10060.8
+      "amount": 10060.8,
+      "step": 0.008519725835005279
+    },
+    {
+      "date": "2022-05-12",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 3.93,
+      "shares": 4100.0,
+      "amount": 16113.0,
+      "step": null
+    },
+    {
+      "date": "2022-05-12",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 11.095,
+      "shares": 1400.0,
+      "amount": 15533.0,
+      "step": null
+    },
+    {
+      "date": "2022-05-12",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.021,
+      "shares": 31300.0,
+      "amount": 31957.3,
+      "step": null
+    },
+    {
+      "date": "2022-05-12",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.308,
+      "shares": 700.0,
+      "amount": 915.6,
+      "step": null
     },
     {
       "date": "2022-05-24",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "open",
@@ -625,10 +767,13 @@
       "round_no": 4,
       "price": 1.0085433743871595,
       "shares": 9900.0,
-      "amount": 9984.57940643288
+      "amount": 9984.57940643288,
+      "step": 0.009456625612840474
     },
     {
       "date": "2022-05-24",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -636,32 +781,27 @@
       "round_no": 4,
       "price": 0.999086748774319,
       "shares": 10000.0,
-      "amount": 9990.867487743191
+      "amount": 9990.867487743191,
+      "step": 0.009456625612840474
     },
     {
       "date": "2022-05-27",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 4,
-      "price": 1.018,
-      "shares": 9900.0,
-      "amount": 10078.2
-    },
-    {
-      "date": "2022-05-27",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 1.0085433743871595,
-      "shares": 10000.0,
-      "amount": 10085.433743871596
+      "price": 1.0132479268277184,
+      "shares": 19900.0,
+      "amount": 20163.633743871596,
+      "step": 0.009456625612840474
     },
     {
       "date": "2022-06-14",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "open",
@@ -669,10 +809,13 @@
       "round_no": 5,
       "price": 0.971,
       "shares": 10200.0,
-      "amount": 9904.2
+      "amount": 9904.2,
+      "step": 0.009465283379796631
     },
     {
       "date": "2022-06-14",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "add",
@@ -680,32 +823,139 @@
       "round_no": 5,
       "price": 0.9700694332404067,
       "shares": 10300.0,
-      "amount": 9991.71516237619
+      "amount": 9991.71516237619,
+      "step": 0.009465283379796631
     },
     {
       "date": "2022-06-15",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 5,
-      "price": 0.9804652833797967,
-      "shares": 10200.0,
-      "amount": 10000.745890473925
+      "price": 0.9799977303249766,
+      "shares": 20500.0,
+      "amount": 20089.953471662022,
+      "step": 0.009465283379796631
     },
     {
-      "date": "2022-06-15",
+      "date": "2023-05-30",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 4.296,
+      "shares": 1700.0,
+      "amount": 7303.2,
+      "step": null
+    },
+    {
+      "date": "2023-05-30",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 11.283,
+      "shares": 2400.0,
+      "amount": 27079.2,
+      "step": null
+    },
+    {
+      "date": "2023-05-30",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
       "asset_code": "513300",
       "asset_name": "纳斯达克ETF",
-      "action": "take_profit",
+      "action": "sell",
       "side": "sell",
-      "round_no": 5,
-      "price": 0.9795347166202034,
-      "shares": 10300.0,
-      "amount": 10089.207581188095
+      "round_no": 0,
+      "price": 1.291,
+      "shares": 29000.0,
+      "amount": 37439.0,
+      "step": null
+    },
+    {
+      "date": "2023-05-30",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.46,
+      "shares": 1200.0,
+      "amount": 1752.0,
+      "step": null
+    },
+    {
+      "date": "2023-12-20",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 4.599,
+      "shares": 1500.0,
+      "amount": 6898.5,
+      "step": null
+    },
+    {
+      "date": "2023-12-20",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 10.763,
+      "shares": 2500.0,
+      "amount": 26907.5,
+      "step": null
+    },
+    {
+      "date": "2023-12-20",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.516,
+      "shares": 25400.0,
+      "amount": 38506.4,
+      "step": null
+    },
+    {
+      "date": "2023-12-20",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.43,
+      "shares": 13500.0,
+      "amount": 19305.0,
+      "step": null
     },
     {
       "date": "2024-01-18",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "open",
@@ -713,10 +963,13 @@
       "round_no": 1,
       "price": 10.667305316237556,
       "shares": 900.0,
-      "amount": 9600.5747846138
+      "amount": 9600.5747846138,
+      "step": 0.05569468376244429
     },
     {
       "date": "2024-01-19",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "take_profit",
@@ -724,10 +977,13 @@
       "round_no": 1,
       "price": 10.723,
       "shares": 900.0,
-      "amount": 9650.7
+      "amount": 9650.7,
+      "step": 0.05569468376244429
     },
     {
       "date": "2024-02-01",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "open",
@@ -735,10 +991,13 @@
       "round_no": 2,
       "price": 10.515481352526056,
       "shares": 900.0,
-      "amount": 9463.93321727345
+      "amount": 9463.93321727345,
+      "step": 0.03251864747394414
     },
     {
       "date": "2024-02-02",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "take_profit",
@@ -746,10 +1005,69 @@
       "round_no": 2,
       "price": 10.548,
       "shares": 900.0,
-      "amount": 9493.2
+      "amount": 9493.2,
+      "step": 0.03251864747394414
+    },
+    {
+      "date": "2024-07-05",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 5.373,
+      "shares": 1500.0,
+      "amount": 8059.5,
+      "step": null
+    },
+    {
+      "date": "2024-07-05",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 10.938,
+      "shares": 3600.0,
+      "amount": 39376.8,
+      "step": null
+    },
+    {
+      "date": "2024-07-05",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.955,
+      "shares": 23300.0,
+      "amount": 45551.5,
+      "step": null
+    },
+    {
+      "date": "2024-07-05",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.57,
+      "shares": 8900.0,
+      "amount": 13973.0,
+      "step": null
     },
     {
       "date": "2024-08-16",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "open",
@@ -757,10 +1075,13 @@
       "round_no": 3,
       "price": 10.390002816341319,
       "shares": 900.0,
-      "amount": 9351.002534707188
+      "amount": 9351.002534707188,
+      "step": 0.033997183658680645
     },
     {
       "date": "2024-08-16",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -768,32 +1089,27 @@
       "round_no": 3,
       "price": 10.356005632682638,
       "shares": 900.0,
-      "amount": 9320.405069414375
+      "amount": 9320.405069414375,
+      "step": 0.033997183658680645
     },
     {
       "date": "2024-08-19",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 3,
-      "price": 10.424,
-      "shares": 900.0,
-      "amount": 9381.6
-    },
-    {
-      "date": "2024-08-19",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 10.390002816341319,
-      "shares": 900.0,
-      "amount": 9351.002534707188
+      "price": 10.40700140817066,
+      "shares": 1800.0,
+      "amount": 18732.602534707188,
+      "step": 0.033997183658680645
     },
     {
       "date": "2024-08-22",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "open",
@@ -801,10 +1117,13 @@
       "round_no": 4,
       "price": 10.268836502282124,
       "shares": 900.0,
-      "amount": 9241.952852053912
+      "amount": 9241.952852053912,
+      "step": 0.036163497717876
     },
     {
       "date": "2024-08-23",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -812,10 +1131,13 @@
       "round_no": 4,
       "price": 10.232673004564248,
       "shares": 900.0,
-      "amount": 9209.405704107823
+      "amount": 9209.405704107823,
+      "step": 0.036163497717876
     },
     {
       "date": "2024-08-23",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -823,10 +1145,13 @@
       "round_no": 4,
       "price": 10.196509506846372,
       "shares": 900.0,
-      "amount": 9176.858556161735
+      "amount": 9176.858556161735,
+      "step": 0.036163497717876
     },
     {
       "date": "2024-08-23",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -834,10 +1159,13 @@
       "round_no": 4,
       "price": 10.160346009128496,
       "shares": 900.0,
-      "amount": 9144.311408215646
+      "amount": 9144.311408215646,
+      "step": 0.036163497717876
     },
     {
       "date": "2024-08-23",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -845,10 +1173,13 @@
       "round_no": 4,
       "price": 10.12418251141062,
       "shares": 900.0,
-      "amount": 9111.764260269558
+      "amount": 9111.764260269558,
+      "step": 0.036163497717876
     },
     {
       "date": "2024-08-23",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -856,76 +1187,447 @@
       "round_no": 4,
       "price": 10.088019013692744,
       "shares": 900.0,
-      "amount": 9079.21711232347
+      "amount": 9079.21711232347,
+      "step": 0.036163497717876
     },
     {
       "date": "2024-08-26",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 4,
-      "price": 10.305,
-      "shares": 900.0,
-      "amount": 9274.5
+      "price": 10.21459125570531,
+      "shares": 5400.0,
+      "amount": 55158.792780808675,
+      "step": 0.036163497717876
     },
     {
-      "date": "2024-08-26",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
+      "date": "2024-10-08",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
       "side": "sell",
-      "round_no": 4,
-      "price": 10.268836502282124,
-      "shares": 900.0,
-      "amount": 9241.952852053912
+      "round_no": 0,
+      "price": 5.71,
+      "shares": 2600.0,
+      "amount": 14846.0,
+      "step": null
     },
     {
-      "date": "2024-08-26",
+      "date": "2024-10-08",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
-      "action": "take_profit",
+      "action": "sell",
       "side": "sell",
-      "round_no": 4,
-      "price": 10.232673004564248,
-      "shares": 900.0,
-      "amount": 9209.405704107823
+      "round_no": 0,
+      "price": 11.371,
+      "shares": 500.0,
+      "amount": 5685.5,
+      "step": null
     },
     {
-      "date": "2024-08-26",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 10.196509506846372,
-      "shares": 900.0,
-      "amount": 9176.858556161735
+      "date": "2024-10-08",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.754,
+      "shares": 24900.0,
+      "amount": 43674.6,
+      "step": null
     },
     {
-      "date": "2024-08-26",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
+      "date": "2024-10-08",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "sell",
       "side": "sell",
-      "round_no": 4,
-      "price": 10.160346009128496,
-      "shares": 900.0,
-      "amount": 9144.311408215646
+      "round_no": 0,
+      "price": 1.702,
+      "shares": 13100.0,
+      "amount": 22296.2,
+      "step": null
     },
     {
-      "date": "2024-08-26",
+      "date": "2024-12-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 5.937,
+      "shares": 900.0,
+      "amount": 5343.3,
+      "step": null
+    },
+    {
+      "date": "2024-12-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 4,
-      "price": 10.12418251141062,
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 11.658,
       "shares": 900.0,
-      "amount": 9111.764260269558
+      "amount": 10492.2,
+      "step": null
+    },
+    {
+      "date": "2024-12-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 2.088,
+      "shares": 23300.0,
+      "amount": 48650.4,
+      "step": null
+    },
+    {
+      "date": "2024-12-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.646,
+      "shares": 19400.0,
+      "amount": 31932.4,
+      "step": null
+    },
+    {
+      "date": "2025-03-11",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 6.495,
+      "shares": 5800.0,
+      "amount": 37671.0,
+      "step": null
+    },
+    {
+      "date": "2025-03-11",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 12.181,
+      "shares": 1500.0,
+      "amount": 18271.5,
+      "step": null
+    },
+    {
+      "date": "2025-03-11",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.799,
+      "shares": 28000.0,
+      "amount": 50372.0,
+      "step": null
+    },
+    {
+      "date": "2025-03-11",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.605,
+      "shares": 4500.0,
+      "amount": 7222.5,
+      "step": null
+    },
+    {
+      "date": "2025-04-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 7.487,
+      "shares": 6800.0,
+      "amount": 50911.6,
+      "step": null
+    },
+    {
+      "date": "2025-04-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 11.708,
+      "shares": 1700.0,
+      "amount": 19903.6,
+      "step": null
+    },
+    {
+      "date": "2025-04-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.73,
+      "shares": 12600.0,
+      "amount": 21798.0,
+      "step": null
+    },
+    {
+      "date": "2025-04-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.604,
+      "shares": 4600.0,
+      "amount": 7378.4,
+      "step": null
+    },
+    {
+      "date": "2025-07-31",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 7.337,
+      "shares": 5600.0,
+      "amount": 41087.2,
+      "step": null
+    },
+    {
+      "date": "2025-07-31",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 2.127,
+      "shares": 25700.0,
+      "amount": 54663.9,
+      "step": null
+    },
+    {
+      "date": "2025-07-31",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.684,
+      "shares": 8700.0,
+      "amount": 14650.8,
+      "step": null
+    },
+    {
+      "date": "2025-10-14",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 8.936,
+      "shares": 6500.0,
+      "amount": 58084.0,
+      "step": null
+    },
+    {
+      "date": "2025-10-14",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 13.322,
+      "shares": 1100.0,
+      "amount": 14654.2,
+      "step": null
+    },
+    {
+      "date": "2025-10-14",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 2.205,
+      "shares": 7900.0,
+      "amount": 17419.5,
+      "step": null
+    },
+    {
+      "date": "2025-10-14",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.716,
+      "shares": 14700.0,
+      "amount": 25225.2,
+      "step": null
+    },
+    {
+      "date": "2026-01-28",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 11.252,
+      "shares": 5900.0,
+      "amount": 66386.8,
+      "step": null
+    },
+    {
+      "date": "2026-01-28",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 2.34,
+      "shares": 10200.0,
+      "amount": 23868.0,
+      "step": null
+    },
+    {
+      "date": "2026-01-28",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.749,
+      "shares": 24500.0,
+      "amount": 42850.5,
+      "step": null
+    },
+    {
+      "date": "2026-05-11",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 9.748,
+      "shares": 6400.0,
+      "amount": 62387.2,
+      "step": null
+    },
+    {
+      "date": "2026-05-11",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 14.534,
+      "shares": 300.0,
+      "amount": 4360.2,
+      "step": null
+    },
+    {
+      "date": "2026-05-11",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 2.577,
+      "shares": 21600.0,
+      "amount": 55663.2,
+      "step": null
+    },
+    {
+      "date": "2026-05-11",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.778,
+      "shares": 7300.0,
+      "amount": 12979.4,
+      "step": null
     },
     {
       "date": "2026-06-10",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "open",
@@ -933,10 +1635,13 @@
       "round_no": 3,
       "price": 8.753,
       "shares": 1100.0,
-      "amount": 9628.3
+      "amount": 9628.3,
+      "step": 0.07690203123418397
     },
     {
       "date": "2026-06-10",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -944,10 +1649,13 @@
       "round_no": 3,
       "price": 8.715195937531632,
       "shares": 1100.0,
-      "amount": 9586.715531284795
+      "amount": 9586.715531284795,
+      "step": 0.07690203123418397
     },
     {
       "date": "2026-06-11",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -955,10 +1663,13 @@
       "round_no": 3,
       "price": 8.545,
       "shares": 1100.0,
-      "amount": 9399.5
+      "amount": 9399.5,
+      "step": 0.07690203123418397
     },
     {
       "date": "2026-06-11",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -966,10 +1677,13 @@
       "round_no": 3,
       "price": 8.545,
       "shares": 1100.0,
-      "amount": 9399.5
+      "amount": 9399.5,
+      "step": 0.07690203123418397
     },
     {
       "date": "2026-06-11",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -977,10 +1691,13 @@
       "round_no": 3,
       "price": 8.48448984382908,
       "shares": 1100.0,
-      "amount": 9332.938828211989
+      "amount": 9332.938828211989,
+      "step": 0.07690203123418397
     },
     {
       "date": "2026-06-11",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -988,76 +1705,27 @@
       "round_no": 3,
       "price": 8.407587812594896,
       "shares": 1100.0,
-      "amount": 9248.346593854385
+      "amount": 9248.346593854385,
+      "step": 0.07690203123418397
     },
     {
       "date": "2026-06-15",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 3,
-      "price": 8.829902031234184,
-      "shares": 1100.0,
-      "amount": 9712.892234357603
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.792097968765816,
-      "shares": 1100.0,
-      "amount": 9671.307765642397
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.621902031234184,
-      "shares": 1100.0,
-      "amount": 9484.092234357602
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.621902031234184,
-      "shares": 1100.0,
-      "amount": 9484.092234357602
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.561391875063265,
-      "shares": 1100.0,
-      "amount": 9417.531062569591
-    },
-    {
-      "date": "2026-06-15",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 3,
-      "price": 8.48448984382908,
-      "shares": 1100.0,
-      "amount": 9332.938828211989
+      "price": 8.651947630226786,
+      "shares": 6600.0,
+      "amount": 57102.854359496785,
+      "step": 0.07690203123418397
     },
     {
       "date": "2026-09-10",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "open",
@@ -1065,10 +1733,13 @@
       "round_no": 5,
       "price": 13.28408978716118,
       "shares": 700.0,
-      "amount": 9298.862851012826
+      "amount": 9298.862851012826,
+      "step": 0.07191021283882007
     },
     {
       "date": "2026-09-10",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1076,10 +1747,13 @@
       "round_no": 5,
       "price": 13.21217957432236,
       "shares": 700.0,
-      "amount": 9248.525702025652
+      "amount": 9248.525702025652,
+      "step": 0.07191021283882007
     },
     {
       "date": "2026-09-11",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1087,43 +1761,83 @@
       "round_no": 5,
       "price": 13.14026936148354,
       "shares": 700.0,
-      "amount": 9198.188553038477
+      "amount": 9198.188553038477,
+      "step": 0.07191021283882007
     },
     {
       "date": "2026-09-14",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 5,
-      "price": 13.356,
-      "shares": 700.0,
-      "amount": 9349.2
-    },
-    {
-      "date": "2026-09-14",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 5,
       "price": 13.28408978716118,
-      "shares": 700.0,
-      "amount": 9298.862851012826
+      "shares": 2100.0,
+      "amount": 27896.588553038477,
+      "step": 0.07191021283882007
     },
     {
-      "date": "2026-09-14",
+      "date": "2026-09-23",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 8.875,
+      "shares": 3600.0,
+      "amount": 31950.0,
+      "step": null
+    },
+    {
+      "date": "2026-09-23",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
-      "action": "take_profit",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 13.269,
+      "shares": 2400.0,
+      "amount": 31845.6,
+      "step": null
+    },
+    {
+      "date": "2026-09-23",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
       "side": "sell",
-      "round_no": 5,
-      "price": 13.21217957432236,
-      "shares": 700.0,
-      "amount": 9248.525702025652
+      "round_no": 0,
+      "price": 2.827,
+      "shares": 21600.0,
+      "amount": 61063.2,
+      "step": null
+    },
+    {
+      "date": "2026-09-23",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.744,
+      "shares": 1600.0,
+      "amount": 2790.4,
+      "step": null
     },
     {
       "date": "2026-09-28",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "open",
@@ -1131,10 +1845,13 @@
       "round_no": 6,
       "price": 13.047518711456677,
       "shares": 700.0,
-      "amount": 9133.263098019674
+      "amount": 9133.263098019674,
+      "step": 0.07148128854332238
     },
     {
       "date": "2026-09-30",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "take_profit",
@@ -1142,10 +1859,13 @@
       "round_no": 6,
       "price": 13.119,
       "shares": 700.0,
-      "amount": 9183.3
+      "amount": 9183.3,
+      "step": 0.07148128854332238
     },
     {
       "date": "2026-10-12",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "open",
@@ -1153,10 +1873,13 @@
       "round_no": 7,
       "price": 12.774650959393206,
       "shares": 700.0,
-      "amount": 8942.255671575243
+      "amount": 8942.255671575243,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-10-13",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1164,10 +1887,13 @@
       "round_no": 7,
       "price": 12.701,
       "shares": 700.0,
-      "amount": 8890.7
+      "amount": 8890.7,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-10-14",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1175,10 +1901,13 @@
       "round_no": 7,
       "price": 12.631952878179618,
       "shares": 700.0,
-      "amount": 8842.367014725733
+      "amount": 8842.367014725733,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-10-15",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1186,10 +1915,13 @@
       "round_no": 7,
       "price": 12.55,
       "shares": 700.0,
-      "amount": 8785.0
+      "amount": 8785.0,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-10-15",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1197,10 +1929,13 @@
       "round_no": 7,
       "price": 12.48925479696603,
       "shares": 800.0,
-      "amount": 9991.403837572823
+      "amount": 9991.403837572823,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-10-15",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1208,10 +1943,13 @@
       "round_no": 7,
       "price": 12.417905756359236,
       "shares": 800.0,
-      "amount": 9934.324605087388
+      "amount": 9934.324605087388,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-10-23",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "open",
@@ -1219,10 +1957,13 @@
       "round_no": 4,
       "price": 8.168374407460941,
       "shares": 1200.0,
-      "amount": 9802.04928895313
+      "amount": 9802.04928895313,
+      "step": 0.07862559253905765
     },
     {
       "date": "2026-10-23",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1230,10 +1971,13 @@
       "round_no": 7,
       "price": 12.346556715752442,
       "shares": 800.0,
-      "amount": 9877.245372601954
+      "amount": 9877.245372601954,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-10-28",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "take_profit",
@@ -1241,10 +1985,13 @@
       "round_no": 4,
       "price": 8.247,
       "shares": 1200.0,
-      "amount": 9896.4
+      "amount": 9896.4,
+      "step": 0.07862559253905765
     },
     {
       "date": "2026-11-02",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "open",
@@ -1252,10 +1999,13 @@
       "round_no": 5,
       "price": 7.944,
       "shares": 1200.0,
-      "amount": 9532.8
+      "amount": 9532.8,
+      "step": 0.07056091623613692
     },
     {
       "date": "2026-11-02",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "add",
@@ -1263,10 +2013,13 @@
       "round_no": 5,
       "price": 7.944,
       "shares": 1200.0,
-      "amount": 9532.8
+      "amount": 9532.8,
+      "step": 0.07056091623613692
     },
     {
       "date": "2026-11-02",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1274,10 +2027,13 @@
       "round_no": 7,
       "price": 12.23,
       "shares": 800.0,
-      "amount": 9784.0
+      "amount": 9784.0,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-11-02",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "add",
@@ -1285,131 +2041,41 @@
       "round_no": 7,
       "price": 12.203858634538854,
       "shares": 800.0,
-      "amount": 9763.086907631083
+      "amount": 9763.086907631083,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-11-03",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 5,
       "price": 8.014560916236137,
-      "shares": 1200.0,
-      "amount": 9617.473099483364
-    },
-    {
-      "date": "2026-11-03",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 5,
-      "price": 8.014560916236137,
-      "shares": 1200.0,
-      "amount": 9617.473099483364
+      "shares": 2400.0,
+      "amount": 19234.94619896673,
+      "step": 0.07056091623613692
     },
     {
       "date": "2026-11-12",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "take_profit",
       "side": "sell",
       "round_no": 7,
-      "price": 12.846,
-      "shares": 700.0,
-      "amount": 8992.2
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.772349040606795,
-      "shares": 700.0,
-      "amount": 8940.644328424756
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.703301918786412,
-      "shares": 700.0,
-      "amount": 8892.311343150488
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.621349040606795,
-      "shares": 700.0,
-      "amount": 8834.944328424755
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.560603837572824,
-      "shares": 800.0,
-      "amount": 10048.483070058259
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.48925479696603,
-      "shares": 800.0,
-      "amount": 9991.403837572823
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.417905756359236,
-      "shares": 800.0,
-      "amount": 9934.324605087388
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.301349040606794,
-      "shares": 800.0,
-      "amount": 9841.079232485436
-    },
-    {
-      "date": "2026-11-12",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "take_profit",
-      "side": "sell",
-      "round_no": 7,
-      "price": 12.275207675145648,
-      "shares": 800.0,
-      "amount": 9820.166140116518
+      "price": 12.54346424784124,
+      "shares": 6800.0,
+      "amount": 85295.55688532043,
+      "step": 0.07134904060679405
     },
     {
       "date": "2026-11-17",
+      "strategy": "grid",
+      "strategy_name": "复合网格",
       "asset_code": "511380",
       "asset_name": "可转债ETF",
       "action": "open",
@@ -1417,7 +2083,8 @@
       "round_no": 8,
       "price": 11.911601484836028,
       "shares": 800.0,
-      "amount": 9529.281187868823
+      "amount": 9529.281187868823,
+      "step": 0.07939851516397213
     }
   ]
 }

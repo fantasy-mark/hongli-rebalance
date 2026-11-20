@@ -296,3 +296,172 @@ td.neg { color: #c0392b; }
   .strategy-grid { grid-template-columns: 1fr; }
   .table-scroll { max-height: 420px; }
 }
+
+/* ---------------- ② 回测交易记录：策略标签 ---------------- */
+.strat-tag {
+  display: inline-block;
+  font-size: 0.82em;
+  padding: 0.12em 0.55em;
+  border-radius: 999px;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+.strat-tag.strat-grid      { background: #fdecea; color: #a93226; }
+.strat-tag.strat-rebalance { background: #eaf2f8; color: #1b4f72; }
+
+#trades-table th:nth-child(1),
+#trades-table td:nth-child(1),
+#trades-table th:nth-child(2),
+#trades-table td:nth-child(2),
+#trades-table th:nth-child(3),
+#trades-table td:nth-child(3),
+#trades-table th:nth-child(4),
+#trades-table td:nth-child(4),
+#trades-table th:nth-child(5),
+#trades-table td:nth-child(5) { text-align: left; }
+
+/* ---------------- ④ 策略说明 ---------------- */
+.spec-list {
+  display: grid;
+  gap: 1.2em;
+  margin-top: 1em;
+}
+
+.spec-card {
+  border: 1px solid #e4e8ec;
+  border-radius: 8px;
+  padding: 1em 1.15em 1.1em;
+  background: #fdfefe;
+}
+
+.spec-card.spec-grid      { border-left: 3px solid #C0392B; }
+.spec-card.spec-rebalance { border-left: 3px solid #2C5F8D; }
+
+.spec-head {
+  border-bottom: 1px solid #eef0f2;
+  padding-bottom: 0.6em;
+  margin-bottom: 0.8em;
+}
+
+.spec-name {
+  font-size: 1.08em;
+  font-weight: 700;
+  color: #1f2d3d;
+  margin-right: 0.5em;
+}
+
+.spec-id, .rule-id {
+  font-size: 0.78em;
+  background: #eef1f4;
+  color: #5a6b7c;
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+
+.spec-summary {
+  margin: 0.35em 0 0;
+  color: #55606b;
+  font-size: 0.94em;
+}
+
+.rule-list { display: grid; gap: 0.9em; }
+
+.rule {
+  border: 1px solid #eef1f4;
+  border-radius: 6px;
+  padding: 0.75em 0.9em;
+  background: #fafbfc;
+}
+
+.rule-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  margin-bottom: 0.35em;
+}
+
+.rule-title {
+  font-weight: 700;
+  color: #24303d;
+  font-size: 1.0em;
+}
+
+.rule-desc {
+  margin: 0 0 0.5em;
+  color: #4a5561;
+  line-height: 1.65;
+}
+
+.rule-formula {
+  margin: 0 0 0.55em;
+  padding: 0.5em 0.7em;
+  background: #f2f5f8;
+  border-left: 3px solid #c6d2dd;
+  border-radius: 0 4px 4px 0;
+  font-size: 0.86em;
+  line-height: 1.55;
+  color: #34495e;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.rule-params {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 0.4em;
+  margin-bottom: 0.55em;
+}
+
+.rule-param {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35em;
+  font-size: 0.85em;
+  background: #fff;
+  border: 1px solid #edf0f3;
+  border-radius: 5px;
+  padding: 0.32em 0.55em;
+}
+
+.rp-name   { color: #6b7783; }
+.rp-value  { font-weight: 700; color: #1f2d3d; }
+.rp-meaning { color: #97a3ae; font-size: 0.92em; flex-basis: 100%; }
+
+.rule-impl {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  font-size: 0.82em;
+}
+
+.ri-label { color: #7b8794; }
+
+.rule-impl code, .impl-ref {
+  font-size: 0.94em;
+  background: #eef1f4;
+  color: #43576b;
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+  word-break: break-all;
+}
+
+.spec-foot {
+  margin-top: 0.85em;
+  padding-top: 0.7em;
+  border-top: 1px dashed #e2e7ec;
+}
+
+.sf-label {
+  display: block;
+  color: #7b8794;
+  font-size: 0.82em;
+  margin-bottom: 0.35em;
+}
+
+.sf-impls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
+}

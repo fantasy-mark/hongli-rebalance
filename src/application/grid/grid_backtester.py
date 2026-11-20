@@ -133,9 +133,10 @@ class GridTradeRecord:
     amount: Decimal
     cost: Decimal
     cash_after: Decimal
-    trade_type: GridTradeType = GridTradeType.ADD  # 开仓/加仓/止盈
+    trade_type: GridTradeType = GridTradeType.ADD  # 建仓/加仓/止盈
     round_no: int = 0                              # 所属网格轮次
     shares_after: Decimal = Decimal("0")           # 成交后的持仓数量
+    step: Optional[Decimal] = None                 # 成交时的网格步长（ATR 派生）
 
     @property
     def type_label(self) -> str:
@@ -157,6 +158,7 @@ class GridTradeRecord:
             'cash_after': float(self.cash_after),
             'round_no': self.round_no,
             'shares_after': float(self.shares_after),
+            'step': float(self.step) if self.step is not None else None,
         }
 
 
@@ -524,6 +526,7 @@ class GridBacktester:
                         shares_after=(order.shares_after
                                       if order.shares_after is not None
                                       else self.strategy.portfolio.shares_of(code)),
+                        step=order.step,
                     )
                     day_trades.append(trade)
 

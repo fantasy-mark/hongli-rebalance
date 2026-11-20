@@ -299,6 +299,7 @@ class GridOrder:
     order_id: str = ""
     trade_type: Optional['GridTradeType'] = None   # 由领域层在记账时判定
     shares_after: Optional[Decimal] = None         # 本笔成交后的持仓（领域层回填）
+    step: Optional[Decimal] = None                 # 成交时的网格步长（轮次上下文）
 
     def __post_init__(self):
         if not self.asset_code:
@@ -333,6 +334,7 @@ class GridOrder:
             'level': self.level,
             'trade_type': self.trade_type.value if self.trade_type else None,
             'shares_after': float(self.shares_after) if self.shares_after is not None else None,
+            'step': float(self.step) if self.step is not None else None,
         }
 
 
