@@ -94,8 +94,12 @@ async function init() {
 /* ------------------------------------------------------- 状态徽章 */
 function renderStatus(badge, s) {
   badge.className = 'ok';
+  // 解析 ISO 时间字符串，显示日期和时间
+  const dt = new Date(s.generated_at);
+  const dateStr = dt.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  const timeStr = dt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   badge.innerHTML =
-    `<span class="status-main">数据更新 ${esc(s.generated_at)}` +
+    `<span class="status-main">数据更新 ${esc(dateStr)} ${esc(timeStr)}` +
     ` · 区间 ${esc(s.window.start)} → ${esc(s.window.end)}</span>` +
     `<span class="status-breakdown">` +
     `<span class="status-pool">组合 <strong>${pct(s.combined.total_return)}</strong></span>` +
@@ -215,6 +219,26 @@ function renderTrades() {
     }
   });
 
+  // 计算再平衡序号：按日期去重，每个再平衡日期一个序号（自回测开始第几次）
+  const rebalanceDates = new Set();
+  chronologicalTrades.forEach((t) => {
+    if (t.strategy === 'rebalance' && t.side === 'buy') {
+      rebalanceDates.add(t.date);
+    }
+  });
+  const sortedRebalanceDates = [...rebalanceDates].sort();
+  const rebalanceIndex = {};
+  sortedRebalanceDates.forEach((date, i) => {
+    rebalanceIndex[date] = i + 1;
+  });
+
+  // 给再平衡交易设置序号
+  chronologicalTrades.forEach((t) => {
+    if (t.strategy === 'rebalance') {
+      t.rebalance_no = rebalanceIndex[t.date];
+    }
+  });
+
   const reversedTrades = chronologicalTrades.slice().reverse();
   const body = reversedTrades
     .map((t) => {
@@ -229,9 +253,11 @@ function renderTrades() {
         const stepPct = (t.step / t.price * 100).toFixed(2);
         stepCell = `<td class="num">${Number(t.step).toFixed(4)}<br><span class="muted" style="font-size:0.85em">(${stepPct}%)</span></td>`;
       }
-      // 轮次/深度：买入显示 轮次/深度（每买一次深度+1），卖出/再平衡只显示轮次
+      // 轮次/深度：网格显示 轮次/深度，再平衡显示第几次再平衡
       let roundCell = '<td class="num muted">—</td>';
-      if (t.round_no) {
+      if (t.strategy === 'rebalance' && t.rebalance_no) {
+        roundCell = `<td class="num">${t.rebalance_no}</td>`;
+      } else if (t.round_no) {
         roundCell = t.depth
           ? `<td class="num">${t.round_no}/${t.depth}</td>`
           : `<td class="num">${t.round_no}</td>`;
@@ -249,7 +275,7 @@ function renderTrades() {
           <td>${esc(action)}</td>
           <td class="num">${Number(t.price).toFixed(4)}</td>
           <td class="num">${shares(t.shares)}</td>
-          <td class="num">${money(t.amount, 2)}</td>
+          <td class="num">${money(t.position_value, 2)}<br><span class="muted" style="font-size:0.85em">(${money(t.amount, 2)})</span></td>
           ${stepCell}
           ${roundCell}
         </tr>`;
@@ -267,7 +293,7 @@ function renderTrades() {
           <th>类型</th>
           <th class="num">价格</th>
           <th class="num">数量</th>
-          <th class="num">金额</th>
+          <th class="num">市值/交易金额</th>
           <th class="num">步长</th>
           <th class="num">轮次/深度</th>
         </tr>
