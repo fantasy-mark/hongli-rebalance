@@ -139,7 +139,7 @@
           "title": "触发条件",
           "description": "当当日最低价跌破前 120 个交易日的最低价时，网格被激活，开启新一轮；激活瞬间计算 ATR(120) 与网格步长，并以「触发日价格」作为锚点。",
           "formula": "触发: price <= min(close[-120:-1])\n步长: step = ATR(120) × 0.5",
-          "implementation": "src/domain/grid/services.py::GridEngine.evaluate",
+          "implementation": "src/strategy/grid/engine.py::GridEngine.evaluate",
           "parameters": [
             {
               "name": "回看天数",
@@ -178,7 +178,7 @@
           "title": "加仓规则",
           "description": "网格激活后，每再下跌 0.5×ATR(120) 加一档仓位；每档买入 10,000 元，股数向下取整到 100 股的整数倍；档位价格 = 锚点 − 步长 × 档位序号。",
           "formula": "档位N价格 = 锚点 − N × step\n单档金额 = 10,000 元（向下取整到 100 股）",
-          "implementation": "src/domain/grid/services.py::GridEngine._process_levels",
+          "implementation": "src/strategy/grid/engine.py::GridEngine._process_levels",
           "parameters": [
             {
               "name": "单档金额",
@@ -205,7 +205,7 @@
           "title": "止盈规则",
           "description": "当价格回升至「首次建仓价 + 1×步长」时触发止盈，整轮一次性卖出全部持仓（合并为一笔成交），本轮结束；必须再次跌破前 120 日最低价才能开启下一轮。",
           "formula": "止盈价 = 首次建仓价 + 1 × step",
-          "implementation": "src/domain/grid/services.py::GridEngine._process_take_profit",
+          "implementation": "src/strategy/grid/engine.py::GridEngine._process_take_profit",
           "parameters": [
             {
               "name": "止盈倍数",
@@ -220,16 +220,16 @@
           "title": "资金隔离",
           "description": "网格使用独立资金池，只动网格自己的现金与持仓，与再平衡组合完全隔离；单轮止盈后网格现金回到池中，等待下一轮。",
           "formula": "",
-          "implementation": "src/domain/portfolio/entities.py::Portfolio",
+          "implementation": "src/strategy/portfolio.py::Portfolio",
           "parameters": []
         }
       ],
       "implementation": [
-        "src/domain/grid/services.py::GridEngine.evaluate",
-        "src/domain/grid/services.py::GridEngine._process_levels",
-        "src/domain/grid/services.py::GridEngine._process_take_profit",
-        "src/domain/grid/entities.py::GridState",
-        "src/domain/grid/value_objects.py::GridTrigger"
+        "src/strategy/grid/engine.py::GridEngine.evaluate",
+        "src/strategy/grid/engine.py::GridEngine._process_levels",
+        "src/strategy/grid/engine.py::GridEngine._process_take_profit",
+        "src/strategy/grid/models.py::GridState",
+        "src/strategy/grid/models.py::GridTrigger"
       ]
     },
     "rebalance": {
@@ -242,7 +242,7 @@
           "title": "目标配置",
           "description": "组合按固定权重持有 4 个标的：红利ETF 25%、黄金ETF 25%、可转债ETF 25%、纳斯达克ETF 25%；网格与再平衡共用同一份总资产配置，保证监控标的一致。",
           "formula": "目标权重之和 = 1",
-          "implementation": "src/domain/allocation/entities.py::AllocationPlan",
+          "implementation": "src/strategy/allocation.py::AllocationPlan",
           "parameters": [
             {
               "name": "红利ETF 目标权重",
@@ -275,7 +275,7 @@
           "title": "触发条件",
           "description": "每日收盘后检查各标的实际权重，当任一标的权重偏离目标权重超过 3 个百分点时触发再平衡。",
           "formula": "|实际权重 − 目标权重| > 3pp\n→ 卖出超配部分，买入低配部分，恢复目标权重",
-          "implementation": "src/application/rebalance/backtest_engine.py::RebalanceBacktester._check_rebalance",
+          "implementation": "src/strategy/rebalance/rules.py::should_rebalance",
           "parameters": [
             {
               "name": "再平衡阈值",
@@ -290,7 +290,7 @@
           "title": "交易成本",
           "description": "每笔成交按 5 个基点（5.00%）计费，成本从组合现金中扣除，已计入净值曲线。",
           "formula": "cost = amount × 5 / 10000",
-          "implementation": "src/application/rebalance/backtest_engine.py::RebalanceBacktester._rebalance",
+          "implementation": "src/strategy/rebalance/rules.py::plan_rebalance_orders",
           "parameters": [
             {
               "name": "交易成本",
@@ -305,15 +305,15 @@
           "title": "资金隔离",
           "description": "再平衡组合拥有独立资金池，只动自己的现金与持仓；与网格组合互不读取、互不修改对方的资金。",
           "formula": "",
-          "implementation": "src/domain/portfolio/entities.py::Portfolio",
+          "implementation": "src/strategy/portfolio.py::Portfolio",
           "parameters": []
         }
       ],
       "implementation": [
-        "src/application/rebalance/backtest_engine.py::RebalanceBacktester._check_rebalance",
-        "src/application/rebalance/backtest_engine.py::RebalanceBacktester._rebalance",
-        "src/domain/portfolio/entities.py::Portfolio",
-        "src/domain/allocation/entities.py::AllocationPlan"
+        "src/strategy/rebalance/rules.py::should_rebalance",
+        "src/strategy/rebalance/rules.py::plan_rebalance_orders",
+        "src/strategy/portfolio.py::Portfolio",
+        "src/strategy/allocation.py::AllocationPlan"
       ]
     }
   }

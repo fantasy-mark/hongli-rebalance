@@ -53,7 +53,7 @@ amount 单位: 元（缺失记 0）
         ├─────────────────────────┬───────────────────────────────
         ▼                         ▼
 ┌───────────────────────┐  ┌──────────────────────────────────┐
-│ Domain（纯规则，无 IO）│  │ Infrastructure（IO）             │
+│ 规则层（纯规则，无 IO）│  │ 适配层（IO）                    │
 │ · PriceAdjustment     │  │ · EastmoneyPriceSource           │
 │ · SourceProfile       │  │ · TencentPriceSource             │
 │ · SourceHealth        │  │ · SinaPriceSource                │
@@ -157,10 +157,10 @@ PriceAdjustment.can_align_by_factor(other)
 ## 10. 配置与扩展
 
 ```python
-from src.infrastructure.price.fallback_provider import FallbackPriceProvider
-from src.infrastructure.price.sources import (
+from src.data.fallback import FallbackPriceProvider
+from src.data.providers import (
     EastmoneyPriceSource, TencentPriceSource, SinaPriceSource)
-from src.application.price.query_service import PriceQueryService
+from src.data.service import PriceQueryService
 
 provider = FallbackPriceProvider(
     sources=[EastmoneyPriceSource(),   # 主

@@ -18,14 +18,14 @@ import unittest
 from datetime import date
 from decimal import Decimal
 
-from src.domain.trading.trade import (
+from src.strategy.ledger.trade import (
     CashFlowType,
     Trade,
     TradeId,
     TradeSide,
     infer_pool,
 )
-from src.domain.trading.ledger import LedgerViolation, TradeLedger
+from src.strategy.ledger.book import LedgerViolation, TradeLedger
 
 
 def make_trade(side, on=date(2024, 1, 2), pool=CashFlowType.REAL,

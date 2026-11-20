@@ -13,15 +13,15 @@ from typing import List, Optional
 
 import pandas as pd
 
-from src.domain.price.entities import AdjustedPriceSeries, AssetCode, AssetType, DataSource, PricePoint
-from src.domain.price.sources import (
+from src.data.models import AdjustedPriceSeries, AssetCode, AssetType, DataSource, PricePoint
+from src.data.sources import (
     PriceAdjustment,
     PriceBasisAligner,
     PriceSourceSelector,
     SourceHealth,
     SourceProfile,
 )
-from src.infrastructure.price.fallback_provider import FallbackPriceProvider
+from src.data.fallback import FallbackPriceProvider
 
 
 # ----------------------------------------------------------------------
@@ -290,8 +290,7 @@ class TestTodayBarRefresh(unittest.TestCase):
 
     def test_planner_refreshes_today_bar(self):
         """缓存末条恰好是今天 -> 需要增量刷新（含该日）"""
-        from src.domain.price.services import PriceCachePlanner
-        from src.domain.price.value_objects import CachePolicy
+        from src.data.cache import CachePolicy, PriceCachePlanner
 
         today = date(2024, 6, 5)          # 周三
         cached = make_series_like([10, 11, 12], end=today)
@@ -306,8 +305,7 @@ class TestTodayBarRefresh(unittest.TestCase):
 
     def test_planner_skips_when_refresh_disabled(self):
         """关闭 refresh_today -> 缓存已覆盖则不刷新"""
-        from src.domain.price.services import PriceCachePlanner
-        from src.domain.price.value_objects import CachePolicy
+        from src.data.cache import CachePolicy, PriceCachePlanner
 
         today = date(2024, 6, 5)
         cached = make_series_like([10, 11, 12], end=today)
@@ -320,8 +318,7 @@ class TestTodayBarRefresh(unittest.TestCase):
 
     def test_planner_history_range_not_refreshed(self):
         """历史区间请求不受 refresh_today 影响"""
-        from src.domain.price.services import PriceCachePlanner
-        from src.domain.price.value_objects import CachePolicy
+        from src.data.cache import CachePolicy, PriceCachePlanner
 
         cached = make_series_like([10, 11, 12], end=date(2024, 6, 5))
 
@@ -346,7 +343,7 @@ class TestTodayBarFill(unittest.TestCase):
             self.sources = []
 
         def fetch(self, code, start_date=None, end_date=None):
-            from src.infrastructure.price.fallback_provider import FetchedPrices
+            from src.data.fallback import FetchedPrices
             frame = make_frame(self.closes, start=self.start)
             return FetchedPrices(frame=frame, source_id='fake',
                                  adjustment=PriceAdjustment.HFQ, probes=())
@@ -360,23 +357,12 @@ class TestTodayBarFill(unittest.TestCase):
             }], index=pd.to_datetime([today]))
             return frame, Decimal(str(self.prev_close))
 
-    def _service(self, provider):
-        from src.application.price.query_service import PriceQueryService
-        from src.domain.price.value_objects import CachePolicy
-
-        return PriceQueryService(
-            repository=FakePriceRepository(None),
-            cache_policy=CachePolicy(overlap_days=0, refresh_today=True),
-            persist_cache=False,
-            price_provider=provider,
-        ), None
-
     def test_appends_today_bar_with_basis_factor(self):
         """
         实时报价为不复权，需按"缓存末值 / 报价昨收"换算到缓存口径
         """
-        from src.application.price.query_service import PriceQueryService
-        from src.domain.price.value_objects import CachePolicy
+        from src.data.service import PriceQueryService
+        from src.data.cache import CachePolicy
 
         today = date.today()
         yesterday = today - timedelta(days=1)
@@ -400,8 +386,8 @@ class TestTodayBarFill(unittest.TestCase):
 
     def test_skips_when_history_already_has_today(self):
         """历史接口已含当日 -> 不重复追加"""
-        from src.application.price.query_service import PriceQueryService
-        from src.domain.price.value_objects import CachePolicy
+        from src.data.service import PriceQueryService
+        from src.data.cache import CachePolicy
 
         today = date.today()
         provider = self.ProviderWithQuote(

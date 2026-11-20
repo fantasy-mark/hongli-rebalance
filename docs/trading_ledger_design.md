@@ -171,8 +171,8 @@ deposit_grid      -> TradeSide.DEPOSIT + CashFlowType.GRID
 ## 6. 使用示例
 
 ```python
-from src.infrastructure.trading.repositories import JsonFileTradeLedgerRepository
-from src.domain.trading.trade import Trade, TradeId, TradeSide, CashFlowType
+from src.strategy.ledger.store import JsonFileTradeLedgerRepository
+from src.strategy.ledger.trade import Trade, TradeId, TradeSide, CashFlowType
 from decimal import Decimal
 from datetime import date
 

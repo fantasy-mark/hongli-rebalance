@@ -11,19 +11,19 @@
 
 ## 分层
 
-| 层 | 模块 | 职责 |
+| 模块 | 文件 | 职责 |
 | --- | --- | --- |
-| domain | `src/domain/chart/overview.py` | 值对象 `ReturnCurve` / `CapitalOccupation`，聚合根 `StrategyOverview`。只表达「画什么」，含不变量校验，不依赖 matplotlib |
-| domain | `src/domain/strategy/spec.py` | 策略规格通用值对象：`StrategySpec`（策略名）/ `StrategyRule`（规则描述 + 实现位置）/ `RuleParameter`（参数） |
-| domain | `src/domain/grid/spec.py` | 由 `GridTrigger` 真实参数**推导**网格规则描述与实现位置 |
-| domain | `src/domain/rebalance/spec.py` | 由 `RebalanceConfig` 真实参数推导再平衡规则描述与实现位置 |
-| application | `src/application/pages/site_builder.py` | 用例 `BuildPagesSite`：跑一次 `CombinedBacktester`，把结果翻译成 `StrategyOverview` + 视图模型（`SummaryView` / `TradeView` / `PositionView` / `StrategyView`） |
-| infrastructure | `src/infrastructure/chart/strategy_overview_renderer.py` | `StrategyOverviewRenderer.render()`：matplotlib 绘制 PNG，配色与版式对齐 main 分支 |
-| infrastructure | `src/infrastructure/pages/repositories.py` | `PagesSiteRepository.save_all()`：把视图模型落盘成 `data/site/*.json`，并调用渲染器 |
-| CLI | `scripts/build_pages.py` | 薄入口，解析参数 → 调用用例 → 调用仓储 |
+| 图表模块 | `src/chart/overview.py` | 值对象 `ReturnCurve` / `CapitalOccupation`，聚合根 `StrategyOverview`。只表达「画什么」，含不变量校验，不依赖 matplotlib |
+| 策略模块 | `src/strategy/spec.py` | 策略规格通用值对象：`StrategySpec`（策略名）/ `StrategyRule`（规则描述 + 实现位置）/ `RuleParameter`（参数） |
+| 策略模块 | `src/strategy/grid/spec.py` | 由 `GridTrigger` 真实参数**推导**网格规则描述与实现位置 |
+| 策略模块 | `src/strategy/rebalance/spec.py` | 由 `RebalanceConfig` 真实参数推导再平衡规则描述与实现位置 |
+| 图表模块 | `src/chart/site.py` | 用例 `BuildPagesSite`：跑一次 `CombinedBacktester`，把结果翻译成 `StrategyOverview` + 视图模型（`SummaryView` / `TradeView` / `PositionView` / `StrategyView`） |
+| 图表模块 | `src/chart/overview_renderer.py` | `StrategyOverviewRenderer.render()`：matplotlib 绘制 PNG，配色与版式对齐 main 分支 |
+| 图表模块 | `src/chart/site_store.py` | `PagesSiteRepository.save_all()`：把视图模型落盘成 `data/site/*.json`，并调用渲染器 |
+| CLI | `scripts/build_pages.py` | 薄入口，解析参数 → 调用用例 → 调用落盘仓储 |
 | 静态资源 | `index.html` / `app.js` / `style.css` / `pages.css` | 纯前端渲染，`fetch` 读 `data/site/*.json` |
 
-依赖方向：`domain ← application ← infrastructure ← scripts`。domain 层无 IO、无第三方绘图库。
+依赖方向：`chart → strategy → data`，CLI 在最外层。规则层（`overview.py` / `spec.py`）无 IO、无第三方绘图库。
 
 ## 策略规格：策略名 / 规则描述 / 规则实现
 
@@ -45,7 +45,7 @@ StrategyRule          # 一条规则 = 描述 + 参数 + 公式 + 实现
 ├── description       # 人读描述（由参数推导）
 ├── formula           # 公式
 ├── parameters        # 规则参数（值）
-└── implementation    # 'src/domain/grid/services.py::GridEngine._process_levels'
+└── implementation    # 'src/strategy/grid/engine.py::GridEngine._process_levels'
 ```
 
 ### 关键约束：描述由参数推导
@@ -149,7 +149,7 @@ data/site/trades.json      回测交易记录（网格 83 笔 + 再平衡 66 笔
   "strategies": {
     "grid":      { "strategy_id": "grid", "name": "复合网格", "summary": "...",
                    "rules": [ { "rule_id": "grid.trigger", "description": "...",
-                                "implementation": "src/domain/grid/services.py::GridEngine.evaluate" } ] },
+                                "implementation": "src/strategy/grid/engine.py::GridEngine.evaluate" } ] },
     "rebalance": { "strategy_id": "rebalance", "name": "阈值再平衡", "rules": [...] }
   }
 }
@@ -197,6 +197,6 @@ python scripts/verify_site.py --url https://fantasy-mark.github.io/hongli-rebala
   与「初始资金 120 万」不完全等价，页面上两者都展示以便核对。
 - **网格步长口径**：当前 `step_ratio = 0.5`，即步长 = 0.5×ATR(120)。
   页面规则描述由该参数推导，改 `step_ratio` 后描述/步长列/回测结果同步变化。
-  若要改成 2×ATR，只需改 `src/application/pages/site_builder.py::default_config`
+  若要改成 2×ATR，只需改 `src/chart/site.py::default_config`
   里的 `step_ratio`（实测：0.5→网格 +1.12% / 83 笔 / 18-22 轮；
   2→网格 +0.40% / 25 笔 / 9-13 轮）。

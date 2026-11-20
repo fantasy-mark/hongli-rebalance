@@ -15,11 +15,11 @@ from datetime import date
 from decimal import Decimal
 
 # 导入领域实体和服务
-from src.application.chart.entities import (
+from src.chart.models import (
     ChartConfig, ChartSeries, ChartStyle, Annotation,
-    SeriesRole, SeriesType
+    SeriesRole
 )
-from src.application.chart.services import ChartRenderer, ChartFactory
+from src.chart.renderer import ChartRenderer, ChartFactory
 
 
 def example_1_create_chart_config():
@@ -118,10 +118,10 @@ def example_2_render_from_backtest():
     print("="*80)
     
     # 先运行回测获取结果
-    from src.application.rebalance.backtest_engine import (
+    from src.strategy.rebalance.backtest import (
         RebalanceConfig, AssetConfig, RebalanceBacktester
     )
-    from src.application.price.query_service import PriceQueryService
+    from src.data.service import PriceQueryService
     
     # 创建再平衡配置（将可转债ETF改为511260）
     config = RebalanceConfig(
@@ -165,7 +165,7 @@ def example_2_render_from_backtest():
     end_d = result.daily_values.index[-1]
     
     # 导入YAxisScale枚举
-    from src.application.chart.entities import YAxisScale
+    from src.chart.models import YAxisScale
     
     chart_config = ChartFactory.create_from_backtest_result(
         backtest_result=result,

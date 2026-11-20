@@ -19,20 +19,21 @@ from typing import List, Optional
 
 import pandas as pd
 
-from src.domain.price.entities import (
+from src.data.models import (
     AdjustedPriceSeries,
     AssetCode,
     AssetType,
     DataSource,
     PricePoint,
 )
-from src.domain.price.value_objects import (
+from src.data.cache import (
     CachePolicy,
+    PriceCachePlanner,
+    PriceSeriesMerger,
     RefreshMode,
     RefreshPlan,
 )
-from src.domain.price.services import PriceCachePlanner, PriceSeriesMerger
-from src.application.price.query_service import PriceQueryService
+from src.data.service import PriceQueryService
 
 
 # ----------------------------------------------------------------------
@@ -108,13 +109,13 @@ class FakeFetcher:
         self.calls: List[Optional[str]] = []
         self.raise_error = False
         if adjustment is None:
-            from src.domain.price.sources import PriceAdjustment
+            from src.data.sources import PriceAdjustment
             adjustment = PriceAdjustment.HFQ
         self.adjustment = adjustment
 
     def fetch(self, code, start_date=None, end_date=None,
               preferred_adjustment=None):
-        from src.infrastructure.price.fallback_provider import FetchedPrices
+        from src.data.fallback import FetchedPrices
 
         self.calls.append(start_date)
         if self.raise_error:
@@ -402,7 +403,7 @@ class TestPriceQueryServiceCache(unittest.TestCase):
             """第一次返回放大 10% 的价格（模拟后复权口径变化）"""
             def fetch(self, code, start_date=None, end_date=None,
                       preferred_adjustment=None):
-                from src.infrastructure.price.fallback_provider import FetchedPrices
+                from src.data.fallback import FetchedPrices
                 calls['n'] += 1
                 series = make_series([11, 12.1, 13.2, 14, 15], code=code)
                 df = series.to_dataframe()
@@ -435,7 +436,7 @@ class TestPriceQueryServiceCache(unittest.TestCase):
             """增量正常返回，但全量重建（start_date=None）失败"""
             def fetch(self, code, start_date=None, end_date=None,
                       preferred_adjustment=None):
-                from src.infrastructure.price.fallback_provider import FetchedPrices
+                from src.data.fallback import FetchedPrices
                 self.calls.append(start_date)
                 if start_date is None:
                     raise RuntimeError("rebuild failed")

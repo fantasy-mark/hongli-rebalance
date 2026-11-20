@@ -1,0 +1,519 @@
+"""
+再平衡策略回测引擎
+
+职责（只编排，不写业务规则）：
+- 逐日推进：取价 -> 判断是否触发 -> 执行调仓 -> 记账 -> 记录快照
+- 交易规则全部在 strategy/rebalance/rules.py（何时调仓、买卖多少）
+"""
+
+from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal
+from typing import Dict, List, Optional, Tuple
+import logging
+
+import pandas as pd
+
+from src.strategy.performance import PerformanceCalculator, ReturnStatistics
+from src.strategy.portfolio import Portfolio
+from src.strategy.rebalance.rules import (
+    RebalanceOrder,
+    initial_build_orders,
+    plan_rebalance_orders,
+    should_rebalance,
+)
+from src.data.service import PriceQueryService
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AssetConfig:
+    """资产配置"""
+    code: str
+    name: str
+    target_weight: Decimal  # 目标权重
+    
+    def __post_init__(self):
+        # 确保target_weight是Decimal
+        if not isinstance(self.target_weight, Decimal):
+            self.target_weight = Decimal(str(self.target_weight))
+        
+        if self.target_weight <= 0 or self.target_weight > 1:
+            raise ValueError(f"权重必须在0-1之间: {self.target_weight}")
+
+
+@dataclass
+class RebalanceConfig:
+    """再平衡配置"""
+    assets: List[AssetConfig]
+    threshold_pp: Decimal = Decimal("3")  # 触发阈值（百分点）
+    initial_capital: Decimal = Decimal("1000000")  # 初始资金100万
+    transaction_cost_bps: Decimal = Decimal("5")  # 交易成本5个基点(0.05%)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    
+    def __post_init__(self):
+        # 验证权重总和
+        total_weight = sum(a.target_weight for a in self.assets)
+        if abs(float(total_weight) - 1.0) > 0.01:
+            raise ValueError(f"权重总和必须为1，当前为{total_weight}")
+    
+    @classmethod
+    def from_allocation(cls,
+                        plan,
+                        threshold_pp: Decimal = Decimal("3"),
+                        initial_capital: Decimal = Decimal("1000000"),
+                        transaction_cost_bps: Decimal = Decimal("5"),
+                        start_date: Optional[date] = None,
+                        end_date: Optional[date] = None) -> 'RebalanceConfig':
+        """
+        从共享的总资产配置创建再平衡配置
+        
+        Args:
+            plan: AllocationPlan 总资产配置（与网格策略共用）
+        """
+        assets = [
+            AssetConfig(code=a.code, name=a.name, target_weight=a.target_weight)
+            for a in plan.allocations
+        ]
+        return cls(
+            assets=assets,
+            threshold_pp=threshold_pp,
+            initial_capital=initial_capital,
+            transaction_cost_bps=transaction_cost_bps,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    
+    @property
+    def asset_codes(self) -> List[str]:
+        return [a.code for a in self.assets]
+    
+    @property
+    def asset_names(self) -> Dict[str, str]:
+        return {a.code: a.name for a in self.assets}
+    
+    @property
+    def target_weights(self) -> Dict[str, Decimal]:
+        return {a.code: a.target_weight for a in self.assets}
+
+
+@dataclass
+class PortfolioSnapshot:
+    """持仓快照"""
+    date: date
+    total_value: Decimal
+    asset_values: Dict[str, Decimal]
+    asset_weights: Dict[str, Decimal]
+    asset_shares: Dict[str, Decimal]
+    cash: Decimal
+    trades: List[RebalanceOrder] = field(default_factory=list)
+    
+    def to_dict(self) -> dict:
+        return {
+            'date': self.date,
+            'total_value': float(self.total_value),
+            'asset_values': {k: float(v) for k, v in self.asset_values.items()},
+            'asset_weights': {k: float(v) for k, v in self.asset_weights.items()},
+            'cash': float(self.cash),
+        }
+
+
+@dataclass
+class BacktestResult:
+    """回测结果"""
+    config: RebalanceConfig
+    snapshots: List[PortfolioSnapshot]
+    all_trades: List[RebalanceOrder]
+    daily_values: pd.DataFrame
+    _statistics: Optional[ReturnStatistics] = field(default=None, repr=False, compare=False)
+    
+    @property
+    def statistics(self) -> ReturnStatistics:
+        """绩效统计（统一口径，由 PerformanceCalculator 计算）"""
+        if self._statistics is None:
+            self._statistics = PerformanceCalculator.calculate(
+                dates=[s.date for s in self.snapshots],
+                values=[s.total_value for s in self.snapshots],
+            )
+        return self._statistics
+    
+    @property
+    def total_return(self) -> Decimal:
+        """总收益率"""
+        return self.statistics.total_return
+    
+    @property
+    def annualized_return(self) -> Decimal:
+        """年化收益率"""
+        return self.statistics.annualized_return
+    
+    @property
+    def max_drawdown(self) -> Tuple[Decimal, date, date]:
+        """最大回撤"""
+        stats = self.statistics
+        return (stats.max_drawdown, stats.max_drawdown_start, stats.max_drawdown_end)
+    
+    @property
+    def volatility(self) -> Decimal:
+        """波动率（年化）"""
+        return self.statistics.volatility
+    
+    @property
+    def sharpe_ratio(self) -> Decimal:
+        """夏普比率（无风险利率3%）"""
+        return self.statistics.sharpe_ratio
+    
+    @property
+    def total_trades(self) -> int:
+        """总交易次数"""
+        return len(self.all_trades)
+    
+    @property
+    def total_transaction_cost(self) -> Decimal:
+        """总交易成本"""
+        return sum(t.cost for t in self.all_trades)
+    
+    def summary(self) -> str:
+        """生成回测摘要"""
+        max_dd, dd_start, dd_end = self.max_drawdown
+        
+        return (
+            f"再平衡策略回测结果\n"
+            f"{'='*60}\n"
+            f"回测期间: {self.snapshots[0].date} ~ {self.snapshots[-1].date}\n"
+            f"初始资金: ¥{self.config.initial_capital:,.0f}\n"
+            f"最终市值: ¥{self.snapshots[-1].total_value:,.0f}\n"
+            f"\n"
+            f"收益指标:\n"
+            f"  累计收益: {self.total_return:.2%}\n"
+            f"  年化收益: {self.annualized_return:.2%}\n"
+            f"  波动率:   {self.volatility:.2%}\n"
+            f"  夏普比率: {self.sharpe_ratio:.2f}\n"
+            f"  最大回撤: {max_dd:.2%} ({dd_start} ~ {dd_end})\n"
+            f"\n"
+            f"交易统计:\n"
+            f"  总交易次数: {self.total_trades}\n"
+            f"  总交易成本: ¥{self.total_transaction_cost:,.2f}\n"
+            f"  成本占比:   {self.total_transaction_cost/self.config.initial_capital:.2%}\n"
+            f"\n"
+            f"资产配置:\n"
+        ) + "\n".join([
+            f"  {self.config.asset_names.get(a.code, a.code)}: {float(a.target_weight)*100:.0f}%"
+            for a in self.config.assets
+        ])
+
+
+class RebalanceBacktester:
+    """
+    再平衡回测引擎
+    
+    策略逻辑：
+    1. 每日收盘后检查各资产权重
+    2. 如果任一资产偏离目标权重超过threshold_pp，触发再平衡
+    3. 再平衡时将所有资产调整到目标权重
+    4. 考虑交易成本
+    """
+    
+    def __init__(self, config: RebalanceConfig,
+                 price_service: Optional[PriceQueryService] = None):
+        self.config = config
+        # 可通过外部注入共享同一实例（复用缓存，避免重复拉取）
+        self.price_service = price_service or PriceQueryService()
+
+        # 日期->收盘价 索引缓存（避免逐日扫描 DataFrame）
+        self._close_index: Optional[Dict[str, Dict[date, Decimal]]] = None
+        self._close_index_source: Optional[int] = None
+        self._price_cache: Dict[str, pd.DataFrame] = {}
+    
+    def run(self) -> BacktestResult:
+        """运行回测"""
+        logger.info(f"开始回测: {len(self.config.assets)}个资产, "
+                   f"阈值={self.config.threshold_pp}pp")
+        
+        # 1. 加载所有资产的价格数据
+        price_data = self._load_all_prices()
+        self._close_index = None
+        self._close_index_source = None
+        
+        # 2. 确定回测时间范围
+        start_date, end_date = self._determine_date_range(price_data)
+        trading_days = self._get_trading_days(price_data, start_date, end_date)
+        
+        logger.info(f"回测期间: {start_date} ~ {end_date}, 共{len(trading_days)}个交易日")
+        
+        # 3. 初始化持仓
+        snapshots = []
+        all_trades = []
+        # 组合（独立于网格策略的持仓与现金）
+        portfolio = Portfolio(
+            portfolio_id='rebalance',
+            name='再平衡组合',
+            cash=Decimal(str(self.config.initial_capital)),
+        )
+        cash = portfolio.cash
+        
+        # 4. 逐日回测
+        for i, current_date in enumerate(trading_days):
+            # 获取当日收盘价
+            prices = self._get_prices_on_date(current_date, price_data)
+            
+            if not prices:
+                continue
+            
+            # 计算当前持仓市值（由组合统一维护）
+            asset_values = portfolio.asset_values(prices)
+            for code in self.config.asset_codes:
+                asset_values.setdefault(code, Decimal("0"))
+
+            total_asset_value = sum(asset_values.values())
+            total_value = total_asset_value + cash
+            
+            # 计算当前权重
+            asset_weights = {}
+            if total_value > 0:
+                for code in self.config.asset_codes:
+                    asset_weights[code] = asset_values.get(code, Decimal("0")) / total_value
+            else:
+                for code in self.config.asset_codes:
+                    asset_weights[code] = Decimal("0")
+            
+            # 检查是否需要再平衡
+            trades_today = []
+            if i == 0:
+                # 第一天：初始建仓
+                trades_today = self._initial_build(prices, cash, current_date)
+            elif self._should_rebalance(asset_weights, prices, total_value):
+                # 触发再平衡
+                trades_today = self._rebalance(
+                    portfolio, asset_values, prices,
+                    total_value, cash, current_date
+                )
+            
+            # 执行交易（记账与不变量校验由 Portfolio 负责）
+            if trades_today:
+                for trade in trades_today:
+                    if trade.action == 'buy':
+                        portfolio.buy(trade.asset_code, trade.shares,
+                                      trade.amount, trade.cost)
+                    else:  # sell
+                        portfolio.sell(trade.asset_code, trade.shares,
+                                       trade.amount, trade.cost)
+                cash = portfolio.cash
+                
+                all_trades.extend(trades_today)
+                
+                # 重新计算交易后的持仓
+                asset_values = portfolio.asset_values(prices)
+                for code in self.config.asset_codes:
+                    asset_values.setdefault(code, Decimal("0"))
+
+                total_asset_value = sum(asset_values.values())
+                total_value = total_asset_value + cash
+                
+                asset_weights = {}
+                if total_value > 0:
+                    for code in self.config.asset_codes:
+                        asset_weights[code] = asset_values.get(code, Decimal("0")) / total_value
+            
+            # 记录快照
+            snapshot = PortfolioSnapshot(
+                date=current_date,
+                total_value=total_value,
+                asset_values=asset_values,
+                asset_weights=asset_weights,
+                asset_shares=portfolio.position_snapshot(),
+                cash=cash,
+                trades=trades_today,
+            )
+            snapshots.append(snapshot)
+        
+        # 5. 构建每日价值序列
+        daily_values = pd.DataFrame([
+            {
+                'date': s.date,
+                'total_value': float(s.total_value),
+                **{f'{code}_value': float(s.asset_values.get(code, 0)) 
+                   for code in self.config.asset_codes},
+                **{f'{code}_weight': float(s.asset_weights.get(code, 0)) 
+                   for code in self.config.asset_codes},
+            }
+            for s in snapshots
+        ])
+        daily_values.set_index('date', inplace=True)
+        
+        result = BacktestResult(
+            config=self.config,
+            snapshots=snapshots,
+            all_trades=all_trades,
+            daily_values=daily_values,
+        )
+        
+        logger.info(f"回测完成: 累计收益{result.total_return:.2%}, "
+                   f"交易{result.total_trades}次")
+        
+        return result
+    
+    def _load_all_prices(self) -> Dict[str, pd.DataFrame]:
+        """加载所有资产的价格数据"""
+        price_data = {}
+        
+        for asset in self.config.assets:
+            try:
+                df = self.price_service.get_adjusted_prices(
+                    asset.code,
+                    use_cache=True
+                )
+                if not df.empty:
+                    price_data[asset.code] = df
+                    logger.info(f"加载 {asset.code} 价格数据: {len(df)}条")
+                else:
+                    logger.warning(f"{asset.code} 无价格数据")
+            except Exception as e:
+                logger.error(f"加载 {asset.code} 价格失败: {e}")
+        
+        return price_data
+    
+    def _determine_date_range(self, price_data: Dict[str, pd.DataFrame]) -> Tuple[date, date]:
+        """确定回测时间范围（所有资产的共同日期范围）"""
+        if not price_data:
+            raise ValueError("没有可用的价格数据")
+        
+        # 找到所有资产都有的最早日期
+        start_dates = []
+        end_dates = []
+        for df in price_data.values():
+            min_date = df.index.min()
+            max_date = df.index.max()
+            # 确保是date对象
+            if hasattr(min_date, 'date'):
+                start_dates.append(min_date.date())
+                end_dates.append(max_date.date())
+            else:
+                start_dates.append(min_date)
+                end_dates.append(max_date)
+        
+        start_date = max(start_dates)  # 最晚的开始日期
+        end_date = min(end_dates)      # 最早的结束日期
+        
+        if self.config.start_date:
+            start_date = max(start_date, self.config.start_date)
+        if self.config.end_date:
+            end_date = min(end_date, self.config.end_date)
+        
+        return start_date, end_date
+    
+    @staticmethod
+    def _index_dates_and_prices(price_data: Dict[str, pd.DataFrame]):
+        """
+        一次性建立日期索引，避免逐日逐资产扫描 DataFrame
+
+        Returns:
+            (calendars, closes)
+            calendars: code -> set[date]
+            closes:    code -> dict[date, Decimal]
+        """
+        calendars: Dict[str, set] = {}
+        closes: Dict[str, Dict[date, Decimal]] = {}
+
+        for code, df in price_data.items():
+            index_dates = pd.to_datetime(df.index).date
+            calendars[code] = set(index_dates)
+
+            close_series = df['close']
+            closes[code] = {
+                d: Decimal(str(v))
+                for d, v in zip(index_dates, close_series.tolist())
+            }
+
+        return calendars, closes
+
+    def _get_trading_days(self, price_data: Dict[str, pd.DataFrame],
+                          start_date: date, end_date: date) -> List[date]:
+        """获取交易日列表（所有资产都有价格的日期）"""
+        if not price_data:
+            return []
+
+        calendars, _ = self._index_dates_and_prices(price_data)
+
+        # 取第一个资产的交易日历作为基准，并限定区间
+        first_code = list(price_data.keys())[0]
+        base_days = sorted(
+            d for d in calendars[first_code] if start_date <= d <= end_date
+        )
+
+        # 其他资产必须同样具备该日数据（集合求交，O(1) 判定）
+        other_calendars = [calendars[c] for c in price_data.keys() if c != first_code]
+        if not other_calendars:
+            return base_days
+
+        return [d for d in base_days if all(d in cal for cal in other_calendars)]
+    
+    def _get_prices_on_date(self, target_date: date,
+                            price_data: Dict[str, pd.DataFrame]) -> Dict[str, Decimal]:
+        """获取指定日期所有资产的收盘价（使用缓存索引）"""
+        if self._close_index is None or self._close_index_source != id(price_data):
+            _, self._close_index = self._index_dates_and_prices(price_data)
+            self._close_index_source = id(price_data)
+
+        prices = {}
+        for code in price_data.keys():
+            close = self._close_index[code].get(target_date)
+            if close is None:
+                logger.warning(f"未找到 {code} 在 {target_date} 的价格")
+                continue
+            prices[code] = close
+
+        return prices
+    
+    def _should_rebalance(self, current_weights: Dict[str, Decimal],
+                          prices: Dict[str, Decimal],
+                          total_value: Decimal) -> bool:
+        """检查是否需要再平衡（规则见 strategy/rebalance/rules.py）"""
+        triggered = should_rebalance(
+            self.config.target_weights,
+            current_weights,
+            self.config.threshold_pp,
+        )
+
+        if triggered:
+            for code, target in self.config.target_weights.items():
+                current = current_weights.get(code, Decimal("0"))
+                deviation = abs(current - target)
+                if deviation > self.config.threshold_pp / Decimal("100"):
+                    logger.debug(
+                        f"触发再平衡: {code} 当前{current:.2%} vs 目标{target:.2%}, "
+                        f"偏离{deviation:.2%}"
+                    )
+                    break
+
+        return triggered
+
+    def _initial_build(self, prices: Dict[str, Decimal],
+                       cash: Decimal,
+                       build_date: date) -> List[RebalanceOrder]:
+        """初始建仓（按目标权重分配初始资金）"""
+        return initial_build_orders(
+            target_weights=self.config.target_weights,
+            prices=prices,
+            cash=cash,
+            cost_bps=self.config.transaction_cost_bps,
+            on_date=build_date,
+        )
+
+    def _rebalance(self, portfolio: Portfolio,
+                   current_values: Dict[str, Decimal],
+                   prices: Dict[str, Decimal],
+                   total_value: Decimal,
+                   cash: Decimal,
+                   rebalance_date: date) -> List[RebalanceOrder]:
+        """执行再平衡（先卖超配，再买低配）"""
+        return plan_rebalance_orders(
+            target_weights=self.config.target_weights,
+            current_values=current_values,
+            prices=prices,
+            total_value=total_value,
+            cost_bps=self.config.transaction_cost_bps,
+            on_date=rebalance_date,
+        )

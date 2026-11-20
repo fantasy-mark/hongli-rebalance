@@ -21,9 +21,9 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 )
 
-from src.application.price.query_service import PriceQueryService
-from src.domain.price.entities import AssetCode, AdjustedPriceSeries
-from src.domain.price.services import PriceCalculator
+from src.data.service import PriceQueryService
+from src.data.models import AssetCode, AdjustedPriceSeries
+from src.data.indicators import PriceCalculator
 
 
 def example_1_basic_price_query():

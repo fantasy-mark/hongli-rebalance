@@ -6,34 +6,38 @@
 
 ### 1. 核心成果
 
-#### 📁 领域层 (Domain Layer)
-- `src/domain/price/entities.py` - 核心实体
+#### 📁 数据模块 `src/data/`
+- `src/data/models.py` - 核心模型
   - `AssetCode` - 资产代码值对象
   - `PricePoint` - 价格点值对象
   - `AdjustedPriceSeries` - 价格序列聚合根
-  
-- `src/domain/price/value_objects.py` - 值对象
+
+- `src/data/value_objects.py` - 值对象
   - `ReturnMetrics` - 收益率指标
-  - `DateRange` - 日期范围
   - `TechnicalIndicators` - 技术指标
-  
-- `src/domain/price/services.py` - 领域服务
+
+- `src/data/indicators.py` - 计算规则
   - `PriceCalculator` - 纯业务逻辑计算器
 
-#### 📁 应用层 (Application Layer)
-- `src/application/price/query_service.py` - 应用服务
-  - `PriceQueryService` - 编排领域对象完成用例
+- `src/data/cache.py` - 缓存规则
+  - `PriceCachePlanner` / `PriceSeriesMerger` - 刷新计划与增量合并
 
-#### 📁 基础设施层 (Infrastructure Layer)
-- `src/infrastructure/price/repositories.py` - 仓储实现
+- `src/data/sources.py` / `providers.py` / `fallback.py` - 数据源规则与适配器
+  - `PriceSourceSelector` / `PriceBasisAligner` - 选源与复权口径对齐
+  - `FallbackPriceProvider` - 主备容灾
+
+- `src/data/service.py` - 编排
+  - `PriceQueryService` - 编排缓存与数据源完成用例
+
+- `src/data/cache_store.py` - 缓存落盘
   - `InMemoryPriceRepository` - 内存缓存
   - `JsonFilePriceRepository` - JSON文件存储
-- `src/infrastructure/adjusted_price_provider.py` - 数据源适配器（已修复为hfq）
+
 
 #### 📁 示例和文档
 - `examples/ddd_price_model_demo.py` - 6个完整使用示例
 - `docs/ddd_price_model_design.md` - 详细设计文档
-- `docs/adjusted_price_provider_usage.md` - 使用指南
+- `docs/data_api_guide.md` - 数据获取 API 指南
 
 ---
 
@@ -240,8 +244,8 @@ latest = service.get_latest_price("515180")
 ## 📝 与原有系统的关系
 
 ### 保留的部分
-- `adjusted_price_provider.py` - 作为基础设施层的数据源适配器
-- `price_data_sources.md` - 数据源文档仍然有效
+- 多源容灾与后复权口径（现由 `src/data/providers.py` + `src/data/fallback.py` 承担）
+- `docs/price_sources_design.md` - 数据源文档仍然有效
 
 ### 新增的价值
 - **领域模型** - 清晰的业务概念和规则
@@ -249,15 +253,11 @@ latest = service.get_latest_price("515180")
 - **仓储抽象** - 灵活的存储策略
 - **完整的测试示例** - 6个场景全覆盖
 
-### 迁移建议
-现有代码可以逐步迁移到新模型：
+### 使用方式
+统一从数据模块的服务入口取数：
 ```python
-# 旧方式
-from src.infrastructure.adjusted_price_provider import fetch_adjusted_kline
-df = fetch_adjusted_kline("515180")
+from src.data.service import PriceQueryService
 
-# 新方式（推荐）
-from src.application.price.query_service import PriceQueryService
 service = PriceQueryService()
 df = service.get_adjusted_prices("515180")
 ```

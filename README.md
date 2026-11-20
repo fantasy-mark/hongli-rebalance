@@ -25,52 +25,67 @@ pip install pandas akshare requests
 ### 基本使用
 
 ```python
-from src.infrastructure.adjusted_price_provider import fetch_adjusted_kline
+from src.data.service import PriceQueryService
 
-# 获取ETF后复权数据
-df = fetch_adjusted_kline("515180", start_date="2023-01-01")
+service = PriceQueryService()
+
+# 获取后复权 K 线（命中缓存时只补增量）
+df = service.get_adjusted_prices("515180", start_date="2023-01-01")
 
 # 查看数据
 print(df.head())
 print(f"数据来源: {df['source'].iloc[0]}")
 
-# 获取最新价格
-price, source = get_latest_adjusted_price("515180")
-print(f"最新收盘价: {price:.3f}")
+# 最新价格
+latest = service.get_latest_price("515180")
+print(f"最新收盘价: {latest['close']}")
 ```
 
 ---
 
 ## 项目结构
 
+按**业务模块**划分，每个模块内部再按职责分层（规则 / 编排 / 适配），
+依赖方向单向：`chart → strategy → data`。
+
 ```
 rebalance/
 ├── src/
-│   ├── domain/
-│   │   ├── price/          # 价格上下文（实体/值对象/领域服务）
-│   │   ├── allocation/     # ★ 总资产配置（共享内核）
-│   │   ├── performance/    # ★ 绩效统计（共享内核）
-│   │   ├── trading/        # ★ 交易内核（整手取整）
-│   │   ├── rebalance/      # 再平衡上下文
-│   │   └── grid/           # ★ 网格上下文
-│   ├── application/
-│   │   ├── price/          # PriceQueryService
-│   │   ├── rebalance/      # RebalanceBacktester
-│   │   ├── grid/           # ★ GridBacktester / GridChartRenderer / CombinedBacktester
-│   │   └── chart/          # ★ 图表（由领域层迁出，属技术关注点）
-│   └── infrastructure/
-│       ├── price/          # 价格仓储
-│       ├── grid/           # ★ 网格状态仓储
-│       └── adjusted_price_provider.py
-├── tests/
-│   ├── test_price_domain.py
-│   └── test_grid_domain.py # ★ 网格策略测试（离线）
-├── examples/
-│   ├── ddd_price_model_demo.py
-│   └── grid_strategy_demo.py  # ★ 网格策略示例
-└── docs/
-    └── grid_strategy_ddd_design.md  # ★ 网格策略设计文档
+│   ├── data/                 # 数据模块：数据获取源 + 缓存
+│   │   ├── models.py         # 价格聚合根与值对象
+│   │   ├── indicators.py     # 收益率 / 技术指标计算
+│   │   ├── cache.py          # 缓存策略 + 刷新规划 + 增量合并
+│   │   ├── sources.py        # 数据源规则（复权口径 / 选源 / 对齐）
+│   │   ├── providers.py      # 数据源适配器（东财 / 腾讯 / 新浪 / 实时）
+│   │   ├── fallback.py       # 主备容灾：探测 + 降级
+│   │   ├── adjusted.py       # 后复权计算（分红再投资）
+│   │   ├── cache_store.py    # 价格缓存落盘（内存 / JSON）
+│   │   └── service.py        # PriceQueryService（对外统一入口）
+│   ├── strategy/             # 策略模块：交易策略 + 规则
+│   │   ├── allocation.py     # 总资产配置（两策略共用）
+│   │   ├── portfolio.py      # 组合与持仓（两策略隔离）
+│   │   ├── performance.py    # 统一绩效口径
+│   │   ├── spec.py           # 策略规格（名 → 规则 → 实现）
+│   │   ├── ledger/           # 交易流水账本
+│   │   ├── grid/             # 网格策略（models / engine / backtest / spec）
+│   │   ├── rebalance/        # 再平衡策略（rules / backtest / spec）
+│   │   └── combined.py       # 组合回测（持仓隔离）
+│   └── chart/                # 图表模块：图片 + 表格 + 网页
+│       ├── models.py         # 图表模型
+│       ├── renderer.py       # 图片生成器（通用曲线图）
+│       ├── overview.py       # 策略全景图模型
+│       ├── overview_renderer.py  # 图片生成器（全景图）
+│       ├── grid_chart.py     # 图片生成器（网格多面板）
+│       ├── tables.py         # 表格数据（触发日志 / 成交明细）
+│       ├── site.py           # 网页生成器（视图模型 + 用例）
+│       └── site_store.py     # 站点产物落盘
+├── tests/                    # 单元测试（9 个文件，245 个用例）
+├── examples/                 # 使用示例
+├── scripts/                  # build_pages.py / verify_site.py
+└── docs/                     # 设计文档
 ```
+
+详见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)。
 
 ---
 
@@ -89,9 +104,9 @@ rebalance/
 
 ```python
 from decimal import Decimal
-from src.application.grid.grid_backtester import GridBacktester, GridConfig
-from src.domain.allocation.entities import AllocationPlan
-from src.domain.grid.value_objects import GridTrigger
+from src.strategy.grid.backtest import GridBacktester, GridConfig
+from src.strategy.allocation import AllocationPlan
+from src.strategy.grid.models import GridTrigger
 
 # 总资产配置（再平衡与网格共用）
 plan = AllocationPlan.equal_weight(
@@ -113,15 +128,16 @@ config = GridConfig.from_allocation(
 result = GridBacktester(config).run()
 print(result.summary())
 
-# 触发日志：资产代码 / 名称 / 触发日期 / 交易类型（开仓/加仓/减仓/止盈）
-from src.application.grid.grid_chart import GridChartRenderer
-print(GridChartRenderer.trigger_log(result))
+# 表格数据：触发日志（资产代码 / 名称 / 触发日期 / 交易类型）
+from src.chart.tables import grid_trigger_log, grid_trade_table
+print(grid_trigger_log(result))
+print(grid_trade_table(result))
 ```
 
 组合回测（共享总资产配置 + 持仓隔离）：
 
 ```python
-from src.application.grid.combined_backtester import CombinedBacktester, CombinedConfig
+from src.strategy.combined import CombinedBacktester, CombinedConfig
 
 combined = CombinedBacktester(
     CombinedConfig(
@@ -138,15 +154,14 @@ print(combined.summary())
 
 ---
 
-## 模块对比
+## 数据源对比
 
-| 特性 | `adjusted_price_provider.py` | `quote_providers.py` |
-|------|------------------------------|---------------------|
-| **用途** | 历史K线、图表、技术分析 | 实时报价、账本成本 |
-| **价格口径** | 后复权（qfw） | 不复权 |
-| **数据长度** | 全历史（东财）或~641根（腾讯） | 当日实时 |
-| **适用场景** | 回测、收益率计算、曲线绘制 | 交易执行、持仓估值 |
-| **资产类型** | ETF + 个股 | ETF + 个股 + 债券 |
+| 特性 | 东财（主） | 腾讯（备） | 新浪（兜底） | 实时报价 |
+|------|-----------|-----------|-------------|---------|
+| **用途** | 历史K线 | 历史K线 | 历史K线 | 补齐当日 |
+| **价格口径** | 后复权 | 后复权 | 不复权（需对齐） | 不复权（需换算） |
+| **数据长度** | 全历史 | ~640 根 | 全历史 | 当日 1 根 |
+| **适用场景** | 回测、收益率计算、曲线绘制 | 主源降级 | 兜底 | 当日 bar 补齐 |
 
 ---
 
@@ -177,50 +192,53 @@ print(combined.summary())
 
 ## API 参考
 
-### 主要函数
+统一入口是 `PriceQueryService`：
 
-#### `fetch_adjusted_kline(code, start_date=None, end_date=None, adjust_type='qfw')`
+#### `get_adjusted_prices(code, start_date=None, end_date=None, use_cache=True)`
 
-获取后复权K线数据。
+获取后复权 K 线数据。
 
 **参数：**
-- `code` (str): 6位证券代码，如 `'515180'`
+- `code` (str): 6 位证券代码，如 `'515180'`
 - `start_date` (str, optional): 起始日期 `'YYYY-MM-DD'`
 - `end_date` (str, optional): 结束日期 `'YYYY-MM-DD'`
-- `adjust_type` (str): `'qfw'`（前复权）或 `''`（不复权）
+- `use_cache` (bool): 是否走缓存（默认 True，命中时只补增量）
 
 **返回：**
-- `pd.DataFrame`: 索引为datetime，列包括 open/high/low/close/volume/amount/source
+- `pd.DataFrame`: 索引为日期，列包括 open/high/low/close/volume/amount/source
 
-#### `get_latest_adjusted_price(code)`
+#### `calculate_returns(code, start_date=None, end_date=None)`
 
-获取最新后复权收盘价。
+计算收益率指标，返回 `ReturnMetrics`（累计 / 年化 / 波动率 / 夏普 / 最大回撤）。
 
-**返回：**
-- `Tuple[float, str]`: (价格, 数据来源)
+#### `get_latest_price(code)`
+
+获取最新价格与涨跌幅，返回 `Dict`。
 
 ---
 
 ## 运行测试
 
 ```bash
-python tests/test_adjusted_price_provider.py
+python -m pytest tests/ -v
 ```
 
 测试内容包括：
-- ✅ ETF后复权数据获取
-- ✅ 个股后复权数据（含质量审计）
-- ✅ 日期范围过滤
-- ✅ 获取最新价格
-- ✅ 批量获取多个资产
-- ✅ 错误处理
+- ✅ 价格模型、收益率与技术指标
+- ✅ 缓存规划 / 增量合并 / 接缝校验
+- ✅ 数据源选择 / 复权口径对齐 / 主备降级
+- ✅ 网格规则与回测（离线）
+- ✅ 交易账本与持仓不变量
+- ✅ 站点视图模型与全景图渲染
 
 ---
 
 ## 文档
 
-- 📖 [详细使用指南](docs/adjusted_price_provider_usage.md)
-- 📋 [数据源清单](price_data_sources.md)
+- 📖 [数据获取 API 指南](docs/data_api_guide.md)
+- 📖 [价格缓存设计](docs/price_cache_design.md)
+- 📖 [数据源容灾设计](docs/price_sources_design.md)
+- 📖 [项目结构](PROJECT_STRUCTURE.md)
 
 ---
 

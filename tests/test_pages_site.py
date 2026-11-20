@@ -16,13 +16,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.domain.chart.overview import (
+from src.chart.overview import (
     CapitalOccupation,
     CurveRole,
     ReturnCurve,
     StrategyOverview,
 )
-from src.domain.grid.value_objects import GridPriceBasis, GridTrigger
+from src.strategy.grid.models import GridPriceBasis, GridTrigger
 
 
 D1, D2, D3 = date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)
@@ -310,7 +310,7 @@ def _stub_combined_result():
 class TestBuildPagesSite:
     @pytest.fixture()
     def site_data(self):
-        from src.application.pages.site_builder import BuildPagesSite
+        from src.chart.site import BuildPagesSite
 
         result = _stub_combined_result()
         builder = BuildPagesSite(config=result.config,
@@ -381,7 +381,7 @@ class TestRendererSmoke:
         matplotlib = pytest.importorskip("matplotlib")
         matplotlib.use("Agg")
 
-        from src.infrastructure.chart.strategy_overview_renderer import (
+        from src.chart.overview_renderer import (
             StrategyOverviewRenderer,
         )
 
@@ -392,7 +392,7 @@ class TestRendererSmoke:
         assert out.stat().st_size > 1000
 
     def test_pct_to_log_handles_minus_100(self):
-        from src.infrastructure.chart.strategy_overview_renderer import pct_to_log
+        from src.chart.overview_renderer import pct_to_log
 
         assert pct_to_log(0) == pytest.approx(0.0)
         assert pct_to_log(100) == pytest.approx(0.6931, abs=1e-3)

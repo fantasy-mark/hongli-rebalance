@@ -28,22 +28,23 @@ import matplotlib.dates as mdates
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-from src.application.grid.grid_backtester import (
+from src.strategy.grid.backtest import (
     GridAssetConfig,
     GridBacktester,
     GridConfig,
 )
-from src.application.grid.grid_chart import GridChartRenderer
-from src.application.grid.combined_backtester import (
+from src.chart.grid_chart import GridChartRenderer
+from src.chart.tables import grid_trigger_log
+from src.strategy.combined import (
     CombinedBacktester,
     CombinedConfig,
 )
-from src.application.rebalance.backtest_engine import (
+from src.strategy.rebalance.backtest import (
     AssetConfig,
     RebalanceConfig,
 )
-from src.domain.allocation.entities import AllocationPlan
-from src.domain.grid.value_objects import GridPriceBasis, GridTrigger
+from src.strategy.allocation import AllocationPlan
+from src.strategy.grid.models import GridPriceBasis, GridTrigger
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,7 +100,7 @@ def example_1_grid_backtest():
     print(result.summary())
 
     print("\n网格触发日志:")
-    print(GridChartRenderer.trigger_log(result))
+    print(grid_trigger_log(result))
 
     return result
 
@@ -183,7 +184,7 @@ def example_4_with_take_profit():
 
     if result.trades:
         print("\n网格触发日志:")
-        print(GridChartRenderer.trigger_log(result))
+        print(grid_trigger_log(result))
 
     # 输出带买卖点的图表
     output = GridChartRenderer.render(

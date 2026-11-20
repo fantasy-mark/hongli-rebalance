@@ -32,8 +32,8 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from src.application.pages.site_builder import BuildPagesSite, default_config
-from src.infrastructure.pages.repositories import PagesSiteRepository
+from src.chart.site import BuildPagesSite, default_config
+from src.chart.site_store import PagesSiteRepository
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
           f"{summary.grid.extra['total_rounds']} 轮完成)")
     print(f"  占用峰值: ¥{float(site.overview.peak_occupation):,.0f}")
 
-    from src.infrastructure.chart.strategy_overview_renderer import (
+    from src.chart.overview_renderer import (
         StrategyOverviewRenderer,
     )
 

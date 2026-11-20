@@ -11,17 +11,17 @@
 - 数据源不可用 → 降级用缓存，不影响回测
 - 后复权价格**被重算**（分红除权）→ 自动识别并全量重建
 
-## 2. 分层职责
+## 2. 分层职责（均在数据模块 `src/data/` 内）
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│ Application: PriceQueryService                              │
+│ 编排层: PriceQueryService (service.py)                      │
 │   编排：读缓存 → 问规划器 → 按计划拉取 → 合并 → 回写        │
 └────────────────────────────────────────────────────────────┘
         │ 调用（只做编排，不做判断）
         ▼
 ┌────────────────────────────────────────────────────────────┐
-│ Domain（纯业务规则，无 IO）                                 │
+│ 规则层（纯业务规则，无 IO）                                 │
 │  · AdjustedPriceSeries.covers / merged_with                 │
 │      / overlap_close_deviation        （聚合根行为）        │
 │  · PriceCachePlanner.plan(...)        → RefreshPlan         │
@@ -31,10 +31,10 @@
         │ 依赖抽象
         ▼
 ┌────────────────────────────────────────────────────────────┐
-│ Infrastructure                                              │
+│ 适配层                                                       │
 │  · PriceSeriesRepository（端口，含"完整历史"标记能力）      │
 │    - InMemoryPriceRepository / JsonFilePriceRepository      │
-│  · adjusted_price_provider: 区间下推到数据源                │
+│  · providers: 区间下推到数据源（东财 / 腾讯 / 新浪）        │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -143,9 +143,9 @@ fetch_start = 缓存末日 - overlap_days      （overlap_days 只为接缝校�
 
 ### 4.4 数据源区间下推
 
-`fetch_adjusted_kline` 底层把 `start_date`/`end_date` 转为 `YYYYMMDD`
-传给 `ak.fund_etf_hist_em` / `ak.stock_zh_a_hist`，
-使增量请求真正只下载尾部区间（实测：增量 44 条 vs 全量 1668 条）。
+`EastmoneyPriceSource.fetch()` 底层把 `start_date`/`end_date` 转为 `YYYYMMDD`
+传给 `ak.fund_etf_hist_em`，使增量请求真正只下载尾部区间
+（实测：增量 44 条 vs 全量 1668 条）。
 
 ### 4.5 反序列化性能
 
@@ -156,8 +156,8 @@ JSON 仓储改为**紧凑数组 + Decimal 存字符串**，并直接用 `date.fr
 ## 5. 使用
 
 ```python
-from src.domain.price.value_objects import CachePolicy
-from src.application.price.query_service import PriceQueryService
+from src.data.value_objects import CachePolicy
+from src.data.service import PriceQueryService
 
 # 默认：JSON 文件缓存（data/price_cache），跨进程复用
 service = PriceQueryService()

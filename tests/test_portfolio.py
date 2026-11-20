@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import unittest
 from decimal import Decimal
 
-from src.domain.portfolio.entities import Portfolio, Position
+from src.strategy.portfolio import Portfolio, Position
 
 
 class TestPosition(unittest.TestCase):
@@ -174,8 +174,8 @@ class TestPortfolioIsolation(unittest.TestCase):
 
     def test_grid_and_rebalance_use_distinct_portfolios(self):
         """网格策略持有自己的 Portfolio（与再平衡组合不同实例）"""
-        from src.domain.grid.entities import GridStrategy
-        from src.domain.grid.value_objects import GridTrigger
+        from src.strategy.grid.models import GridStrategy
+        from src.strategy.grid.models import GridTrigger
 
         strategy = GridStrategy(
             name="网格",

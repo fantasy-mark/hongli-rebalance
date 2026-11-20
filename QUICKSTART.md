@@ -10,7 +10,7 @@ pip install pandas akshare requests
 ### 基本用法
 
 ```python
-from src.application.price.query_service import PriceQueryService
+from src.data.service import PriceQueryService
 
 # 创建服务
 service = PriceQueryService()
@@ -104,10 +104,10 @@ if indicators:
 
 ## 📖 更多文档
 
-- [详细设计文档](docs/ddd_price_model_design.md)
-- [实现总结](docs/ddd_implementation_summary.md)
+- [项目结构](PROJECT_STRUCTURE.md)
+- [价格模型设计](docs/ddd_price_model_design.md)
+- [价格缓存设计](docs/price_cache_design.md)
 - [使用示例](examples/ddd_price_model_demo.py)
-- [数据源说明](price_data_sources.md)
 
 ---
 

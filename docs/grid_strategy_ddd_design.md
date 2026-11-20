@@ -277,46 +277,44 @@ Portfolio (聚合根，共享内核)
 
 ```
 src/
-├── domain/
-│   ├── allocation/                ★ 新增（共享内核）
-│   │   └── entities.py             # AllocationPlan(聚合根), AssetAllocation
-│   ├── grid/                       ★ 新增
-│   │   ├── entities.py             # GridStrategy(聚合根), GridState, floor_to_lot
-│   │   ├── value_objects.py        # GridTrigger, GridCostModel, GridMarketSnapshot,
-│   │   │                           # GridDecision, GridOrder, GridTranche, GridTradeType, 枚举
-│   │   └── services.py             # GridEngine(领域服务)
-│   ├── performance/                ★ 新增（共享内核）
-│   │   └── value_objects.py         # ReturnStatistics + PerformanceCalculator
-│   ├── trading/                    ★ 新增（共享内核）
-│   │   └── value_objects.py         # LotSize（整手取整）
-│   └── price/
-│       └── services.py             ★ 扩展: calculate_atr_series / calculate_atr /
-│                                       calculate_prior_low_series / calculate_prior_low
-├── application/
+├── strategy/                        ★ 策略模块
+│   ├── allocation.py                # AllocationPlan(聚合根), AssetAllocation（共享内核）
+│   ├── portfolio.py                 # Portfolio / Position（共享内核，持仓隔离）
+│   ├── performance.py               # ReturnStatistics + PerformanceCalculator（共享内核）
+│   ├── ledger/values.py             # LotSize（整手取整，共享内核）
+│   ├── grid/
+│   │   ├── models.py                # GridStrategy(聚合根), GridState, floor_to_lot,
+│   │   │                            # GridTrigger, GridCostModel, GridMarketSnapshot,
+│   │   │                            # GridDecision, GridOrder, GridTranche, GridTradeType, 枚举
+│   │   ├── engine.py                # GridEngine（全部网格规则）
+│   │   ├── backtest.py              # GridConfig / GridBacktester / GridBacktestResult
+│   │   └── spec.py                  # 网格策略规格（描述由参数推导）
 │   ├── rebalance/
-│   │   └── backtest_engine.py      ★ 扩展: RebalanceConfig.from_allocation
-│   ├── chart/                      ★ 新增（由领域层迁出）
-│   │   ├── entities.py             # ChartConfig, ChartSeries, ChartMarkerGroup ...
-│   │   └── services.py             # ChartRenderer, ChartFactory
-│   └── grid/                       ★ 新增
-│       ├── grid_backtester.py      # GridConfig / GridBacktester / GridBacktestResult
-│       ├── grid_chart.py           # GridChartRenderer（多面板图 + 触发日志）
-│       └── combined_backtester.py  # CombinedBacktester（共享配置，持仓隔离）
-└── infrastructure/
-    └── grid/                       ★ 新增
-        └── repositories.py         # GridStateRepository / InMemory / JsonFile
+│   │   ├── rules.py                 # 再平衡规则（触发 / 建仓 / 调仓）
+│   │   ├── backtest.py              # RebalanceConfig / RebalanceBacktester
+│   │   └── spec.py                  # 再平衡策略规格
+│   └── combined.py                  # CombinedBacktester（共享配置，持仓隔离）
+├── data/                            ★ 数据模块
+│   ├── indicators.py                # PriceCalculator：ATR / 前N日最低价等
+│   ├── models.py                    # AdjustedPriceSeries / PricePoint / AssetCode
+│   └── service.py                   # PriceQueryService
+└── chart/                           ★ 图表模块
+    ├── models.py                    # ChartConfig, ChartSeries, ChartMarkerGroup ...
+    ├── renderer.py                  # ChartRenderer, ChartFactory
+    ├── grid_chart.py                # GridChartRenderer（多面板图）
+    └── tables.py                    # 触发日志 / 成交明细（表格数据）
 ```
 
 ### 4.1 依赖方向
 
 ```
-Application (GridBacktester)
+编排层 (GridBacktester)
       │ 编排
       ▼
-Domain (GridEngine ← GridStrategy ← GridTrigger)
+规则层 (GridEngine ← GridStrategy ← GridTrigger)
       │ 依赖
       ▼
-Price Domain (PriceCalculator: ATR / 前低)
+数据层 (PriceCalculator: ATR / 前低)
 ```
 
 领域层**不依赖 pandas / 网络**；应用层负责把 DataFrame 转换为
@@ -346,9 +344,9 @@ Price Domain (PriceCalculator: ATR / 前低)
 
 ```python
 from decimal import Decimal
-from src.application.grid.grid_backtester import GridBacktester, GridConfig
-from src.domain.allocation.entities import AllocationPlan
-from src.domain.grid.value_objects import GridTrigger, GridPriceBasis
+from src.strategy.grid.backtest import GridBacktester, GridConfig
+from src.strategy.allocation import AllocationPlan
+from src.strategy.grid.models import GridTrigger, GridPriceBasis
 
 # 总资产配置（再平衡与网格共用）
 plan = AllocationPlan.equal_weight(
@@ -372,14 +370,14 @@ result = GridBacktester(config).run()
 print(result.summary())
 
 # 触发日志：资产代码 / 名称 / 触发日期 / 交易类型
-from src.application.grid.grid_chart import GridChartRenderer
+from src.chart.grid_chart import GridChartRenderer
 print(GridChartRenderer.trigger_log(result))
 ```
 
 ### 5.2 组合回测（共享配置 + 持仓隔离）
 
 ```python
-from src.application.grid.combined_backtester import CombinedBacktester, CombinedConfig
+from src.strategy.combined import CombinedBacktester, CombinedConfig
 
 combined = CombinedBacktester(
     CombinedConfig(
@@ -393,22 +391,11 @@ print(combined.summary())
 ```
 
 
-### 5.3 实盘：单日决策 + 状态持久化
+### 5.3 实盘：单日决策（当前未接入持久化）
 
-```python
-from src.infrastructure.grid.repositories import JsonFileGridStateRepository
-from src.domain.grid.services import GridEngine
-
-repo = JsonFileGridStateRepository("data/grid_states")
-strategy = repo.find_by_id(strategy_id)      # 恢复上次运行的档位进度
-
-decision = GridEngine.evaluate(strategy, "515180", snapshot)
-if decision.has_orders:
-    for order in decision.orders:
-        print(order.to_dict())
-
-repo.save(strategy)                            # 保存新的档位与持仓状态
-```
+网格状态（档位进度、轮次）目前只在回测进程内维护，**没有**状态仓储落盘。
+若要接实盘，需要新增"网格状态仓储"，把 `GridStrategy` 序列化到文件——
+在有真实需求之前不预先建这个模块。
 
 ---
 
@@ -450,7 +437,7 @@ repo.save(strategy)                            # 保存新的档位与持仓状�
   （资产代码 / 名称 / 触发日期 / 交易类型：开仓·加仓·止盈 / 轮次 / 档位 / 价格 / 金额）
 
 ```python
-from src.application.grid.grid_chart import GridChartRenderer
+from src.chart.grid_chart import GridChartRenderer
 
 GridChartRenderer.render(result, output_path='grid_strategy_result.png')
 GridChartRenderer.render_comparison(combined, output_path='grid_strategy_comparison.png')

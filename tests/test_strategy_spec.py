@@ -15,14 +15,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.domain.grid.spec import build_grid_spec
-from src.domain.grid.value_objects import (
+from src.strategy.grid.spec import build_grid_spec
+from src.strategy.grid.models import (
     GridAnchor,
     GridPriceBasis,
     GridTrigger,
 )
-from src.domain.rebalance.spec import build_rebalance_spec
-from src.domain.strategy.spec import (
+from src.strategy.rebalance.spec import build_rebalance_spec
+from src.strategy.spec import (
     RuleParameter,
     StrategyRule,
     StrategySpec,

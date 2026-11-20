@@ -21,7 +21,7 @@ from datetime import date
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-from src.application.rebalance.backtest_engine import (
+from src.strategy.rebalance.backtest import (
     RebalanceConfig, 
     AssetConfig, 
     RebalanceBacktester

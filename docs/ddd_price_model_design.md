@@ -305,30 +305,17 @@ class CacheMissed:
 ## 8. 目录结构建议
 
 ```
-src/
-├── domain/
-│   └── price/
-│       ├── entities.py          # AdjustedPriceSeries, PricePoint
-│       ├── value_objects.py     # ReturnMetrics, DateRange, AssetCode
-│       ├── services.py          # PriceCalculator, PriceSeriesFactory
-│       ├── events.py            # 领域事件
-│       └── exceptions.py        # 领域异常
-│
-├── application/
-│   └── price/
-│       ├── query_service.py     # PriceQueryService
-│       ├── dto.py               # 数据传输对象
-│       └── commands.py          # 命令对象
-│
-├── infrastructure/
-│   └── price/
-│       ├── repositories.py      # 仓储实现
-│       ├── adjusted_price_provider.py  # 数据源适配器
-│       └── cache.py             # 缓存实现
-│
-└── interfaces/
-    └── api/
-        └── price_routes.py      # API路由（如果需要）
+src/data/                          # 数据模块
+├── models.py                      # AdjustedPriceSeries, PricePoint, AssetCode
+├── value_objects.py               # ReturnMetrics, TechnicalIndicators
+├── indicators.py                  # PriceCalculator（收益率 / 技术指标）
+├── cache.py                       # 缓存策略 + 刷新规划 + 增量合并
+├── sources.py                     # 复权口径 / 选源 / 口径对齐规则
+├── providers.py                   # 数据源适配器（东财 / 腾讯 / 新浪 / 实时）
+├── fallback.py                    # 主备容灾（探测 + 降级）
+├── adjusted.py                    # 后复权计算（分红再投资）
+├── cache_store.py                 # 缓存落盘（内存 / JSON 文件）
+└── service.py                     # PriceQueryService（对外统一入口）
 ```
 
 ---
@@ -338,7 +325,7 @@ src/
 ### 场景1: 绘制价格曲线
 
 ```python
-from src.application.price.query_service import PriceQueryService
+from src.data.service import PriceQueryService
 
 service = PriceQueryService(...)
 
@@ -386,9 +373,10 @@ plt.show()
 
 ## 10. 与现有系统的集成
 
-### 10.1 保持向后兼容
+### 10.1 与数据源的关系
 
-现有的 `adjusted_price_provider.py` 作为基础设施层的数据源适配器，新的领域模型在其之上构建。
+数据源适配器在 `src/data/providers.py`（东财 / 腾讯 / 新浪 / 实时），
+由 `src/data/fallback.py` 负责容灾编排；领域模型只依赖统一格式的数据，不感知具体数据源。
 
 ### 10.2 渐进式迁移
 

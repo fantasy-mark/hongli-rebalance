@@ -20,17 +20,17 @@ from typing import Dict
 
 import pandas as pd
 
-from src.domain.price.entities import AssetCode, PricePoint, AdjustedPriceSeries, AssetType, DataSource
-from src.domain.price.services import PriceCalculator
-from src.domain.grid.entities import (
+from src.data.models import AssetCode, PricePoint, AdjustedPriceSeries, AssetType, DataSource
+from src.data.indicators import PriceCalculator
+from src.strategy.grid.models import (
     GridState,
     GridStatus,
     GridStrategy,
     GridStrategyStatus,
     floor_to_lot,
 )
-from src.domain.grid.services import GridEngine
-from src.domain.grid.value_objects import (
+from src.strategy.grid.engine import GridEngine
+from src.strategy.grid.models import (
     GridAction,
     GridAnchor,
     GridCostModel,
@@ -39,19 +39,19 @@ from src.domain.grid.value_objects import (
     GridPriceBasis,
     GridTrigger,
 )
-from src.application.grid.grid_backtester import (
+from src.strategy.grid.backtest import (
     GridAssetConfig,
     GridBacktester,
     GridConfig,
 )
-from src.application.rebalance.backtest_engine import RebalanceConfig, AssetConfig
-from src.application.grid.combined_backtester import (
+from src.strategy.rebalance.backtest import RebalanceConfig, AssetConfig
+from src.strategy.combined import (
     CombinedBacktester,
     CombinedConfig,
 )
-from src.domain.allocation.entities import AllocationPlan
-from src.domain.portfolio.entities import Portfolio
-from src.domain.grid.value_objects import GridTradeType
+from src.strategy.allocation import AllocationPlan
+from src.strategy.portfolio import Portfolio
+from src.strategy.grid.models import GridTradeType
 
 
 # ----------------------------------------------------------------------
@@ -759,7 +759,7 @@ class TestSharedAllocation(unittest.TestCase):
 
     def test_invalid_weight_sum(self):
         """权重之和必须为1"""
-        from src.domain.allocation.entities import AssetAllocation
+        from src.strategy.allocation import AssetAllocation
         with self.assertRaises(ValueError):
             AllocationPlan(allocations=[
                 AssetAllocation(code="515180", name="红利ETF", target_weight=Decimal("0.5")),
@@ -1021,7 +1021,7 @@ class TestTriggerLogInvariant(unittest.TestCase):
 
     def test_one_take_profit_per_round(self):
         """一轮网格只有 1 条止盈成交（领域层保证）"""
-        from src.application.grid.grid_chart import GridChartRenderer
+        from src.chart.tables import grid_trigger_log
         result = self._run()
         from collections import defaultdict
         rounds = defaultdict(list)
@@ -1035,18 +1035,18 @@ class TestTriggerLogInvariant(unittest.TestCase):
                              f"{key} 应有 1 条止盈，实际 {len(trades)} 条")
 
         # 触发日志中，每个止盈行直接对应一笔成交
-        log = GridChartRenderer.trigger_log(result)
+        log = grid_trigger_log(result)
         tp_rows = [l for l in log.split('\n') if '| 止盈' in l]
         self.assertEqual(len(tp_rows), len(rounds))
 
     def test_format_levels(self):
         """档位文本：连续区间 / 离散枚举 / 单档 / 空"""
-        from src.application.grid.grid_chart import GridChartRenderer
+        from src.chart.tables import format_levels
 
-        self.assertEqual(GridChartRenderer._format_levels([1, 2, 3, 4, 5]), "1-5")
-        self.assertEqual(GridChartRenderer._format_levels([1, 3, 5]), "1,3,5")
-        self.assertEqual(GridChartRenderer._format_levels([2]), "2")
-        self.assertEqual(GridChartRenderer._format_levels([]), "-")
+        self.assertEqual(format_levels([1, 2, 3, 4, 5]), "1-5")
+        self.assertEqual(format_levels([1, 3, 5]), "1,3,5")
+        self.assertEqual(format_levels([2]), "2")
+        self.assertEqual(format_levels([]), "-")
 
 
 class TestGridValuationCarryForward(unittest.TestCase):
@@ -1174,14 +1174,14 @@ class TestTradeTypeInDomain(unittest.TestCase):
 
     def _state(self):
         """GridState（轮次/批次）+ Portfolio（持仓/成本）"""
-        from src.domain.grid.entities import GridState
+        from src.strategy.grid.models import GridState
         state = GridState(asset_code="515180")
         state.portfolio = Portfolio(cash=Decimal("100000"), name="网格组合")
         return state
 
     def _order(self, side, shares, price, level, on=date(2024, 1, 2),
                cost=Decimal("0")):
-        from src.domain.grid.value_objects import GridOrder, GridOrderSide
+        from src.strategy.grid.models import GridOrder, GridOrderSide
         return GridOrder(
             asset_code="515180",
             side=side,
@@ -1217,7 +1217,7 @@ class TestTradeTypeInDomain(unittest.TestCase):
 
     def test_first_buy_is_open(self):
         """持仓为 0 时买入 -> 开仓"""
-        from src.domain.grid.value_objects import GridTradeType
+        from src.strategy.grid.models import GridTradeType
 
         state = self._state()
         trade_type = self._buy(state)
@@ -1227,7 +1227,7 @@ class TestTradeTypeInDomain(unittest.TestCase):
 
     def test_buy_while_holding_is_add(self):
         """持仓 > 0 时再买 -> 加仓（即使换了新轮次也不影响该规则）"""
-        from src.domain.grid.value_objects import GridTradeType
+        from src.strategy.grid.models import GridTradeType
 
         state = self._state()
         first = self._buy(state, level=1)
@@ -1239,7 +1239,7 @@ class TestTradeTypeInDomain(unittest.TestCase):
 
     def test_cost_basis_includes_commission(self):
         """持仓成本含手续费"""
-        from src.domain.grid.value_objects import GridOrderSide
+        from src.strategy.grid.models import GridOrderSide
 
         state = self._state()
         self._buy(state, cost=Decimal("5"))
@@ -1248,7 +1248,7 @@ class TestTradeTypeInDomain(unittest.TestCase):
 
     def test_realized_pnl_nets_commission(self):
         """已实现盈亏 = 卖出净额 - 买入总支出（两侧均扣手续费）"""
-        from src.domain.grid.value_objects import GridTradeType
+        from src.strategy.grid.models import GridTradeType
 
         state = self._state()
         # 买入：1000 + 手续费 5 = 1005 支出
@@ -1263,7 +1263,7 @@ class TestTradeTypeInDomain(unittest.TestCase):
 
     def test_sell_more_than_held_raises(self):
         """卖出数量超过持仓 -> 拒绝（由 Portfolio 保护）"""
-        from src.domain.grid.value_objects import GridOrderSide
+        from src.strategy.grid.models import GridOrderSide
 
         state = self._state()
         self._buy(state)
@@ -1285,8 +1285,8 @@ class TestTradeTypeInDomain(unittest.TestCase):
 
     def test_order_carries_trade_type_and_shares_after(self):
         """引擎记账后把交易类型与成交后持仓回填到订单上"""
-        from src.domain.grid.entities import GridStrategy
-        from src.domain.grid.services import GridEngine
+        from src.strategy.grid.models import GridStrategy
+        from src.strategy.grid.engine import GridEngine
 
         strategy = GridStrategy(
             name="回填测试",

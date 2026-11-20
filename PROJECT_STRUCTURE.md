@@ -1,147 +1,143 @@
 # 项目结构概览
 
-## 📁 文件清单
+本项目按**业务模块**划分，每个模块内部再按职责分层（规则 / 编排 / 适配）。
 
-### 核心代码 (7个Python文件)
-
-#### 领域层 (Domain Layer) - 业务核心
 ```
-src/domain/price/
-├── entities.py              # 实体: AssetCode, PricePoint, AdjustedPriceSeries
-├── value_objects.py         # 值对象: ReturnMetrics, DateRange, TechnicalIndicators
-│                             #          CachePolicy, RefreshPlan, MergeResult
-└── services.py              # 领域服务: PriceCalculator (+ATR / 前N日最低价)
-                             #          PriceCachePlanner, PriceSeriesMerger
-
-src/domain/allocation/      # ★ 总资产配置（再平衡与网格共享内核）
-└── entities.py              # 聚合根: AllocationPlan, 值对象: AssetAllocation
-
-src/domain/performance/     # ★ 绩效统计（三个策略共享内核）
-├── value_objects.py         # 值对象: ReturnStatistics
-└── services.py              # （见 value_objects 内 PerformanceCalculator）
-
-src/domain/trading/         # ★ 交易内核
-├── value_objects.py         # 值对象: LotSize
-├── trade.py                 # 值对象: Trade / TradeSide / TradeId / CashFlowType
-└── ledger.py                # 聚合根: TradeLedger（追加式账本）+ LedgerSnapshot
-
-src/domain/portfolio/       # ★ 组合与持仓（两策略共享内核）
-└── entities.py              # 聚合根: Portfolio, 值对象: Position
-                             #   每策略一个实例 -> 持仓隔离
-
-src/domain/grid/            # ★ 网格策略上下文
-├── entities.py              # 聚合根: GridStrategy, GridState
-├── value_objects.py         # 值对象: GridTrigger, GridCostModel, GridMarketSnapshot,
-│                             #          GridDecision, GridTradeType, 枚举
-└── services.py              # 领域服务: GridEngine
-
-src/domain/rebalance/        # 再平衡上下文
-├── entities.py              # RebalancePolicy 等
-├── value_objects.py         # 值对象: RebalanceOrder（上下文自有，不依赖其它上下文）
-└── services.py              # 领域服务: RebalanceEngine
+src/
+├── data/       # 数据模块：数据获取源 + 缓存
+├── strategy/   # 策略模块：交易策略 + 规则
+└── chart/      # 图表模块：图片生成器 + 表格数据 + 网页生成器
 ```
 
-#### 应用层 (Application Layer) - 用例编排
-```
-src/application/price/
-└── query_service.py         # 应用服务: PriceQueryService
+依赖方向单向：**chart → strategy → data**（图表只消费策略与数据的结果）。
 
-src/application/grid/        # ★ 网格策略上下文
-├── grid_backtester.py       # 应用服务: GridBacktester
-├── grid_chart.py            # 应用服务: GridChartRenderer（多面板图 + 触发日志）
-└── combined_backtester.py   # 应用服务: CombinedBacktester（共享配置，持仓隔离）
+---
 
-src/infrastructure/trading/  # ★ 交易账本仓储
-└── repositories.py          # trades.json（真相源）+ holdings.json（派生视图）
+## 📁 模块清单
 
-src/application/chart/       # ★ 图表（技术关注点，由领域层迁出）
-├── entities.py              # ChartConfig, ChartSeries, ChartMarkerGroup ...
-└── services.py              # ChartRenderer, ChartFactory
-```
+### 1️⃣ 数据模块 `src/data/`
 
-#### 基础设施层 (Infrastructure Layer) - 技术实现
-```
-src/infrastructure/
-├── price/
-│   └── repositories.py      # 仓储: InMemoryPriceRepository, JsonFilePriceRepository
-├── grid/                    # ★ 网格策略上下文
-│   └── repositories.py      # 仓储: InMemoryGridStateRepository, JsonFileGridStateRepository
-└── adjusted_price_provider.py  # 数据源适配器 (已修复为hfq)
-```
+> 负责：把行情数据取进来、缓存起来，并对外提供统一查询入口。
 
-### 测试 (2个文件)
-```
-tests/
-├── test_price_domain.py     # 27个单元测试 ✅
-└── test_grid_domain.py      # 36个网格策略单元测试 ✅（离线，不依赖网络）
-```
+| 文件 | 层次 | 职责 |
+|---|---|---|
+| `models.py` | 规则 | 价格聚合根 `AdjustedPriceSeries`、值对象 `AssetCode` / `PricePoint` |
+| `value_objects.py` | 规则 | 指标类值对象 `ReturnMetrics` / `TechnicalIndicators` |
+| `indicators.py` | 规则 | `PriceCalculator`：收益率 / MA / RSI / 布林带 / ATR / 前N日最低价 |
+| `cache.py` | 规则 | 缓存策略值对象 + `PriceCachePlanner`（刷新计划）+ `PriceSeriesMerger`（接缝校验） |
+| `sources.py` | 规则 | 复权口径、源健康、`PriceSourceSelector`（选谁）、`PriceBasisAligner`（口径对齐） |
+| `providers.py` | 适配 | 数据源适配器：东财 / 腾讯 / 新浪 / 实时报价 |
+| `fallback.py` | 适配 | `FallbackPriceProvider`：使用前探测 + 主源优先 + 运行期降级 |
+| `cache_store.py` | 适配 | 价格缓存落盘：内存 / JSON 文件（`data/price_cache/`） |
+| `service.py` | 编排 | **`PriceQueryService`**：对外统一入口 |
 
-### 示例 (2个文件)
-```
-examples/
-├── ddd_price_model_demo.py  # 6个完整使用场景示例
-└── grid_strategy_demo.py    # 网格策略示例（回测/参数对比/组合隔离/绘图）
-```
+### 2️⃣ 策略模块 `src/strategy/`
 
-### 文档 (6个Markdown文件)
-```
-docs/
-├── ddd_price_model_design.md          # DDD设计文档
-├── ddd_implementation_summary.md      # 实现总结
-├── grid_strategy_ddd_design.md        # ★ 网格策略DDD设计文档
-├── adjusted_price_provider_usage.md   # 使用指南
-├── migration_summary.md               # 迁移报告
-└── price_data_sources.md              # 数据源说明 (原有)
+> 负责：定义「怎么交易」——交易策略、规则、资金与持仓记账。
 
-QUICKSTART.md                          # 快速参考
-README.md                              # 项目说明
-PROJECT_STRUCTURE.md                   # 本文件
-```
+| 文件 | 层次 | 职责 |
+|---|---|---|
+| `allocation.py` | 规则 | `AllocationPlan` 总资产配置（网格与再平衡**共用同一份**） |
+| `portfolio.py` | 规则 | `Portfolio` / `Position`：现金、持仓、成本、盈亏（两策略各持一份，类型级隔离） |
+| `performance.py` | 规则 | `PerformanceCalculator` / `ReturnStatistics`：统一绩效口径 |
+| `spec.py` | 规则 | `StrategySpec` / `StrategyRule`：策略名 → 规则描述 → 规则实现 |
+| `ledger/trade.py` | 规则 | `Trade` / `TradeSide` / `CashFlowType`：追加式成交流水 |
+| `ledger/book.py` | 规则 | `TradeLedger`：账本聚合根（流水重演持仓） |
+| `ledger/values.py` | 规则 | `LotSize`：最小交易单位（整手取整，共享内核） |
+| `ledger/store.py` | 适配 | 账本落盘（`trades.json` 真相源 + `holdings.json` 派生视图，**尚未接入回测流程**） |
+| `grid/models.py` | 规则 | 网格实体与值对象：`GridStrategy` / `GridState` / `GridTrigger` / `GridOrder` … |
+| `grid/engine.py` | 规则 | **`GridEngine`**：网格全部业务规则（触发 / 加仓 / 止盈） |
+| `grid/backtest.py` | 编排 | `GridBacktester`：逐日编排 + 记账，输出回测结果 |
+| `grid/spec.py` | 规则 | `build_grid_spec`：网格策略规格（描述由参数推导） |
+| `rebalance/rules.py` | 规则 | **`should_rebalance` / `initial_build_orders` / `plan_rebalance_orders`**：再平衡全部业务规则 |
+| `rebalance/backtest.py` | 编排 | `RebalanceBacktester`：逐日编排 + 记账 |
+| `rebalance/spec.py` | 规则 | `build_rebalance_spec`：再平衡策略规格 |
+| `combined.py` | 编排 | `CombinedBacktester`：再平衡 + 网格组合回测（持仓隔离） |
+
+### 3️⃣ 图表模块 `src/chart/`
+
+> 负责：把策略结果呈现出来——图片、表格、网页。
+
+| 文件 | 层次 | 职责 |
+|---|---|---|
+| `models.py` | 规则 | 图表模型：`ChartConfig` / `ChartSeries` / 样式 / 标注 |
+| `renderer.py` | 适配 | **图片生成器**：`ChartRenderer` / `ChartFactory`（通用收益曲线图） |
+| `overview.py` | 规则 | 策略全景图模型 `StrategyOverview`（收益率曲线 + 资金占用） |
+| `overview_renderer.py` | 适配 | **图片生成器**：策略全景图 PNG |
+| `grid_chart.py` | 适配 | **图片生成器**：网格多面板图（价格 / 持仓堆叠 / 组合对比） |
+| `tables.py` | 规则 | **表格数据**：触发日志、成交明细、档位格式化（纯文本，不依赖 matplotlib） |
+| `site.py` | 编排 | **网页生成器**：`BuildPagesSite` + 视图模型（summary / trades / holdings） |
+| `site_store.py` | 适配 | 站点产物落盘（`data/site/*.json` + `grid_chart.png`） |
+
+---
+
+## 🧪 测试 `tests/`
+
+| 文件 | 覆盖 |
+|---|---|
+| `test_price_domain.py` | 价格模型与查询服务 |
+| `test_price_cache.py` | 缓存规划 / 合并 / 接缝校验 |
+| `test_price_sources.py` | 数据源选择 / 口径对齐 / 降级 |
+| `test_grid_domain.py` | 网格规则与回测（离线） |
+| `test_strategy_spec.py` | 策略规格（描述由参数推导） |
+| `test_trading_ledger.py` | 交易账本（追加式 + 双资金池） |
+| `test_portfolio.py` | 组合与持仓不变量 |
+| `test_rebalance_rules.py` | 再平衡规则（触发判定 / 建仓 / 调仓） |
+| `test_pages_site.py` | 站点视图模型与全景图渲染 |
+
+---
+
+## 📚 示例 `examples/`
+
+| 文件 | 内容 |
+|---|---|
+| `ddd_price_model_demo.py` | 价格模型与指标用法 |
+| `grid_strategy_demo.py` | 网格回测 / 参数对比 / 组合隔离 / 绘图 |
+| `rebalance_backtest_demo.py` | 再平衡回测 |
+| `chart_ddd_demo.py` | 通用图表生成器 |
+
+---
+
+## 🛠 脚本 `scripts/`
+
+| 文件 | 用途 |
+|---|---|
+| `build_pages.py` | 跑组合回测并生成站点产物（`data/site/`） |
+| `verify_site.py` | 用无头浏览器验收站点（需 playwright） |
 
 ---
 
 ## 🎯 核心功能
 
 ### 1. 价格数据获取
-- ✅ 后复权(hfq)价格，515180最新价1.762
-- ✅ 支持ETF和股票
-- ✅ 自动缓存（内存+JSON文件）
-- ✅ 多数据源降级（东财→腾讯）
+- ✅ 后复权(hfq)价格，515180 最新价 1.762
+- ✅ 支持 ETF 和股票
+- ✅ 自动缓存（内存 + JSON 文件，跨进程复用）
+- ✅ 多数据源降级（东财 → 腾讯 → 新浪 → 实时报价）
 
-### 1.5 价格缓存与增量同步 ★新增
-- ✅ JSON 文件缓存，跨进程复用（`data/price_cache/`）
+### 2. 价格缓存与增量同步
+- ✅ JSON 文件缓存（`data/price_cache/`）
 - ✅ 缓存命中只拉缺失的尾部区间（实测 44 条 vs 全量 1668 条）
 - ✅ 接缝校验：后复权口径被重算时自动全量重建
 - ✅ 失败降级：数据源不可用时沿用缓存
 - ✅ 热启动 5.4s → 1.1s（4 资产组合回测）
 
-### 2. 收益率计算
-- ✅ 累计收益率
-- ✅ 年化收益率(CAGR)
-- ✅ 波动率
-- ✅ 夏普比率
-- ✅ 最大回撤
+### 3. 收益率与技术指标
+- ✅ 累计 / 年化收益率、波动率、夏普比率、最大回撤
+- ✅ 移动平均线(MA5/10/20/60)、RSI、布林带、ATR、前N日最低价
 
-### 3. 技术分析
-- ✅ 移动平均线(MA5/10/20/60)
-- ✅ RSI指标
-- ✅ 布林带
-- ✅ ATR(平均真实波幅) 与 前N日最低价
-
-### 4. 多资产对比
-- ✅ 归一化价格对比
-- ✅ 批量收益率计算
-- ✅ 统一时间范围
-
-### 5. 网格策略 ★新增
-- ✅ 跌破前120日最低价启动监控
-- ✅ 网格间距 = 触发日ATR(120) × 可配置比例
-- ✅ 每格买入固定金额（默认10000元，可配置）
-- ✅ **网格轮次生命周期**：跌破前低 → 完全止盈 → 重新跌破才开新轮
-- ✅ **总资产配置共享**：网格只监控再平衡组合中的资产
+### 4. 网格策略
+- ✅ 跌破前 120 日最低价启动监控
+- ✅ 网格间距 = 触发日 ATR(120) × 可配置比例
+- ✅ 每格买入固定金额（默认 10000 元）
+- ✅ 网格轮次生命周期：跌破前低 → 完全止盈 → 重新跌破才开新轮
+- ✅ 总资产配置共享：网格只监控再平衡组合中的资产
 - ✅ 交易类型标记：开仓 / 加仓 / 减仓 / 止盈
 - ✅ 网格持仓与再平衡持仓完全隔离
-- ✅ 组合回测可分别归因两套策略收益
+
+### 5. 站点产出
+- ✅ 策略全景图 PNG + summary.json + trades.json
+- ✅ 策略规格（规则描述由参数推导，不会与实现漂移）
 
 ---
 
@@ -149,24 +145,17 @@ PROJECT_STRUCTURE.md                   # 本文件
 
 ### 安装依赖
 ```bash
-pip install pandas akshare requests
+pip install pandas akshare requests matplotlib
 ```
 
 ### 运行测试
 ```bash
-python -m pytest tests/test_price_domain.py -v
-python -m pytest tests/test_grid_domain.py -v    # 网格策略（离线，无需网络）
-```
-
-### 运行示例
-```bash
-python examples/ddd_price_model_demo.py
-python examples/grid_strategy_demo.py           # 网格策略示例
+python -m pytest tests/ -v
 ```
 
 ### 基本用法
 ```python
-from src.application.price.query_service import PriceQueryService
+from src.data.service import PriceQueryService
 
 service = PriceQueryService()
 
@@ -184,11 +173,10 @@ df = service.compare_assets(["515180", "159937", "511380", "513300"])
 ### 网格策略用法
 ```python
 from decimal import Decimal
-from src.application.grid.grid_backtester import GridBacktester, GridConfig
-from src.domain.allocation.entities import AllocationPlan
-from src.domain.grid.value_objects import GridTrigger
+from src.strategy.grid.backtest import GridBacktester, GridConfig
+from src.strategy.allocation import AllocationPlan
+from src.strategy.grid.models import GridTrigger
 
-# 总资产配置（再平衡与网格共用）
 plan = AllocationPlan.equal_weight(
     [("515180", "红利ETF"), ("159937", "黄金ETF")], name="两资产等权"
 )
@@ -207,29 +195,27 @@ config = GridConfig.from_allocation(
 result = GridBacktester(config).run()
 print(result.summary())
 
-# 触发日志（资产代码/名称/触发日期/交易类型）
-from src.application.grid.grid_chart import GridChartRenderer
-print(GridChartRenderer.trigger_log(result))
+# 表格数据：触发日志 / 成交明细
+from src.chart.tables import grid_trigger_log, grid_trade_table
+print(grid_trigger_log(result))
+print(grid_trade_table(result))
+```
+
+### 生成站点
+```bash
+python scripts/build_pages.py
 ```
 
 ---
 
-## 📊 验证结果
+## 🔧 技术栈
 
-### 单元测试
-- **27/27** 测试通过 ✅
-- 覆盖领域层、应用层、集成测试
-
-### 关键数据
-- **515180最新价**: 1.762 ✓
-- **2020-2026累计收益**: 70.90%
-- **年化收益**: 8.14%
-- **最大回撤**: -17.31%
-
-### 性能
-- 首次获取: ~2-5秒（网络IO）
-- 缓存命中: 毫秒级
-- 收益率计算: 毫秒级
+- **Python 3.11+**
+- **pandas** - 数据处理
+- **akshare** - 金融数据源
+- **matplotlib** - 图表渲染
+- **pytest** - 测试框架
+- **Decimal** - 高精度计算
 
 ---
 
@@ -239,75 +225,15 @@ print(GridChartRenderer.trigger_log(result))
 |------|------|
 | [QUICKSTART.md](QUICKSTART.md) | ⭐ 5分钟上手 |
 | [README.md](README.md) | 项目概述 |
-| [docs/ddd_price_model_design.md](docs/ddd_price_model_design.md) | DDD设计详解 |
-| [docs/grid_strategy_ddd_design.md](docs/grid_strategy_ddd_design.md) | ★ 网格策略DDD设计 |
-| [docs/price_cache_design.md](docs/price_cache_design.md) | ★ 价格缓存与增量同步设计 |
-| [docs/price_sources_design.md](docs/price_sources_design.md) | ★ 多数据源容灾与复权口径设计 |
-| [docs/trading_ledger_design.md](docs/trading_ledger_design.md) | ★ 交易流水与持仓设计 |
-| [docs/ddd_implementation_summary.md](docs/ddd_implementation_summary.md) | 实现总结 |
-| [docs/migration_summary.md](docs/migration_summary.md) | 迁移报告 |
-| [docs/adjusted_price_provider_usage.md](docs/adjusted_price_provider_usage.md) | API详细文档 |
+| [docs/price_cache_design.md](docs/price_cache_design.md) | 价格缓存与增量同步设计 |
+| [docs/price_sources_design.md](docs/price_sources_design.md) | 多数据源容灾与复权口径设计 |
+| [docs/grid_strategy_ddd_design.md](docs/grid_strategy_ddd_design.md) | 网格策略设计 |
+| [docs/trading_ledger_design.md](docs/trading_ledger_design.md) | 交易流水与持仓设计 |
+| [docs/strategy_ddd_design.md](docs/strategy_ddd_design.md) | 策略规格设计 |
+| [docs/pages_site_design.md](docs/pages_site_design.md) | 站点设计 |
+| [docs/data_api_guide.md](docs/data_api_guide.md) | 数据获取 API 指南 |
 
 ---
 
-## 🎨 架构特点
-
-### DDD分层架构
-```
-┌─────────────────────────┐
-│   Application Layer     │  ← PriceQueryService
-├─────────────────────────┤
-│   Domain Layer          │  ← Entities, Value Objects, Services
-├─────────────────────────┤
-│   Infrastructure Layer  │  ← Repositories, Data Providers
-└─────────────────────────┘
-```
-
-### 核心设计原则
-- ✅ 聚合根保护不变量
-- ✅ 值对象不可变
-- ✅ 领域服务无状态
-- ✅ 仓储接口抽象
-- ✅ 业务规则内聚
-
----
-
-## 🔧 技术栈
-
-- **Python 3.11+**
-- **pandas** - 数据处理
-- **akshare** - 金融数据源
-- **requests** - HTTP客户端
-- **pytest** - 测试框架
-- **Decimal** - 高精度计算
-
----
-
-## ✨ 下一步
-
-### 立即可用
-- ✅ 绘制价格图表
-- ✅ 计算收益率指标
-- ✅ 多资产对比分析
-- ✅ 技术指标查询
-
-### 待开发
-- ⏳ 策略回测框架
-- ⏳ 数据库仓储
-- ⏳ 实时价格推送
-- ⏳ 更多技术指标
-
----
-
-## 📞 支持
-
-如有问题，请查阅：
-1. [快速参考](QUICKSTART.md) - 常见问题
-2. [使用指南](docs/adjusted_price_provider_usage.md) - API文档
-3. [示例代码](examples/ddd_price_model_demo.py) - 实际用法
-
----
-
-**最后更新**: 2026-11-06  
-**版本**: v1.0  
-**状态**: ✅ 生产就绪
+**最后更新**: 2026-11-20
+**版本**: v2.0（模块化重构）

@@ -12,10 +12,10 @@ import unittest
 from datetime import date, datetime
 from decimal import Decimal
 
-from src.domain.price.entities import AssetCode, PricePoint, AdjustedPriceSeries, AssetType, DataSource
-from src.domain.price.value_objects import ReturnMetrics, DateRange
-from src.domain.price.services import PriceCalculator
-from src.application.price.query_service import PriceQueryService
+from src.data.models import AssetCode, PricePoint, AdjustedPriceSeries, AssetType, DataSource
+from src.data.value_objects import ReturnMetrics
+from src.data.indicators import PriceCalculator
+from src.data.service import PriceQueryService
 
 
 class TestAssetCode(unittest.TestCase):
@@ -225,32 +225,6 @@ class TestPriceCalculator(unittest.TestCase):
         """测试最大回撤"""
         max_dd, start, end = self.calculator.calculate_max_drawdown(self.series)
         self.assertLessEqual(max_dd, 0)  # 回撤应该是负值或0
-
-
-class TestDateRange(unittest.TestCase):
-    """测试日期范围值对象"""
-    
-    def test_create_valid_range(self):
-        """测试创建有效日期范围"""
-        dr = DateRange(start=date(2024, 1, 1), end=date(2024, 12, 31))
-        self.assertEqual(dr.duration_days(), 365)
-    
-    def test_invalid_range(self):
-        """测试无效日期范围"""
-        with self.assertRaises(ValueError):
-            DateRange(start=date(2024, 12, 31), end=date(2024, 1, 1))
-    
-    def test_contains(self):
-        """测试包含判断"""
-        dr = DateRange(start=date(2024, 1, 1), end=date(2024, 12, 31))
-        self.assertTrue(dr.contains(date(2024, 6, 15)))
-        self.assertFalse(dr.contains(date(2025, 1, 1)))
-    
-    def test_intersects(self):
-        """测试交集判断"""
-        dr1 = DateRange(start=date(2024, 1, 1), end=date(2024, 6, 30))
-        dr2 = DateRange(start=date(2024, 6, 1), end=date(2024, 12, 31))
-        self.assertTrue(dr1.intersects(dr2))
 
 
 class TestPriceQueryService(unittest.TestCase):

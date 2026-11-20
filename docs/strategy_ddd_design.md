@@ -1,558 +1,212 @@
-# 交易策略与再平衡策略 DDD 建模
+# 交易策略与再平衡策略设计（策略模块）
 
-## 1. 战略设计 - 边界上下文
-
-### 1.1 核心域 (Core Domain)
-
-**策略上下文 (Strategy Context)**
-- 核心价值：定义和执行交易决策逻辑
-- 关键能力：信号生成、订单创建、绩效评估
-
-**再平衡上下文 (Rebalance Context)**
-- 核心价值：维护目标资产配置比例
-- 关键能力：权重监控、调仓计算、成本控制
-
-**执行上下文 (Execution Context)**
-- 核心价值：将策略决策转化为实际交易
-- 关键能力：订单路由、成交模拟、成本计算
-
-### 1.2 支撑域 (Supporting Domain)
-
-**价格上下文 (Price Context)** - 已实现
-**持仓上下文 (Position Context)** - 已实现
+> 本文只描述**已经落地**的设计。
+> 历史上这里写过一套"通用策略上下文"（`TradingStrategy` / `TradingRule` / `Condition` / `Action` /
+> `StrategyManagementService` …）的构想，但真正被实现和使用的只有"策略规格 + 策略规则"这一层，
+> 那些未被任何代码使用的抽象已删除（详见文末「取舍记录」）。
 
 ---
 
-## 2. 战术设计 - 领域模型
+## 1. 模块边界
 
-### 2.1 策略上下文实体
-
-#### `TradingStrategy` (聚合根)
 ```
-代表一个完整的交易策略
-
-属性:
-- strategy_id: StrategyId
-- name: str
-- description: str
-- rules: List[TradingRule]  # 交易规则集合
-- parameters: Dict[str, Any]  # 策略参数
-- status: StrategyStatus  # ACTIVE/PAUSED/ARCHIVED
-- created_at: datetime
-- updated_at: datetime
-
-行为:
-- evaluate_signal(market_data): Signal  # 评估信号
-- validate(): List[str]  # 验证规则有效性
-- clone(): TradingStrategy  # 克隆策略
+src/strategy/                # 策略模块
+├── allocation.py            # 总资产配置（网格与再平衡共用同一份）
+├── portfolio.py             # 组合与持仓（两策略各持一份，类型级隔离）
+├── performance.py           # 统一绩效口径
+├── spec.py                  # 策略规格：策略名 → 规则描述 → 规则实现
+├── ledger/                  # 交易流水账本
+├── grid/                    # 网格策略
+│   ├── models.py            # 网格实体与值对象
+│   ├── engine.py            # ★ 网格全部业务规则
+│   ├── backtest.py          # 回测编排
+│   └── spec.py              # 网格策略规格
+├── rebalance/               # 再平衡策略
+│   ├── rules.py             # ★ 再平衡全部业务规则
+│   ├── backtest.py          # 回测编排
+│   └── spec.py              # 再平衡策略规格
+└── combined.py              # 组合回测（两策略持仓隔离）
 ```
 
-#### `TradingRule` (值对象)
-```
-单条交易规则
+规则只写在两处：
 
-属性:
-- rule_id: RuleId
-- condition: Condition  # 触发条件
-- action: Action  # 执行动作
-- priority: int  # 优先级
-- enabled: bool  # 是否启用
+| 策略 | 规则实现 |
+| --- | --- |
+| 网格 | `src/strategy/grid/engine.py::GridEngine` |
+| 再平衡 | `src/strategy/rebalance/rules.py` |
 
-不变量:
-- condition 和 action 不能为空
-- priority >= 0
-```
-
-#### `Condition` (值对象)
-```
-交易条件表达式
-
-类型:
-- PriceCondition: 价格条件（突破、回调等）
-- IndicatorCondition: 指标条件（MA、RSI等）
-- TimeCondition: 时间条件（特定时间段）
-- CompositeCondition: 组合条件（AND/OR/NOT）
-
-属性:
-- type: ConditionType
-- parameters: Dict[str, Any]
-- operator: ComparisonOperator  # >, <, >=, <=, ==, !=
-```
-
-#### `Action` (值对象)
-```
-交易动作
-
-类型:
-- BuyAction: 买入
-- SellAction: 卖出
-- HoldAction: 持有
-- RebalanceAction: 再平衡
-
-属性:
-- type: ActionType
-- target_weight: Optional[Decimal]  # 目标权重（再平衡用）
-- quantity: Optional[Decimal]  # 数量
-- order_type: OrderType  # MARKET/LIMIT
-```
-
-### 2.2 再平衡上下文实体
-
-#### `RebalancePolicy` (聚合根)
-```
-再平衡策略配置
-
-属性:
-- policy_id: PolicyId
-- name: str
-- trigger: RebalanceTrigger  # 触发机制
-- target_allocation: Dict[AssetCode, Decimal]  # 目标配置
-- constraints: RebalanceConstraints  # 约束条件
-- cost_model: TransactionCostModel  # 成本模型
-- status: PolicyStatus
-
-行为:
-- should_rebalance(current_state): bool  # 判断是否需要再平衡
-- calculate_trades(current_state): List[TradeOrder]  # 计算调仓订单
-- validate(): List[str]  # 验证配置
-```
-
-#### `RebalanceTrigger` (值对象)
-```
-再平衡触发机制
-
-类型:
-- ThresholdTrigger: 阈值触发（已实现）
-- PeriodicTrigger: 定期触发
-- EventTrigger: 事件触发
-- CompositeTrigger: 组合触发
-
-属性:
-- type: TriggerType
-- parameters: Dict[str, Any]
-```
-
-#### `RebalanceConstraints` (值对象)
-```
-再平衡约束条件
-
-属性:
-- max_turnover: Decimal  # 最大换手率
-- min_trade_size: Decimal  # 最小交易金额
-- max_single_asset_change: Decimal  # 单资产最大调整幅度
-- allowed_trading_hours: TimeRange  # 允许交易时段
-```
-
-### 2.3 执行上下文实体
-
-#### `TradeOrder` (实体)
-```
-交易订单
-
-属性:
-- order_id: OrderId
-- strategy_id: StrategyId
-- asset_code: AssetCode
-- side: OrderSide  # BUY/SELL
-- quantity: Decimal
-- price: Optional[Decimal]  # 限价
-- order_type: OrderType
-- status: OrderStatus
-- created_at: datetime
-- executed_at: Optional[datetime]
-- execution_price: Optional[Decimal]
-- commission: Decimal  # 佣金
-
-行为:
-- execute(execution_context): ExecutionResult  # 执行订单
-- cancel(): bool  # 取消订单
-```
-
-#### `ExecutionResult` (值对象)
-```
-执行结果
-
-属性:
-- success: bool
-- filled_quantity: Decimal
-- average_price: Decimal
-- total_cost: Decimal
-- slippage: Decimal  # 滑点
-- message: str  # 执行信息
-```
-
-### 2.4 共享值对象
-
-#### `Signal` (值对象)
-```
-交易信号
-
-属性:
-- timestamp: datetime
-- asset_code: AssetCode
-- signal_type: SignalType  # BUY/SELL/HOLD/REBALANCE
-- strength: Decimal  # 信号强度 0-1
-- confidence: Decimal  # 置信度 0-1
-- metadata: Dict[str, Any]  # 附加信息
-```
-
-#### `MarketData` (值对象)
-```
-市场数据快照
-
-属性:
-- timestamp: datetime
-- prices: Dict[AssetCode, Decimal]
-- volumes: Dict[AssetCode, Decimal]
-- indicators: Dict[str, Dict[AssetCode, Decimal]]  # 技术指标
-```
-
-#### `PortfolioState` (值对象)
-```
-持仓状态
-
-属性:
-- timestamp: datetime
-- positions: Dict[AssetCode, Position]
-- cash: Decimal
-- total_value: Decimal
-- weights: Dict[AssetCode, Decimal]
-```
+回测引擎（`grid/backtest.py`、`rebalance/backtest.py`）只负责**逐日编排 + 记账**，
+不写业务判断。
 
 ---
 
-## 3. 领域服务
+## 2. 策略规格：策略名 → 规则描述 → 规则实现
 
-### 3.1 `SignalGenerator` (信号生成器)
-```python
-class SignalGenerator:
-    """根据策略规则生成交易信号"""
-    
-    def generate(strategy: TradingStrategy, 
-                 market_data: MarketData) -> List[Signal]:
-        """评估策略并生成信号"""
-        
-    def backtest(strategy: TradingStrategy,
-                 historical_data: List[MarketData]) -> BacktestResult:
-        """回测策略表现"""
-```
-
-### 3.2 `RebalanceEngine` (再平衡引擎)
-```python
-class RebalanceEngine:
-    """执行再平衡逻辑"""
-    
-    def check_trigger(policy: RebalancePolicy,
-                      current_state: PortfolioState) -> bool:
-        """检查是否触发再平衡"""
-        
-    def calculate_orders(policy: RebalancePolicy,
-                         current_state: PortfolioState) -> List[TradeOrder]:
-        """计算再平衡订单"""
-        
-    def optimize_orders(orders: List[TradeOrder],
-                        constraints: RebalanceConstraints) -> List[TradeOrder]:
-        """优化订单（考虑约束）"""
-```
-
-### 3.3 `OrderExecutor` (订单执行器)
-```python
-class OrderExecutor:
-    """执行交易订单"""
-    
-    def execute(order: TradeOrder,
-                execution_context: ExecutionContext) -> ExecutionResult:
-        """执行单个订单"""
-        
-    def batch_execute(orders: List[TradeOrder]) -> List[ExecutionResult]:
-        """批量执行订单"""
-```
-
----
-
-## 4. 仓储接口
-
-### 4.1 `StrategyRepository`
-```python
-class StrategyRepository(ABC):
-    @abstractmethod
-    def save(self, strategy: TradingStrategy) -> None: ...
-    
-    @abstractmethod
-    def find_by_id(self, strategy_id: StrategyId) -> Optional[TradingStrategy]: ...
-    
-    @abstractmethod
-    def find_all_active(self) -> List[TradingStrategy]: ...
-```
-
-### 4.2 `RebalancePolicyRepository`
-```python
-class RebalancePolicyRepository(ABC):
-    @abstractmethod
-    def save(self, policy: RebalancePolicy) -> None: ...
-    
-    @abstractmethod
-    def find_by_id(self, policy_id: PolicyId) -> Optional[RebalancePolicy]: ...
-```
-
-### 4.3 `OrderRepository`
-```python
-class OrderRepository(ABC):
-    @abstractmethod
-    def save(self, order: TradeOrder) -> None: ...
-    
-    @abstractmethod
-    def find_by_strategy(self, strategy_id: StrategyId) -> List[TradeOrder]: ...
-    
-    @abstractmethod
-    def update_status(self, order_id: OrderId, status: OrderStatus) -> None: ...
-```
-
----
-
-## 5. 应用服务
-
-### 5.1 `StrategyManagementService`
-```python
-class StrategyManagementService:
-    """策略管理服务"""
-    
-    def create_strategy(config: StrategyConfig) -> TradingStrategy: ...
-    
-    def update_strategy(strategy_id: StrategyId, 
-                       updates: StrategyUpdates) -> TradingStrategy: ...
-    
-    def activate_strategy(strategy_id: StrategyId) -> None: ...
-    
-    def pause_strategy(strategy_id: StrategyId) -> None: ...
-    
-    def backtest_strategy(strategy_id: StrategyId,
-                          date_range: DateRange) -> BacktestResult: ...
-```
-
-### 5.2 `RebalanceService`
-```python
-class RebalanceService:
-    """再平衡服务"""
-    
-    def create_policy(config: RebalanceConfig) -> RebalancePolicy: ...
-    
-    def check_and_execute(policy_id: PolicyId) -> RebalanceResult: ...
-    
-    def simulate_rebalance(policy_id: PolicyId,
-                           hypothetical_state: PortfolioState) -> SimulationResult: ...
-```
-
-### 5.3 `TradingService`
-```python
-class TradingService:
-    """交易执行服务"""
-    
-    def place_order(order_request: OrderRequest) -> TradeOrder: ...
-    
-    def cancel_order(order_id: OrderId) -> bool: ...
-    
-    def get_order_status(order_id: OrderId) -> OrderStatus: ...
-    
-    def get_strategy_performance(strategy_id: StrategyId) -> PerformanceMetrics: ...
-```
-
----
-
-## 6. 领域事件
+页面需要能说清楚「这个策略叫什么、按什么规则跑、规则写在哪」。
+为此定义三个值对象（`src/strategy/spec.py`）：
 
 ```python
-@dataclass
-class StrategySignalGenerated:
-    """策略生成信号事件"""
-    strategy_id: StrategyId
-    signal: Signal
-    timestamp: datetime
+StrategySpec          # 策略名
+├── strategy_id       # 'grid' / 'rebalance'
+├── name              # 复合网格 / 阈值再平衡
+├── summary           # 一句话规则摘要
+├── rules: tuple[StrategyRule, ...]
+└── implementation    # 策略整体实现位置清单
 
-@dataclass
-class RebalanceTriggered:
-    """再平衡触发事件"""
-    policy_id: PolicyId
-    reason: str
-    current_weights: Dict[AssetCode, Decimal]
-    timestamp: datetime
+StrategyRule          # 一条规则 = 描述 + 参数 + 公式 + 实现
+├── rule_id           # 'grid.trigger' / 'grid.add' / ...
+├── title             # 触发条件 / 加仓规则 / 止盈规则 / 资金隔离
+├── description       # 人读描述（由参数推导）
+├── formula           # 公式
+├── parameters        # 规则参数（值）
+└── implementation    # 'src/strategy/grid/engine.py::GridEngine._process_levels'
 
-@dataclass
-class OrderExecuted:
-    """订单执行完成事件"""
-    order_id: OrderId
-    result: ExecutionResult
-    timestamp: datetime
-
-@dataclass
-class StrategyPerformanceUpdated:
-    """策略绩效更新事件"""
-    strategy_id: StrategyId
-    metrics: PerformanceMetrics
-    period: DateRange
+RuleParameter         # 一个可调旋钮
+├── name / key / value / meaning
 ```
 
----
+### 关键约束：描述由参数推导
 
-## 7. 业务规则
+规则描述**不允许硬编码**，必须由 `GridTrigger` / `RebalanceConfig` 的真实参数拼出来。
+否则改了参数忘了改文案，就会出现「页面说 2ATR、代码跑 0.5ATR」的漂移。
 
-### 7.1 策略规则验证
-1. **规则完整性**: 至少有一条启用的规则
-2. **条件有效性**: 所有条件参数必须合法
-3. **动作一致性**: 动作类型与条件匹配
-4. **优先级唯一性**: 同策略内规则优先级不重复
+以网格加仓规则为例（`src/strategy/grid/spec.py`）：
 
-### 7.2 再平衡规则
-1. **权重总和**: 目标权重总和必须为100%
-2. **阈值合理性**: 触发阈值在合理范围内（1%-10%）
-3. **约束可行性**: 约束条件不冲突
-4. **成本可控**: 预估交易成本不超过阈值
-
-### 7.3 执行规则
-1. **订单有效性**: 数量>0，价格>=0
-2. **资金充足**: 买入订单需有足够现金
-3. **持仓充足**: 卖出订单需有足够持仓
-4. **风控检查**: 单笔交易不超过限制
-
----
-
-## 8. 目录结构
-
-```
-src/
-├── domain/
-│   ├── strategy/
-│   │   ├── entities.py          # TradingStrategy, TradingRule
-│   │   ├── value_objects.py     # Condition, Action, Signal
-│   │   ├── services.py          # SignalGenerator
-│   │   └── events.py            # 领域事件
-│   ├── rebalance/
-│   │   ├── entities.py          # RebalancePolicy
-│   │   ├── value_objects.py     # RebalanceTrigger, Constraints
-│   │   ├── services.py          # RebalanceEngine
-│   │   └── events.py
-│   └── execution/
-│       ├── entities.py          # TradeOrder
-│       ├── value_objects.py     # ExecutionResult
-│       ├── services.py          # OrderExecutor
-│       └── events.py
-│
-├── application/
-│   ├── strategy/
-│   │   ├── management_service.py
-│   │   └── dto.py
-│   ├── rebalance/
-│   │   ├── service.py
-│   │   └── dto.py
-│   └── trading/
-│       ├── service.py
-│       └── dto.py
-│
-└── infrastructure/
-    ├── strategy/
-    │   └── repositories.py
-    ├── rebalance/
-    │   └── repositories.py
-    └── execution/
-        ├── repositories.py
-        └── simulators.py        # 模拟执行器
-```
-
----
-
-## 9. 使用示例
-
-### 9.1 创建自定义策略
 ```python
-from src.domain.strategy.entities import TradingStrategy, TradingRule
-from src.domain.strategy.value_objects import Condition, Action
-
-# 创建均线交叉策略
-strategy = TradingStrategy(
-    name="双均线交叉策略",
-    rules=[
-        TradingRule(
-            condition=Condition(
-                type="indicator_cross",
-                parameters={"fast_ma": 5, "slow_ma": 20},
-                operator="cross_above"
-            ),
-            action=Action(type="buy", target_weight=0.25),
-            priority=1
-        ),
-        TradingRule(
-            condition=Condition(
-                type="indicator_cross",
-                parameters={"fast_ma": 5, "slow_ma": 20},
-                operator="cross_below"
-            ),
-            action=Action(type="sell", target_weight=0),
-            priority=2
-        )
-    ]
+description=(
+    f"网格激活后，每再下跌 {step_ratio}×ATR({trigger.atr_period}) "
+    f"加一档仓位；每档买入 {trigger.buy_amount:,.0f} 元，"
+    f"股数向下取整到 {trigger.lot_size} 股的整数倍；"
+    f"档位价格 = 锚点 − 步长 × 档位序号。"
 )
 ```
 
-### 9.2 创建再平衡策略
-```python
-from src.domain.rebalance.entities import RebalancePolicy
-from src.domain.rebalance.value_objects import RebalanceTrigger
+### 规格构建
 
-policy = RebalancePolicy(
-    name="阈值再平衡",
-    trigger=RebalanceTrigger(
-        type="threshold",
-        parameters={"threshold_pp": 3}
+```python
+from src.strategy.grid.spec import build_grid_spec
+from src.strategy.rebalance.spec import build_rebalance_spec
+
+grid_spec = build_grid_spec(grid_trigger)
+reb_spec = build_rebalance_spec(rebalance_config)
+
+grid_spec.to_dict()
+# {'strategy_id': 'grid', 'name': '复合网格', 'summary': ..., 'rules': [...]}
+```
+
+---
+
+## 3. 网格策略规则
+
+实现见 `src/strategy/grid/engine.py::GridEngine`。
+
+| 规则 | 说明 | 参数 |
+| --- | --- | --- |
+| 监控启动 | 当日价格跌破**前 N 个交易日最低价**（不含当日） | `lookback_days` |
+| 网格步长 | `step = ATR(触发日, atr_period) × step_ratio`（轮内固定） | `atr_period` / `step_ratio` |
+| 档位推进 | 档位 N 价格 = 锚点 − step × N，价格 ≤ 档位价即买入 | `anchor` |
+| 单格买入 | `buy_amount` 元，股数向下取整到 `lot_size` 整数倍 | `buy_amount` / `lot_size` |
+| 止盈 | 回升至「首次建仓价 + `take_profit_ratio`×步长」整轮卖出 | `take_profit_ratio` |
+| 资金隔离 | 只动网格自己的资金池与持仓 | `initial_capital` |
+| 轮次结束 | 完全止盈后必须**重新跌破前低**才开下一轮 | — |
+
+```python
+from src.strategy.grid.engine import GridEngine
+
+decision = GridEngine.evaluate(strategy, "515180", snapshot)
+if decision.has_orders:
+    for order in decision.orders:
+        print(order.to_dict())
+```
+
+---
+
+## 4. 再平衡策略规则
+
+实现见 `src/strategy/rebalance/rules.py`（纯函数，无 IO）。
+
+| 函数 | 职责 |
+| --- | --- |
+| `should_rebalance(target_weights, current_weights, threshold_pp)` | 任一标的偏离目标权重超过阈值即触发 |
+| `initial_build_orders(...)` | 首次建仓：按目标权重分配初始资金 |
+| `plan_rebalance_orders(...)` | 调仓：先卖超配，再买低配，股数向下取整到整手 |
+| `transaction_cost(amount, cost_bps)` | 交易成本 = 成交金额 × 单边费率（基点） |
+
+```python
+from src.strategy.rebalance.rules import should_rebalance
+
+if should_rebalance(target_weights, current_weights, threshold_pp):
+    orders = plan_rebalance_orders(...)
+```
+
+---
+
+## 5. 共享内核
+
+| 共享物 | 位置 | 为什么共享 |
+| --- | --- | --- |
+| 总资产配置 `AllocationPlan` | `allocation.py` | 保证网格监控的资产与再平衡配置的资产完全一致 |
+| 组合与持仓 `Portfolio` | `portfolio.py` | 每个策略各持一份实例，实现持仓隔离 |
+| 绩效口径 `PerformanceCalculator` | `performance.py` | 三个回测结果指标口径一致 |
+| 整手取整 `LotSize` | `ledger/values.py` | 两个策略都要按 100 股取整，避免各写一份 |
+| 交易账本 `TradeLedger` | `ledger/` | 追加式流水，持仓由流水重演得出 |
+
+---
+
+## 6. 使用示例
+
+```python
+from decimal import Decimal
+from src.strategy.allocation import AllocationPlan
+from src.strategy.grid.backtest import GridBacktester, GridConfig
+from src.strategy.grid.models import GridTrigger
+
+plan = AllocationPlan.equal_weight(
+    [("515180", "红利ETF"), ("159937", "黄金ETF")], name="两资产等权"
+)
+
+config = GridConfig.from_allocation(
+    plan=plan,
+    trigger=GridTrigger(
+        lookback_days=120,
+        atr_period=120,
+        step_ratio=Decimal("0.5"),
+        buy_amount=Decimal("10000"),
+        take_profit_ratio=Decimal("1"),
     ),
-    target_allocation={
-        "515180": Decimal("0.25"),
-        "159937": Decimal("0.25"),
-        "511380": Decimal("0.25"),
-        "513300": Decimal("0.25"),
-    }
+    initial_capital=Decimal("200000"),
 )
-```
 
-### 9.3 执行回测
-```python
-from src.application.strategy.management_service import StrategyManagementService
-
-service = StrategyManagementService()
-result = service.backtest_strategy(
-    strategy_id=strategy.id,
-    date_range=DateRange(start=date(2020, 1, 1), end=date(2026, 11, 6))
-)
+result = GridBacktester(config).run()
 print(result.summary())
+
+# 表格数据（图表模块）
+from src.chart.tables import grid_trigger_log, grid_trade_table
+print(grid_trigger_log(result))
+print(grid_trade_table(result))
 ```
 
 ---
 
-## 10. 与现有系统集成
+## 7. 测试策略
 
-### 10.1 复用现有组件
-- **价格数据**: 使用已有的 `PriceQueryService`
-- **持仓管理**: 使用已有的 `AdjustedPriceSeries`
-- **回测引擎**: 扩展已有的 `RebalanceBacktester`
-
-### 10.2 新增组件
-- **策略引擎**: 独立的信号生成和执行逻辑
-- **规则解析器**: 解析自定义规则配置
-- **模拟器**: 模拟成交环境
+| 层次 | 位置 | 特点 |
+| --- | --- | --- |
+| 规则单测 | `tests/test_grid_domain.py` | 直接构造行情快照驱动 `GridEngine`，离线可跑 |
+| 回测单测 | `tests/test_grid_domain.py` | 注入价格 provider，不访问网络 |
+| 规格单测 | `tests/test_strategy_spec.py` | 校验描述确实由参数推导 |
+| 共享内核 | `tests/test_portfolio.py` / `tests/test_trading_ledger.py` | 不变量与重演一致性 |
 
 ---
 
-## 11. 测试策略
+## 8. 取舍记录
 
-### 11.1 单元测试
-- `TradingRule` 验证逻辑
-- `Condition` 评估准确性
-- `RebalanceEngine` 计算正确性
+| 曾经的设想 | 处理 | 原因 |
+| --- | --- | --- |
+| `TradingStrategy` / `TradingRule` / `Condition` / `Action` 通用策略上下文 | **删除** | 从未被实现或使用；真实需求只有"规则描述 + 实现位置"，由 `StrategySpec` 覆盖 |
+| `StrategyManagementService` 策略管理应用服务 | **删除** | 没有"管理策略"用例，策略是代码而非数据 |
+| `RebalancePolicy` / `RebalanceEngine` 通用再平衡策略模型 | **删除** | 与回测引擎里的实现重复（两套规则、两套口径）；现在规则只在 `rebalance/rules.py` 一处 |
+| `RebalanceConstraints`（换手率 / 最小成交额约束） | **删除** | 回测未使用该约束，留着只会让人误以为生效 |
+| `TradeOrder` / `ExecutionResult` / `OrderExecutor` 执行上下文 | **未实现** | 实盘执行尚无需求，等有真实用例再做 |
 
-### 11.2 集成测试
-- 完整策略回测流程
-- 再平衡触发和执行
-- 订单执行模拟
-
-### 11.3 回归测试
-- 与历史回测结果对比
-- 确保策略行为一致性
+原则：**没有真实用例的抽象不预先建**（见 `.pi/agent/AGENTS.md` 第 6 节「防过度设计自查」）。
