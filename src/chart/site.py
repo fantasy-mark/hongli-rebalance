@@ -15,7 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+import pandas as pd
 
 from src.strategy.combined import (
     CombinedBacktester,
@@ -209,8 +211,9 @@ class BuildPagesSite:
         grid_dv = result.grid_result.daily_values
         rebalance_dv = result.rebalance_result.daily_values
 
-        grid_dates = [self._as_date(i) for i in grid_dv.index]
-        rebalance_dates = [self._as_date(i) for i in rebalance_dv.index]
+        # 各资产上市时间不同 -> 网格每日价值表的前段会有缺失（NaN）。
+        # 取“所有资产都有行情”的共同区间，并让两个策略的曲线共用同一组日期。
+        grid_dv, rebalance_dv, grid_dates = self._align_window(grid_dv, rebalance_dv)
 
         curves: List[ReturnCurve] = []
 
@@ -234,7 +237,7 @@ class BuildPagesSite:
             ReturnCurve.from_levels(
                 name=f"{float(self.config.threshold_pp):g}pp 再平衡",
                 role=CurveRole.REBALANCE,
-                dates=rebalance_dates,
+                dates=grid_dates,
                 levels=rebalance_dv["total_value"].astype(float).tolist(),
             )
         )
@@ -249,6 +252,7 @@ class BuildPagesSite:
             shares = grid_dv[shares_col].astype(float)
             close = grid_dv[close_col].astype(float)
             values = tuple(
+                ZERO if (s != s or c != c) else
                 (Decimal(str(s)) * Decimal(str(c))).quantize(Decimal("0.01"))
                 for s, c in zip(shares.tolist(), close.tolist())
             )
@@ -561,6 +565,50 @@ class BuildPagesSite:
         }
 
     # -------------------------------------------------------------- 工具
+    @staticmethod
+    def _align_window(grid_dv: pd.DataFrame,
+                      rebalance_dv: pd.DataFrame
+                      ) -> Tuple[pd.DataFrame, pd.DataFrame, List[date]]:
+        """
+        对齐两个策略的每日价值表
+
+        背景:
+        - 网格回测取的是各资产交易日的**并集**，资产上市时间不同 ->
+          每日价值表前段会出现缺失（NaN）
+        - 再平衡回测取的是**交集**，天然没有缺失
+
+        处理:
+        1. 只保留“所有资产都有行情”的共同区间（去掉上市晚的资产前段的 NaN）
+        2. 两个策略的日期轴取交集并对齐，保证所有曲线日期一致
+
+        Returns:
+            (网格每日价值表, 再平衡每日价值表, 统一日期列表)
+        """
+        # ---- 1. 所有资产都有行情的共同区间 ----
+        close_cols = [c for c in grid_dv.columns if c.endswith("_close")]
+        starts, ends = [], []
+        for col in close_cols:
+            valid = grid_dv[col].dropna()
+            if valid.empty:
+                continue
+            starts.append(valid.index[0])
+            ends.append(valid.index[-1])
+
+        if starts:
+            window_start, window_end = max(starts), min(ends)
+            if window_start <= window_end:
+                grid_dv = grid_dv.loc[window_start:window_end]
+                rebalance_dv = rebalance_dv.loc[window_start:window_end]
+
+        # ---- 2. 日期轴对齐（取交集）----
+        common = grid_dv.index.intersection(rebalance_dv.index)
+        if len(common) and len(common) != len(grid_dv.index):
+            grid_dv = grid_dv.reindex(common)
+            rebalance_dv = rebalance_dv.reindex(common).ffill()
+
+        grid_dates = [BuildPagesSite._as_date(i) for i in grid_dv.index]
+        return grid_dv, rebalance_dv, grid_dates
+
     @staticmethod
     def _as_date(value: Any) -> date:
         if isinstance(value, date):
