@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-20",
+  "generated_at": "2026-11-21T00:52:17",
   "window": {
     "start": "2020-11-05",
     "end": "2026-11-17"
@@ -7,96 +7,96 @@
   "combined": {
     "key": "combined",
     "label": "组合合计",
-    "initial_capital": 1200000.0,
-    "total_value": 2025706.007926154,
-    "cash": 156277.20792615402,
-    "market_value": 1869428.8,
-    "total_return": 0.6887910779930451,
-    "annualized_return": 0.09076532659435133,
-    "max_drawdown": -0.10503607764164398,
-    "sharpe_ratio": 0.6643327627760677,
-    "volatility": 0.09146820689744309,
-    "trade_count": 91,
+    "initial_capital": 400000.0,
+    "total_value": 566233.781176154,
+    "cash": 155975.08117615402,
+    "market_value": 410258.7,
+    "total_return": 0.4159373684267707,
+    "annualized_return": 0.05935762052311544,
+    "max_drawdown": -0.07601055049077368,
+    "sharpe_ratio": 0.47377933287759816,
+    "volatility": 0.061964755500848415,
+    "trade_count": 88,
     "positions": [
       {
         "code": "159937",
         "name": "黄金ETF",
-        "shares": 55000.0,
+        "shares": 11000.0,
         "price": 7.881,
-        "market_value": 433455.0,
-        "weight": 0.2139772495633539
+        "market_value": 86691.0,
+        "weight": 0.153101073941455
       },
       {
         "code": "511380",
         "name": "可转债ETF",
-        "shares": 40600.0,
+        "shares": 11100.0,
         "price": 12.047,
-        "market_value": 489108.2,
-        "weight": 0.24145073277475818
+        "market_value": 133721.7,
+        "weight": 0.2361598767954812
       },
       {
         "code": "513300",
         "name": "纳斯达克ETF",
-        "shares": 173000.0,
+        "shares": 34700.0,
         "price": 2.606,
-        "market_value": 450838.0,
-        "weight": 0.22255845529211415
+        "market_value": 90428.2,
+        "weight": 0.1597011746847156
       },
       {
         "code": "515180",
         "name": "红利ETF",
-        "shares": 280400.0,
+        "shares": 56200.0,
         "price": 1.769,
-        "market_value": 496027.6,
-        "weight": 0.24486652952558277
+        "market_value": 99417.8,
+        "weight": 0.17557730270612618
       }
     ]
   },
   "rebalance": {
     "key": "rebalance",
     "label": "再平衡组合",
-    "initial_capital": 1000000.0,
-    "total_value": 1824906.69775,
-    "cash": 1256.49775,
-    "market_value": 1823650.2,
-    "total_return": 0.8258184070256557,
-    "annualized_return": 0.10496567888528663,
-    "max_drawdown": -0.11537674587227095,
-    "sharpe_ratio": 0.717736107624998,
-    "volatility": 0.1044474119232338,
-    "trade_count": 66,
+    "initial_capital": 200000.0,
+    "total_value": 365434.471,
+    "cash": 954.371,
+    "market_value": 364480.1,
+    "total_return": 0.8280836368691639,
+    "annualized_return": 0.10519285077026508,
+    "max_drawdown": -0.11356150343576128,
+    "sharpe_ratio": 0.7191173234927323,
+    "volatility": 0.10456270251571127,
+    "trade_count": 63,
     "positions": [
       {
         "code": "159937",
         "name": "黄金ETF",
-        "shares": 55000.0,
+        "shares": 11000.0,
         "price": 7.881,
-        "market_value": 433455.0,
-        "weight": 0.23752173222577566
+        "market_value": 86691.0,
+        "weight": 0.23722721001872865
       },
       {
         "code": "511380",
         "name": "可转债ETF",
-        "shares": 36800.0,
+        "shares": 7300.0,
         "price": 12.047,
-        "market_value": 443329.6,
-        "weight": 0.24293274858742023
+        "market_value": 87943.1,
+        "weight": 0.24065354250612006
       },
       {
         "code": "513300",
         "name": "纳斯达克ETF",
-        "shares": 173000.0,
+        "shares": 34700.0,
         "price": 2.606,
-        "market_value": 450838.0,
-        "weight": 0.24704715071507824
+        "market_value": 90428.2,
+        "weight": 0.24745394092830394
       },
       {
         "code": "515180",
         "name": "红利ETF",
-        "shares": 280400.0,
+        "shares": 56200.0,
         "price": 1.769,
-        "market_value": 496027.6,
-        "weight": 0.27180984135329883
+        "market_value": 99417.8,
+        "weight": 0.27205370015572505
       }
     ]
   },

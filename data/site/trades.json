@@ -10,9 +10,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 3.963,
-      "shares": 63000.0,
-      "amount": 249669.0,
-      "step": null
+      "shares": 12600.0,
+      "amount": 49933.8,
+      "step": null,
+      "position_value": 49933.8,
+      "position_shares": 12600.0
     },
     {
       "date": "2020-11-05",
@@ -24,9 +26,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 10.341,
-      "shares": 24100.0,
-      "amount": 249218.1,
-      "step": null
+      "shares": 4800.0,
+      "amount": 49636.8,
+      "step": null,
+      "position_value": 49636.8,
+      "position_shares": 4800.0
     },
     {
       "date": "2020-11-05",
@@ -38,9 +42,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 1.013,
-      "shares": 246700.0,
-      "amount": 249907.1,
-      "step": null
+      "shares": 49300.0,
+      "amount": 49940.9,
+      "step": null,
+      "position_value": 49940.9,
+      "position_shares": 49300.0
     },
     {
       "date": "2020-11-05",
@@ -52,9 +58,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 1.171,
-      "shares": 213400.0,
-      "amount": 249891.4,
-      "step": null
+      "shares": 42600.0,
+      "amount": 49884.6,
+      "step": null,
+      "position_value": 49884.6,
+      "position_shares": 42600.0
     },
     {
       "date": "2020-11-30",
@@ -68,7 +76,9 @@
       "price": 3.6524066761243725,
       "shares": 2700.0,
       "amount": 9861.498025535806,
-      "step": 0.09259332387562744
+      "step": 0.09259332387562744,
+      "position_value": 9861.498025535806,
+      "position_shares": 2700.0
     },
     {
       "date": "2020-12-03",
@@ -82,7 +92,9 @@
       "price": 3.745,
       "shares": 2700.0,
       "amount": 10111.5,
-      "step": 0.09259332387562744
+      "step": 0.09259332387562744,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
       "date": "2021-03-02",
@@ -96,7 +108,9 @@
       "price": 3.512167580059333,
       "shares": 2800.0,
       "amount": 9834.06922416613,
-      "step": 0.08783241994066725
+      "step": 0.08783241994066725,
+      "position_value": 9834.06922416613,
+      "position_shares": 2800.0
     },
     {
       "date": "2021-03-18",
@@ -110,7 +124,9 @@
       "price": 3.6,
       "shares": 2800.0,
       "amount": 10080.0,
-      "step": 0.08783241994066725
+      "step": 0.08783241994066725,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
       "date": "2021-04-14",
@@ -122,9 +138,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 3.612,
-      "shares": 7700.0,
-      "amount": 27812.4,
-      "step": null
+      "shares": 1500.0,
+      "amount": 5418.0,
+      "step": null,
+      "position_value": 50929.2,
+      "position_shares": 14100.0
     },
     {
       "date": "2021-04-14",
@@ -136,9 +154,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 10.25,
-      "shares": 800.0,
-      "amount": 8200.0,
-      "step": null
+      "shares": 100.0,
+      "amount": 1025.0,
+      "step": null,
+      "position_value": 50225.0,
+      "position_shares": 4900.0
     },
     {
       "date": "2021-04-14",
@@ -150,9 +170,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 1.162,
-      "shares": 26600.0,
-      "amount": 30909.2,
-      "step": null
+      "shares": 5200.0,
+      "amount": 6042.4,
+      "step": null,
+      "position_value": 51244.2,
+      "position_shares": 44100.0
     },
     {
       "date": "2021-04-14",
@@ -164,9 +186,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 1.221,
-      "shares": 4000.0,
-      "amount": 4884.0,
-      "step": null
+      "shares": 700.0,
+      "amount": 854.7,
+      "step": null,
+      "position_value": 51159.9,
+      "position_shares": 41900.0
     },
     {
       "date": "2022-01-25",
@@ -180,7 +204,9 @@
       "price": 1.145998537164368,
       "shares": 8700.0,
       "amount": 9970.18727333,
-      "step": 0.029001462835632083
+      "step": 0.029001462835632083,
+      "position_value": 9970.18727333,
+      "position_shares": 8700.0
     },
     {
       "date": "2022-01-27",
@@ -194,7 +220,9 @@
       "price": 1.1169970743287359,
       "shares": 8900.0,
       "amount": 9941.273961525749,
-      "step": 0.029001462835632083
+      "step": 0.029001462835632083,
+      "position_value": 19659.14850818575,
+      "position_shares": 17600.0
     },
     {
       "date": "2022-02-07",
@@ -208,7 +236,9 @@
       "price": 1.1603344875433452,
       "shares": 17600.0,
       "amount": 20421.886980762876,
-      "step": 0.029001462835632083
+      "step": 0.029001462835632083,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
       "date": "2022-02-24",
@@ -222,21 +252,9 @@
       "price": 1.068439031711106,
       "shares": 9300.0,
       "amount": 9936.482994913287,
-      "step": 0.0315609682888938
-    },
-    {
-      "date": "2022-02-24",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "sell",
-      "side": "sell",
-      "round_no": 0,
-      "price": 3.852,
-      "shares": 200.0,
-      "amount": 770.4,
-      "step": null
+      "step": 0.0315609682888938,
+      "position_value": 9936.482994913287,
+      "position_shares": 9300.0
     },
     {
       "date": "2022-02-24",
@@ -248,9 +266,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 11.624,
-      "shares": 1500.0,
-      "amount": 17436.0,
-      "step": null
+      "shares": 200.0,
+      "amount": 2324.8,
+      "step": null,
+      "position_value": 54632.8,
+      "position_shares": 4700.0
     },
     {
       "date": "2022-02-24",
@@ -262,9 +282,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 1.058,
-      "shares": 36200.0,
-      "amount": 38299.6,
-      "step": null
+      "shares": 7100.0,
+      "amount": 7511.8,
+      "step": null,
+      "position_value": 54169.6,
+      "position_shares": 51200.0
     },
     {
       "date": "2022-02-24",
@@ -276,9 +298,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 1.383,
-      "shares": 13300.0,
-      "amount": 18393.9,
-      "step": null
+      "shares": 2700.0,
+      "amount": 3734.1,
+      "step": null,
+      "position_value": 54213.6,
+      "position_shares": 39200.0
     },
     {
       "date": "2022-02-25",
@@ -292,7 +316,9 @@
       "price": 1.1,
       "shares": 9300.0,
       "amount": 10230.0,
-      "step": 0.0315609682888938
+      "step": 0.0315609682888938,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
       "date": "2022-03-29",
@@ -304,9 +330,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 3.849,
-      "shares": 1000.0,
-      "amount": 3849.0,
-      "step": null
+      "shares": 200.0,
+      "amount": 769.8,
+      "step": null,
+      "position_value": 55040.7,
+      "position_shares": 14300.0
     },
     {
       "date": "2022-03-29",
@@ -318,9 +346,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 10.869,
-      "shares": 1900.0,
-      "amount": 20651.1,
-      "step": null
+      "shares": 300.0,
+      "amount": 3260.7,
+      "step": null,
+      "position_value": 54345.0,
+      "position_shares": 5000.0
     },
     {
       "date": "2022-03-29",
@@ -332,9 +362,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 1.209,
-      "shares": 28300.0,
-      "amount": 34214.7,
-      "step": null
+      "shares": 5600.0,
+      "amount": 6770.4,
+      "step": null,
+      "position_value": 55130.4,
+      "position_shares": 45600.0
     },
     {
       "date": "2022-03-29",
@@ -346,9 +378,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 1.366,
-      "shares": 5600.0,
-      "amount": 7649.6,
-      "step": null
+      "shares": 1100.0,
+      "amount": 1502.6,
+      "step": null,
+      "position_value": 55049.8,
+      "position_shares": 40300.0
     },
     {
       "date": "2022-05-12",
@@ -360,9 +394,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 3.93,
-      "shares": 4100.0,
-      "amount": 16113.0,
-      "step": null
+      "shares": 800.0,
+      "amount": 3144.0,
+      "step": null,
+      "position_value": 53055.0,
+      "position_shares": 13500.0
     },
     {
       "date": "2022-05-12",
@@ -374,9 +410,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 11.095,
-      "shares": 1400.0,
-      "amount": 15533.0,
-      "step": null
+      "shares": 200.0,
+      "amount": 2219.0,
+      "step": null,
+      "position_value": 53256.0,
+      "position_shares": 4800.0
     },
     {
       "date": "2022-05-12",
@@ -388,9 +426,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 1.021,
-      "shares": 31300.0,
-      "amount": 31957.3,
-      "step": null
+      "shares": 6200.0,
+      "amount": 6330.2,
+      "step": null,
+      "position_value": 52887.8,
+      "position_shares": 51800.0
     },
     {
       "date": "2022-05-12",
@@ -402,9 +442,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 1.308,
-      "shares": 700.0,
-      "amount": 915.6,
-      "step": null
+      "shares": 100.0,
+      "amount": 130.8,
+      "step": null,
+      "position_value": 52843.2,
+      "position_shares": 40400.0
     },
     {
       "date": "2022-05-19",
@@ -418,7 +460,9 @@
       "price": 1.013921096659979,
       "shares": 9800.0,
       "amount": 9936.426747267793,
-      "step": 0.034078903340021116
+      "step": 0.034078903340021116,
+      "position_value": 9936.426747267793,
+      "position_shares": 9800.0
     },
     {
       "date": "2022-05-30",
@@ -432,7 +476,9 @@
       "price": 1.048,
       "shares": 9800.0,
       "amount": 10270.4,
-      "step": 0.034078903340021116
+      "step": 0.034078903340021116,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
       "date": "2023-05-30",
@@ -444,9 +490,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 4.296,
-      "shares": 1700.0,
-      "amount": 7303.2,
-      "step": null
+      "shares": 300.0,
+      "amount": 1288.8,
+      "step": null,
+      "position_value": 59284.8,
+      "position_shares": 13800.0
     },
     {
       "date": "2023-05-30",
@@ -458,9 +506,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 11.283,
-      "shares": 2400.0,
-      "amount": 27079.2,
-      "step": null
+      "shares": 400.0,
+      "amount": 4513.2,
+      "step": null,
+      "position_value": 58671.6,
+      "position_shares": 5200.0
     },
     {
       "date": "2023-05-30",
@@ -472,9 +522,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 1.291,
-      "shares": 29000.0,
-      "amount": 37439.0,
-      "step": null
+      "shares": 5700.0,
+      "amount": 7358.7,
+      "step": null,
+      "position_value": 59515.1,
+      "position_shares": 46100.0
     },
     {
       "date": "2023-05-30",
@@ -486,12 +538,14 @@
       "side": "buy",
       "round_no": 0,
       "price": 1.46,
-      "shares": 1200.0,
-      "amount": 1752.0,
-      "step": null
+      "shares": 200.0,
+      "amount": 292.0,
+      "step": null,
+      "position_value": 59276.0,
+      "position_shares": 40600.0
     },
     {
-      "date": "2023-12-20",
+      "date": "2023-12-19",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "159937",
@@ -499,13 +553,15 @@
       "action": "sell",
       "side": "sell",
       "round_no": 0,
-      "price": 4.599,
-      "shares": 1500.0,
-      "amount": 6898.5,
-      "step": null
+      "price": 4.584,
+      "shares": 200.0,
+      "amount": 916.8,
+      "step": null,
+      "position_value": 62342.4,
+      "position_shares": 13600.0
     },
     {
-      "date": "2023-12-20",
+      "date": "2023-12-19",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "511380",
@@ -513,13 +569,15 @@
       "action": "buy",
       "side": "buy",
       "round_no": 0,
-      "price": 10.763,
-      "shares": 2500.0,
-      "amount": 26907.5,
-      "step": null
+      "price": 10.794,
+      "shares": 500.0,
+      "amount": 5397.0,
+      "step": null,
+      "position_value": 61525.8,
+      "position_shares": 5700.0
     },
     {
-      "date": "2023-12-20",
+      "date": "2023-12-19",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "513300",
@@ -527,13 +585,15 @@
       "action": "sell",
       "side": "sell",
       "round_no": 0,
-      "price": 1.516,
-      "shares": 25400.0,
-      "amount": 38506.4,
-      "step": null
+      "price": 1.507,
+      "shares": 4900.0,
+      "amount": 7384.3,
+      "step": null,
+      "position_value": 62088.4,
+      "position_shares": 41200.0
     },
     {
-      "date": "2023-12-20",
+      "date": "2023-12-19",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "515180",
@@ -541,10 +601,12 @@
       "action": "buy",
       "side": "buy",
       "round_no": 0,
-      "price": 1.43,
-      "shares": 13500.0,
-      "amount": 19305.0,
-      "step": null
+      "price": 1.435,
+      "shares": 2600.0,
+      "amount": 3731.0,
+      "step": null,
+      "position_value": 61992.0,
+      "position_shares": 43200.0
     },
     {
       "date": "2024-02-05",
@@ -558,7 +620,9 @@
       "price": 10.500221264950223,
       "shares": 900.0,
       "amount": 9450.1991384552,
-      "step": 0.22277873504977716
+      "step": 0.22277873504977716,
+      "position_value": 9450.1991384552,
+      "position_shares": 900.0
     },
     {
       "date": "2024-02-07",
@@ -572,10 +636,12 @@
       "price": 10.723,
       "shares": 900.0,
       "amount": 9650.7,
-      "step": 0.22277873504977716
+      "step": 0.22277873504977716,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
-      "date": "2024-07-05",
+      "date": "2024-07-03",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "159937",
@@ -583,13 +649,15 @@
       "action": "sell",
       "side": "sell",
       "round_no": 0,
-      "price": 5.373,
-      "shares": 1500.0,
-      "amount": 8059.5,
-      "step": null
+      "price": 5.34,
+      "shares": 300.0,
+      "amount": 1602.0,
+      "step": null,
+      "position_value": 71022.0,
+      "position_shares": 13300.0
     },
     {
-      "date": "2024-07-05",
+      "date": "2024-07-03",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "511380",
@@ -597,13 +665,15 @@
       "action": "buy",
       "side": "buy",
       "round_no": 0,
-      "price": 10.938,
-      "shares": 3600.0,
-      "amount": 39376.8,
-      "step": null
+      "price": 10.999,
+      "shares": 700.0,
+      "amount": 7699.3,
+      "step": null,
+      "position_value": 70393.6,
+      "position_shares": 6400.0
     },
     {
-      "date": "2024-07-05",
+      "date": "2024-07-03",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "513300",
@@ -611,13 +681,15 @@
       "action": "sell",
       "side": "sell",
       "round_no": 0,
-      "price": 1.955,
-      "shares": 23300.0,
-      "amount": 45551.5,
-      "step": null
+      "price": 1.936,
+      "shares": 4500.0,
+      "amount": 8712.0,
+      "step": null,
+      "position_value": 71051.2,
+      "position_shares": 36700.0
     },
     {
-      "date": "2024-07-05",
+      "date": "2024-07-03",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "515180",
@@ -625,10 +697,12 @@
       "action": "buy",
       "side": "buy",
       "round_no": 0,
-      "price": 1.57,
-      "shares": 8900.0,
-      "amount": 13973.0,
-      "step": null
+      "price": 1.583,
+      "shares": 1500.0,
+      "amount": 2374.5,
+      "step": null,
+      "position_value": 70760.1,
+      "position_shares": 44700.0
     },
     {
       "date": "2024-08-16",
@@ -642,7 +716,9 @@
       "price": 10.346847632186302,
       "shares": 900.0,
       "amount": 9312.16286896767,
-      "step": 0.14215236781369806
+      "step": 0.14215236781369806,
+      "position_value": 9312.16286896767,
+      "position_shares": 900.0
     },
     {
       "date": "2024-08-23",
@@ -656,7 +732,9 @@
       "price": 10.204695264372605,
       "shares": 900.0,
       "amount": 9184.225737935343,
-      "step": 0.14215236781369806
+      "step": 0.14215236781369806,
+      "position_value": 18368.451475870686,
+      "position_shares": 1800.0
     },
     {
       "date": "2024-08-30",
@@ -670,10 +748,12 @@
       "price": 10.41792381609315,
       "shares": 1800.0,
       "amount": 18752.26286896767,
-      "step": 0.14215236781369806
+      "step": 0.14215236781369806,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
-      "date": "2024-10-08",
+      "date": "2025-02-11",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "159937",
@@ -681,27 +761,15 @@
       "action": "sell",
       "side": "sell",
       "round_no": 0,
-      "price": 5.71,
-      "shares": 2600.0,
-      "amount": 14846.0,
-      "step": null
+      "price": 6.57,
+      "shares": 1400.0,
+      "amount": 9198.0,
+      "step": null,
+      "position_value": 78183.0,
+      "position_shares": 11900.0
     },
     {
-      "date": "2024-10-08",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "sell",
-      "side": "sell",
-      "round_no": 0,
-      "price": 11.371,
-      "shares": 500.0,
-      "amount": 5685.5,
-      "step": null
-    },
-    {
-      "date": "2024-10-08",
+      "date": "2025-02-11",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "513300",
@@ -709,111 +777,47 @@
       "action": "buy",
       "side": "buy",
       "round_no": 0,
-      "price": 1.754,
-      "shares": 24900.0,
-      "amount": 43674.6,
-      "step": null
+      "price": 2.041,
+      "shares": 1300.0,
+      "amount": 2653.3,
+      "step": null,
+      "position_value": 77558.0,
+      "position_shares": 38000.0
     },
     {
-      "date": "2024-10-08",
+      "date": "2025-02-11",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "515180",
       "asset_name": "红利ETF",
-      "action": "sell",
-      "side": "sell",
+      "action": "buy",
+      "side": "buy",
       "round_no": 0,
-      "price": 1.702,
-      "shares": 13100.0,
-      "amount": 22296.2,
-      "step": null
+      "price": 1.596,
+      "shares": 3900.0,
+      "amount": 6224.4,
+      "step": null,
+      "position_value": 77565.6,
+      "position_shares": 48600.0
     },
     {
-      "date": "2024-12-16",
+      "date": "2025-03-31",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "159937",
       "asset_name": "黄金ETF",
-      "action": "buy",
-      "side": "buy",
+      "action": "sell",
+      "side": "sell",
       "round_no": 0,
-      "price": 5.937,
+      "price": 6.993,
       "shares": 900.0,
-      "amount": 5343.3,
-      "step": null
+      "amount": 6293.7,
+      "step": null,
+      "position_value": 76923.0,
+      "position_shares": 11000.0
     },
     {
-      "date": "2024-12-16",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 11.658,
-      "shares": 900.0,
-      "amount": 10492.2,
-      "step": null
-    },
-    {
-      "date": "2024-12-16",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "sell",
-      "side": "sell",
-      "round_no": 0,
-      "price": 2.088,
-      "shares": 23300.0,
-      "amount": 48650.4,
-      "step": null
-    },
-    {
-      "date": "2024-12-16",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "515180",
-      "asset_name": "红利ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 1.646,
-      "shares": 19400.0,
-      "amount": 31932.4,
-      "step": null
-    },
-    {
-      "date": "2025-03-11",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "sell",
-      "side": "sell",
-      "round_no": 0,
-      "price": 6.495,
-      "shares": 5800.0,
-      "amount": 37671.0,
-      "step": null
-    },
-    {
-      "date": "2025-03-11",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "sell",
-      "side": "sell",
-      "round_no": 0,
-      "price": 12.181,
-      "shares": 1500.0,
-      "amount": 18271.5,
-      "step": null
-    },
-    {
-      "date": "2025-03-11",
+      "date": "2025-03-31",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "513300",
@@ -821,181 +825,31 @@
       "action": "buy",
       "side": "buy",
       "round_no": 0,
-      "price": 1.799,
-      "shares": 28000.0,
-      "amount": 50372.0,
-      "step": null
+      "price": 1.768,
+      "shares": 5200.0,
+      "amount": 9193.6,
+      "step": null,
+      "position_value": 76377.6,
+      "position_shares": 43200.0
     },
     {
-      "date": "2025-03-11",
+      "date": "2025-03-31",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "515180",
       "asset_name": "红利ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 1.605,
-      "shares": 4500.0,
-      "amount": 7222.5,
-      "step": null
-    },
-    {
-      "date": "2025-04-16",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
       "action": "sell",
       "side": "sell",
       "round_no": 0,
-      "price": 7.487,
-      "shares": 6800.0,
-      "amount": 50911.6,
-      "step": null
-    },
-    {
-      "date": "2025-04-16",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 11.708,
-      "shares": 1700.0,
-      "amount": 19903.6,
-      "step": null
-    },
-    {
-      "date": "2025-04-16",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 1.73,
-      "shares": 12600.0,
-      "amount": 21798.0,
-      "step": null
-    },
-    {
-      "date": "2025-04-16",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "515180",
-      "asset_name": "红利ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 1.604,
-      "shares": 4600.0,
-      "amount": 7378.4,
-      "step": null
-    },
-    {
-      "date": "2025-07-31",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 7.337,
-      "shares": 5600.0,
-      "amount": 41087.2,
-      "step": null
-    },
-    {
-      "date": "2025-07-31",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "sell",
-      "side": "sell",
-      "round_no": 0,
-      "price": 2.127,
-      "shares": 25700.0,
-      "amount": 54663.9,
-      "step": null
-    },
-    {
-      "date": "2025-07-31",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "515180",
-      "asset_name": "红利ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 1.684,
-      "shares": 8700.0,
-      "amount": 14650.8,
-      "step": null
-    },
-    {
-      "date": "2025-10-14",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "159937",
-      "asset_name": "黄金ETF",
-      "action": "sell",
-      "side": "sell",
-      "round_no": 0,
-      "price": 8.936,
-      "shares": 6500.0,
-      "amount": 58084.0,
-      "step": null
-    },
-    {
-      "date": "2025-10-14",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "511380",
-      "asset_name": "可转债ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 13.322,
+      "price": 1.612,
       "shares": 1100.0,
-      "amount": 14654.2,
-      "step": null
+      "amount": 1773.2,
+      "step": null,
+      "position_value": 76570.0,
+      "position_shares": 47500.0
     },
     {
-      "date": "2025-10-14",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "513300",
-      "asset_name": "纳斯达克ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 2.205,
-      "shares": 7900.0,
-      "amount": 17419.5,
-      "step": null
-    },
-    {
-      "date": "2025-10-14",
-      "strategy": "rebalance",
-      "strategy_name": "阈值再平衡",
-      "asset_code": "515180",
-      "asset_name": "红利ETF",
-      "action": "buy",
-      "side": "buy",
-      "round_no": 0,
-      "price": 1.716,
-      "shares": 14700.0,
-      "amount": 25225.2,
-      "step": null
-    },
-    {
-      "date": "2026-01-28",
+      "date": "2025-04-22",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "159937",
@@ -1003,13 +857,31 @@
       "action": "sell",
       "side": "sell",
       "round_no": 0,
-      "price": 11.252,
-      "shares": 5900.0,
-      "amount": 66386.8,
-      "step": null
+      "price": 7.967,
+      "shares": 1200.0,
+      "amount": 9560.4,
+      "step": null,
+      "position_value": 78076.6,
+      "position_shares": 9800.0
     },
     {
-      "date": "2026-01-28",
+      "date": "2025-04-22",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 11.774,
+      "shares": 200.0,
+      "amount": 2354.8,
+      "step": null,
+      "position_value": 77708.4,
+      "position_shares": 6600.0
+    },
+    {
+      "date": "2025-04-22",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "513300",
@@ -1017,13 +889,15 @@
       "action": "buy",
       "side": "buy",
       "round_no": 0,
-      "price": 2.34,
-      "shares": 10200.0,
-      "amount": 23868.0,
-      "step": null
+      "price": 1.7,
+      "shares": 2700.0,
+      "amount": 4590.0,
+      "step": null,
+      "position_value": 78030.0,
+      "position_shares": 45900.0
     },
     {
-      "date": "2026-01-28",
+      "date": "2025-04-22",
       "strategy": "rebalance",
       "strategy_name": "阈值再平衡",
       "asset_code": "515180",
@@ -1031,10 +905,236 @@
       "action": "buy",
       "side": "buy",
       "round_no": 0,
-      "price": 1.749,
-      "shares": 24500.0,
-      "amount": 42850.5,
-      "step": null
+      "price": 1.608,
+      "shares": 1000.0,
+      "amount": 1608.0,
+      "step": null,
+      "position_value": 77988.0,
+      "position_shares": 48500.0
+    },
+    {
+      "date": "2025-05-15",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 7.057,
+      "shares": 1400.0,
+      "amount": 9879.8,
+      "step": null,
+      "position_value": 79038.4,
+      "position_shares": 11200.0
+    },
+    {
+      "date": "2025-05-15",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.93,
+      "shares": 4800.0,
+      "amount": 9264.0,
+      "step": null,
+      "position_value": 79323.0,
+      "position_shares": 41100.0
+    },
+    {
+      "date": "2025-05-15",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.636,
+      "shares": 100.0,
+      "amount": 163.6,
+      "step": null,
+      "position_value": 79182.4,
+      "position_shares": 48400.0
+    },
+    {
+      "date": "2025-10-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 9.224,
+      "shares": 1200.0,
+      "amount": 11068.8,
+      "step": null,
+      "position_value": 92240.0,
+      "position_shares": 10000.0
+    },
+    {
+      "date": "2025-10-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 13.34,
+      "shares": 200.0,
+      "amount": 2668.0,
+      "step": null,
+      "position_value": 90712.0,
+      "position_shares": 6800.0
+    },
+    {
+      "date": "2025-10-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 2.251,
+      "shares": 200.0,
+      "amount": 450.2,
+      "step": null,
+      "position_value": 92065.9,
+      "position_shares": 40900.0
+    },
+    {
+      "date": "2025-10-16",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.731,
+      "shares": 4600.0,
+      "amount": 7962.6,
+      "step": null,
+      "position_value": 91743.0,
+      "position_shares": 53000.0
+    },
+    {
+      "date": "2026-01-29",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 11.888,
+      "shares": 1400.0,
+      "amount": 16643.2,
+      "step": null,
+      "position_value": 102236.8,
+      "position_shares": 8600.0
+    },
+    {
+      "date": "2026-01-29",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 14.715,
+      "shares": 100.0,
+      "amount": 1471.5,
+      "step": null,
+      "position_value": 101533.5,
+      "position_shares": 6900.0
+    },
+    {
+      "date": "2026-01-29",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "513300",
+      "asset_name": "纳斯达克ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 2.325,
+      "shares": 3000.0,
+      "amount": 6975.0,
+      "step": null,
+      "position_value": 102067.5,
+      "position_shares": 43900.0
+    },
+    {
+      "date": "2026-01-29",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 1.767,
+      "shares": 4800.0,
+      "amount": 8481.6,
+      "step": null,
+      "position_value": 102132.6,
+      "position_shares": 57800.0
+    },
+    {
+      "date": "2026-03-23",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "159937",
+      "asset_name": "黄金ETF",
+      "action": "buy",
+      "side": "buy",
+      "round_no": 0,
+      "price": 8.925,
+      "shares": 1500.0,
+      "amount": 13387.5,
+      "step": null,
+      "position_value": 90142.5,
+      "position_shares": 10100.0
+    },
+    {
+      "date": "2026-03-23",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "511380",
+      "asset_name": "可转债ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 13.577,
+      "shares": 200.0,
+      "amount": 2715.4,
+      "step": null,
+      "position_value": 90965.9,
+      "position_shares": 6700.0
+    },
+    {
+      "date": "2026-03-23",
+      "strategy": "rebalance",
+      "strategy_name": "阈值再平衡",
+      "asset_code": "515180",
+      "asset_name": "红利ETF",
+      "action": "sell",
+      "side": "sell",
+      "round_no": 0,
+      "price": 1.738,
+      "shares": 5700.0,
+      "amount": 9906.6,
+      "step": null,
+      "position_value": 90549.8,
+      "position_shares": 52100.0
     },
     {
       "date": "2026-05-11",
@@ -1046,9 +1146,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 9.748,
-      "shares": 6400.0,
-      "amount": 62387.2,
-      "step": null
+      "shares": 100.0,
+      "amount": 974.8,
+      "step": null,
+      "position_value": 99429.6,
+      "position_shares": 10200.0
     },
     {
       "date": "2026-05-11",
@@ -1060,9 +1162,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 14.534,
-      "shares": 300.0,
-      "amount": 4360.2,
-      "step": null
+      "shares": 200.0,
+      "amount": 2906.8,
+      "step": null,
+      "position_value": 100284.6,
+      "position_shares": 6900.0
     },
     {
       "date": "2026-05-11",
@@ -1074,9 +1178,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 2.577,
-      "shares": 21600.0,
-      "amount": 55663.2,
-      "step": null
+      "shares": 4900.0,
+      "amount": 12627.3,
+      "step": null,
+      "position_value": 100503.0,
+      "position_shares": 39000.0
     },
     {
       "date": "2026-05-11",
@@ -1084,13 +1190,15 @@
       "strategy_name": "阈值再平衡",
       "asset_code": "515180",
       "asset_name": "红利ETF",
-      "action": "sell",
-      "side": "sell",
+      "action": "buy",
+      "side": "buy",
       "round_no": 0,
       "price": 1.778,
-      "shares": 7300.0,
-      "amount": 12979.4,
-      "step": null
+      "shares": 4300.0,
+      "amount": 7645.4,
+      "step": null,
+      "position_value": 100279.2,
+      "position_shares": 56400.0
     },
     {
       "date": "2026-06-11",
@@ -1104,7 +1212,9 @@
       "price": 8.545,
       "shares": 1100.0,
       "amount": 9399.5,
-      "step": 0.3076081249367359
+      "step": 0.3076081249367359,
+      "position_value": 9399.5,
+      "position_shares": 1100.0
     },
     {
       "date": "2026-06-15",
@@ -1118,7 +1228,9 @@
       "price": 8.852608124936737,
       "shares": 1100.0,
       "amount": 9737.86893743041,
-      "step": 0.3076081249367359
+      "step": 0.3076081249367359,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
       "date": "2026-09-23",
@@ -1130,9 +1242,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 8.875,
-      "shares": 3600.0,
-      "amount": 31950.0,
-      "step": null
+      "shares": 800.0,
+      "amount": 7100.0,
+      "step": null,
+      "position_value": 97625.0,
+      "position_shares": 11000.0
     },
     {
       "date": "2026-09-23",
@@ -1144,9 +1258,11 @@
       "side": "buy",
       "round_no": 0,
       "price": 13.269,
-      "shares": 2400.0,
-      "amount": 31845.6,
-      "step": null
+      "shares": 400.0,
+      "amount": 5307.6,
+      "step": null,
+      "position_value": 96863.7,
+      "position_shares": 7300.0
     },
     {
       "date": "2026-09-23",
@@ -1158,9 +1274,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 2.827,
-      "shares": 21600.0,
-      "amount": 61063.2,
-      "step": null
+      "shares": 4300.0,
+      "amount": 12156.1,
+      "step": null,
+      "position_value": 98096.9,
+      "position_shares": 34700.0
     },
     {
       "date": "2026-09-23",
@@ -1172,9 +1290,11 @@
       "side": "sell",
       "round_no": 0,
       "price": 1.744,
-      "shares": 1600.0,
-      "amount": 2790.4,
-      "step": null
+      "shares": 200.0,
+      "amount": 348.8,
+      "step": null,
+      "position_value": 98012.8,
+      "position_shares": 56200.0
     },
     {
       "date": "2026-09-28",
@@ -1188,7 +1308,9 @@
       "price": 13.068359148644719,
       "shares": 700.0,
       "amount": 9147.851404051304,
-      "step": 0.2876408513552803
+      "step": 0.2876408513552803,
+      "position_value": 9147.851404051304,
+      "position_shares": 700.0
     },
     {
       "date": "2026-10-09",
@@ -1202,7 +1324,9 @@
       "price": 12.78071829728944,
       "shares": 700.0,
       "amount": 8946.502808102608,
-      "step": 0.2876408513552803
+      "step": 0.2876408513552803,
+      "position_value": 17893.005616205217,
+      "position_shares": 1400.0
     },
     {
       "date": "2026-10-15",
@@ -1216,7 +1340,9 @@
       "price": 12.493077445934158,
       "shares": 800.0,
       "amount": 9994.461956747327,
-      "step": 0.2876408513552803
+      "step": 0.2876408513552803,
+      "position_value": 27484.77038105515,
+      "position_shares": 2200.0
     },
     {
       "date": "2026-11-02",
@@ -1230,7 +1356,9 @@
       "price": 7.93249762984377,
       "shares": 1200.0,
       "amount": 9518.997155812523,
-      "step": 0.3145023701562306
+      "step": 0.3145023701562306,
+      "position_value": 9518.997155812523,
+      "position_shares": 1200.0
     },
     {
       "date": "2026-11-02",
@@ -1244,7 +1372,9 @@
       "price": 12.20543659457888,
       "shares": 800.0,
       "amount": 9764.349275663102,
-      "step": 0.2876408513552803
+      "step": 0.2876408513552803,
+      "position_value": 36616.30978373664,
+      "position_shares": 3000.0
     },
     {
       "date": "2026-11-05",
@@ -1258,7 +1388,9 @@
       "price": 8.247,
       "shares": 1200.0,
       "amount": 9896.4,
-      "step": 0.3145023701562306
+      "step": 0.3145023701562306,
+      "position_value": 0.0,
+      "position_shares": 0.0
     },
     {
       "date": "2026-11-17",
@@ -1272,7 +1404,9 @@
       "price": 11.917795743223598,
       "shares": 800.0,
       "amount": 9534.236594578879,
-      "step": 0.2876408513552803
+      "step": 0.2876408513552803,
+      "position_value": 45287.62382424968,
+      "position_shares": 3800.0
     }
   ]
 }

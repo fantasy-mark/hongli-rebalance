@@ -13,7 +13,7 @@ GitHub Pages 站点生成器（图表模块）
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -126,6 +126,8 @@ class TradeView:
     shares: Decimal
     amount: Decimal
     step: Optional[Decimal] = None   # 网格步长（网格专有）
+    position_value: Optional[Decimal] = None  # 交易后该资产在该策略中的持仓市值
+    position_shares: Optional[Decimal] = None  # 交易后该资产在该策略中的持仓数量
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -141,6 +143,8 @@ class TradeView:
             "shares": float(self.shares),
             "amount": float(self.amount),
             "step": float(self.step) if self.step is not None else None,
+            "position_value": float(self.position_value) if self.position_value is not None else None,
+            "position_shares": float(self.position_shares) if self.position_shares is not None else None,
         }
 
 
@@ -362,7 +366,7 @@ class BuildPagesSite:
 
         combined_dv = result.daily_values
         return SummaryView(
-            generated_at=date.today().isoformat(),
+            generated_at=datetime.now().isoformat(timespec='seconds'),
             window_start=self._as_date(combined_dv.index[0]),
             window_end=self._as_date(combined_dv.index[-1]),
             combined=combined,
@@ -548,7 +552,46 @@ class BuildPagesSite:
 
         # 按日期升序（同日按策略、资产排序），前端再倒序展示
         views.sort(key=lambda v: (v.date, v.strategy, v.asset_code))
-        return views
+
+        # 计算每笔交易后的持仓市值，创建新的 TradeView 对象
+        positions = {}  # (strategy, asset_code) -> shares
+        views_with_position = []
+        for view in views:
+            key = (view.strategy, view.asset_code)
+            current_shares = positions.get(key, Decimal("0"))
+            
+            # 更新持仓
+            if view.side == "buy":
+                current_shares += view.shares
+            elif view.side == "sell":
+                current_shares -= view.shares
+            
+            positions[key] = current_shares
+            
+            # 计算市值
+            position_value = current_shares * view.price
+            
+            # 创建新的 TradeView 对象，包含持仓市值和持仓数量
+            views_with_position.append(
+                TradeView(
+                    date=view.date,
+                    strategy=view.strategy,
+                    strategy_name=view.strategy_name,
+                    asset_code=view.asset_code,
+                    asset_name=view.asset_name,
+                    action=view.action,
+                    side=view.side,
+                    round_no=view.round_no,
+                    price=view.price,
+                    shares=view.shares,
+                    amount=view.amount,
+                    step=view.step,
+                    position_value=position_value,
+                    position_shares=current_shares,
+                )
+            )
+
+        return views_with_position
 
     # -------------------------------------------------------------- 策略规格
     def build_strategies(self, result: CombinedBacktestResult) -> Dict[str, Any]:
@@ -643,17 +686,18 @@ def default_config(
             ("513300", "纳斯达克ETF"),
         ]
     )
+    rebalance_initial_capital = Decimal("200000")
     return CombinedConfig(
         allocation=plan,
         threshold_pp=Decimal("3"),
-        rebalance_initial_capital=Decimal("1000000"),
+        rebalance_initial_capital=rebalance_initial_capital,
         rebalance_transaction_cost_bps=Decimal("5"),
         grid_initial_capital=Decimal("200000"),
         grid_trigger=GridTrigger(
             lookback_days=120,
             atr_period=120,
             step_ratio=Decimal("2"),
-            buy_amount=Decimal("10000"),
+            buy_amount=rebalance_initial_capital / 20,
             price_basis=GridPriceBasis.LOW,
             take_profit_ratio=Decimal("1"),
         ),

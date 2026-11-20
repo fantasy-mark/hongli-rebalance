@@ -274,7 +274,7 @@ function renderTrades() {
           <td class="${sideCls}">${esc(side)}</td>
           <td>${esc(action)}</td>
           <td class="num">${Number(t.price).toFixed(4)}</td>
-          <td class="num">${shares(t.shares)}</td>
+          <td class="num">${shares(t.position_shares)}<br><span class="muted" style="font-size:0.85em">(${shares(t.shares)})</span></td>
           <td class="num">${money(t.position_value, 2)}<br><span class="muted" style="font-size:0.85em">(${money(t.amount, 2)})</span></td>
           ${stepCell}
           ${roundCell}
