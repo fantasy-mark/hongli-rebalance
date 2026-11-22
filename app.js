@@ -352,8 +352,9 @@ function calculateRebalanceStats(trades) {
     };
   }
 
-  // 计算初始市值（开仓交易的市值之和）
-  const openingTrades = trades.filter(t => t.action === 'open' || t.action === 'buy');
+  // 计算初始市值：各资产**建仓**交易的市值之和
+  // （再平衡策略限制只能开仓一次，所以建仓交易就是初始建仓）
+  const openingTrades = trades.filter(t => t.action === 'open');
   const initialMarketValue = openingTrades.reduce((sum, t) => sum + t.amount, 0);
 
   // 计算当前持仓
@@ -610,7 +611,8 @@ function tradeHistoryTable(trades, scopeLabel, isBacktest = true) {
     // 真实交易记录 - 合并方向和类型为交易类型
     rows = sortedTrades
       .map((t) => {
-        const action = ACTION_LABELS[t.action] || t.action || '';
+        // 账本投影已翻译好业务语义（action_label）
+        const action = t.action_label || ACTION_LABELS[t.action] || t.action || '';
         const sideCls = t.side === 'sell' ? 'side-sell' : 'side-buy';
         return `
           <tr>

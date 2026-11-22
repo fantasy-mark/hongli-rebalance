@@ -47,20 +47,18 @@ class PagesSiteRepository:
             "chart": self.save_chart(site.overview),
             "summary": self.save_summary(site.summary.to_dict()),
             "backtest_trades": self.save_trades([t.to_dict() for t in site.trades]),
-            "trades": self.ensure_trades_file(),
+            "trades": self.save_real_trades(site.real_trades),
         }
 
-    def ensure_trades_file(self) -> Path:
+    def save_real_trades(self, trades: List[Dict[str, Any]]) -> Path:
         """
-        确保真实交易记录文件存在（**不覆盖已有内容**）
+        写真实交易记录（站点投影）
 
-        真实交易由用户在页面上手动录入，是用户的资产，
-        重建站点时不能被清空。
+        真相源是交易账本 `data/trades.json`，
+        这里只是投影，**不覆盖账本**。
         """
-        path = self.data_dir / self.TRADES_FILENAME
-        if not path.exists():
-            self._write_json(path, {"trades": []})
-        return path
+        payload = {"trades": list(trades)}
+        return self._write_json(self.data_dir / self.TRADES_FILENAME, payload)
 
     def save_chart(self, overview: StrategyOverview) -> Path:
         return self.renderer.render(overview, self.data_dir / self.CHART_FILENAME)
