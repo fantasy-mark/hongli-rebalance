@@ -50,9 +50,8 @@ data/*.csv
 !data/price_cache/
 !data/price_cache/*.json
 
-# 交易账本与持仓（用户真实资产，必须入库，站点投影由它生成）
+# 交易账本（用户真实资产的唯一真相源）
 !data/trades.json
-!data/holdings.json
 
 # Logs
 *.log

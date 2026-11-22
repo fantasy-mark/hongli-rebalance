@@ -24,7 +24,6 @@ class PagesSiteRepository:
     CHART_FILENAME = "grid_chart.png"
     SUMMARY_FILENAME = "summary.json"
     BACKTEST_TRADES_FILENAME = "backtest_trades.json"  # 回测产生的交易记录
-    TRADES_FILENAME = "trades.json"  # 用户提交的真实交易记录
     DATA_SUBDIR = "site"   # 站点数据存放于 <pages_dir>/data/site/
 
     def __init__(
@@ -40,25 +39,19 @@ class PagesSiteRepository:
 
     # ------------------------------------------------------------------ 对外
     def save_all(self, site: PagesSiteData) -> Dict[str, Path]:
-        """一次性写完全部产物，返回 {名称: 路径}"""
+        """
+        一次性写完全部产物，返回 {名称: 路径}
+
+        注意：**不写真实交易**——真实交易的真相源是 `data/trades.json`，
+        页面直接读它，不需要再落一份站点副本。
+        """
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         return {
             "chart": self.save_chart(site.overview),
             "summary": self.save_summary(site.summary.to_dict()),
             "backtest_trades": self.save_trades([t.to_dict() for t in site.trades]),
-            "trades": self.save_real_trades(site.real_trades),
         }
-
-    def save_real_trades(self, trades: List[Dict[str, Any]]) -> Path:
-        """
-        写真实交易记录（站点投影）
-
-        真相源是交易账本 `data/trades.json`，
-        这里只是投影，**不覆盖账本**。
-        """
-        payload = {"trades": list(trades)}
-        return self._write_json(self.data_dir / self.TRADES_FILENAME, payload)
 
     def save_chart(self, overview: StrategyOverview) -> Path:
         return self.renderer.render(overview, self.data_dir / self.CHART_FILENAME)

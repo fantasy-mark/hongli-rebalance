@@ -15,6 +15,8 @@ const ACTION_LABELS = {
   add: '加仓',
   reduce: '减仓',
   take_profit: '止盈',
+  deposit: '入金',
+  withdraw: '出金',
   buy: '买入',
   sell: '卖出',
 };
@@ -64,13 +66,69 @@ const signClass = (v) => (v >= 0 ? 'up' : 'down');
 /* ------------------------------------------------------------------ 启动 */
 document.addEventListener('DOMContentLoaded', init);
 
+/* 账本流水 -> 页面行
+ *
+ * 账本格式（data/trades.json）:
+ *   {id, date, side: buy|sell|deposit, pool: real|grid,
+ *    code, shares, price, amount, fee, action, note}
+ *
+ * 页面需要的：交易类型（用 action）、交易后持仓数量与市值。
+ * 持仓由账本重演得出（真相源只有账本，不存第二份持仓）。
+ */
+function normalizeLedgerTrades(rawTrades) {
+  // 按日期排序（展示用），同日保持录入顺序
+  const sorted = [...rawTrades].sort((a, b) => a.date.localeCompare(b.date));
+
+  const holdings = {};   // pool -> {code: shares}
+  const rows = [];
+
+  sorted.forEach((t) => {
+    const pool = t.pool || 'real';
+    const strategy = pool === 'grid' ? 'grid' : 'rebalance';
+    const strategyName = strategy === 'grid' ? '复合网格' : '阈值再平衡';
+    const isCash = t.side === 'deposit' || t.side === 'withdraw';
+
+    if (!holdings[pool]) holdings[pool] = {};
+    const book = holdings[pool];
+
+    let positionShares = 0;
+    if (!isCash && t.code) {
+      const before = book[t.code] || 0;
+      const delta = t.side === 'buy' ? t.shares : -t.shares;
+      book[t.code] = before + delta;
+      positionShares = book[t.code];
+    }
+
+    rows.push({
+      id: t.id,
+      date: t.date,
+      strategy,
+      strategy_name: strategyName,
+      asset_code: t.code || '',
+      asset_name: t.code || '',
+      action: t.action || (isCash ? (t.side === 'deposit' ? 'deposit' : 'withdraw') : ''),
+      side: t.side,
+      price: t.price || 0,
+      shares: t.shares || 0,
+      amount: t.amount || 0,
+      fee: t.fee || 0,
+      note: t.note || '',
+      position_shares: positionShares,
+      position_value: positionShares * (t.price || 0),
+    });
+  });
+
+  return rows;
+}
+
 async function init() {
   const badge = document.getElementById('status-badge');
   try {
     const [summaryRes, backtestTradesRes, tradesRes, pricesRes] = await Promise.all([
       fetch('data/site/summary.json'),
       fetch('data/site/backtest_trades.json').catch(() => null),
-      fetch('data/site/trades.json').catch(() => null),
+      // 真实交易：直接读账本真相源 data/trades.json
+      fetch('data/trades.json', { cache: 'no-store' }).catch(() => null),
       fetch('data/site/prices.json').catch(() => null),
     ]);
 
@@ -79,8 +137,9 @@ async function init() {
     state.backtestTrades = backtestTradesRes && backtestTradesRes.ok
       ? ((await backtestTradesRes.json()).trades || [])
       : [];
+    // 账本格式 -> 页面行（交易类型用账本里的 action）
     state.trades = tradesRes && tradesRes.ok
-      ? ((await tradesRes.json()).trades || [])
+      ? normalizeLedgerTrades((await tradesRes.json()).trades || [])
       : [];
     // 最新价格：prices.json 优先（含当日实时报价），其次回测的最后收盘价
     state.prices = (pricesRes && pricesRes.ok)
@@ -339,23 +398,21 @@ function renderHoldings() {
   initTradeForm();
 }
 
+// 固定初始资金（20万）
+const INITIAL_CAPITAL = 200000;
+
 // 计算再平衡组合统计信息
 function calculateRebalanceStats(trades) {
   if (trades.length === 0) {
     return {
       pairs: [
-        ['初始市值', money(0)],
+        ['初始资金', money(INITIAL_CAPITAL)],
         ['总市值', money(0)],
         ['累计收益', pct(0)],
         ['成交笔数', 0],
       ]
     };
   }
-
-  // 计算初始市值：各资产**建仓**交易的市值之和
-  // （再平衡策略限制只能开仓一次，所以建仓交易就是初始建仓）
-  const openingTrades = trades.filter(t => t.action === 'open');
-  const initialMarketValue = openingTrades.reduce((sum, t) => sum + t.amount, 0);
 
   // 计算当前持仓
   const positions = {};
@@ -393,15 +450,15 @@ function calculateRebalanceStats(trades) {
   }
 
   // 计算累计收益
-  const totalReturn = initialMarketValue > 0 ? (totalMarketValue - initialMarketValue) / initialMarketValue : 0;
+  const totalReturn = (totalMarketValue - INITIAL_CAPITAL) / INITIAL_CAPITAL;
 
   return {
-    initial_capital: initialMarketValue,
+    initial_capital: INITIAL_CAPITAL,
     total_value: totalMarketValue,
     total_return: totalReturn,
     trade_count: trades.length,
     pairs: [
-      ['初始市值', money(initialMarketValue)],
+      ['初始资金', money(INITIAL_CAPITAL)],
       ['总市值', money(totalMarketValue)],
       ['累计收益', pct(totalReturn)],
       ['成交笔数', trades.length],
@@ -411,10 +468,13 @@ function calculateRebalanceStats(trades) {
 
 // 计算网格组合统计信息
 function calculateGridStats(trades) {
+  // 固定初始资金
+  const initialCapital = INITIAL_CAPITAL;
+
   if (trades.length === 0) {
     return {
       pairs: [
-        ['初始资金', money(0)],
+        ['初始资金', money(INITIAL_CAPITAL)],
         ['总市值', money(0)],
         ['累计收益', pct(0)],
         ['成交笔数', 0],
@@ -422,10 +482,6 @@ function calculateGridStats(trades) {
       ]
     };
   }
-
-  // 计算初始资金（所有买入交易的金额之和）
-  const buyTrades = trades.filter(t => t.side === 'buy');
-  const initialCapital = buyTrades.reduce((sum, t) => sum + t.amount, 0);
 
   // 计算当前持仓
   const positions = {};
@@ -608,22 +664,26 @@ function tradeHistoryTable(trades, scopeLabel, isBacktest = true) {
       })
       .join('');
   } else {
-    // 真实交易记录 - 合并方向和类型为交易类型
+    // 真实交易记录 - 交易类型（与录入表单一致：建仓/加仓/减仓/止盈）
     rows = sortedTrades
       .map((t) => {
-        // 账本投影已翻译好业务语义（action_label）
-        const action = t.action_label || ACTION_LABELS[t.action] || t.action || '';
+        const action = ACTION_LABELS[t.action] || t.action || '';
         const sideCls = t.side === 'sell' ? 'side-sell' : 'side-buy';
+        const assetCell = t.asset_code
+          ? `<span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
+             ${esc(t.asset_name || t.asset_code)}`
+          : '<span class="muted">(现金)</span>';
+        const qtyCell = t.asset_code
+          ? `<td class="num">${shares(t.shares)}</td>
+             <td class="num">${Number(t.price).toFixed(4)}</td>`
+          : `<td class="num">${money(t.amount, 2)}</td>
+             <td class="num muted">—</td>`;
         return `
           <tr>
             <td>${esc(t.date)}</td>
-            <td>
-              <span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
-              ${esc(t.asset_name || t.asset_code)}
-            </td>
+            <td>${assetCell}</td>
             <td class="${sideCls}">${esc(action)}</td>
-            <td class="num">${shares(t.shares)}</td>
-            <td class="num">${Number(t.price).toFixed(4)}</td>
+            ${qtyCell}
           </tr>`;
       })
       .join('');

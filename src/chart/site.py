@@ -34,11 +34,6 @@ from src.chart.overview import (
 from src.strategy.grid.spec import build_grid_spec
 from src.strategy.grid.models import GridPriceBasis, GridTrigger
 from src.strategy.rebalance.spec import build_rebalance_spec
-from src.strategy.ledger.projection import project_ledger
-from src.strategy.ledger.store import (
-    JsonFileTradeLedgerRepository,
-    TradeLedgerRepository,
-)
 
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
@@ -196,11 +191,9 @@ class BuildPagesSite:
         self,
         config: CombinedConfig,
         backtester: Optional[CombinedBacktester] = None,
-        ledger_repo: Optional[TradeLedgerRepository] = None,
     ) -> None:
         self.config = config
         self._backtester = backtester or CombinedBacktester(config)
-        self._ledger_repo = ledger_repo or JsonFileTradeLedgerRepository("data")
         self._asset_names: Dict[str, str] = {
             a.code: a.name for a in config.allocation.allocations
         }
@@ -213,7 +206,6 @@ class BuildPagesSite:
         overview = self.build_overview(result)
         summary = self.build_summary(result)
         trades = self.build_trades(result)
-        real_trades = self.build_real_trades()
         strategies = self.build_strategies(result)
 
         summary.strategies.update(strategies)
@@ -222,25 +214,9 @@ class BuildPagesSite:
             overview=overview,
             summary=summary,
             trades=trades,
-            real_trades=real_trades,
             result=result,
             strategies=strategies,
         )
-
-    # -------------------------------------------------------------- 真实交易
-    def build_real_trades(self) -> List[Dict[str, Any]]:
-        """
-        真实交易记录（来自交易账本）
-
-        账本是真实交易的唯一真相源，这里只做投影：
-        账本流水 -> 站点交易记录行（带交易类型与交易后持仓）
-        """
-        ledger = self._ledger_repo.load()
-        rows = project_ledger(ledger)
-        # 资产代码 -> 名称
-        for row in rows:
-            row["asset_name"] = self._asset_names.get(row["asset_code"], row["asset_code"])
-        return rows
 
     # -------------------------------------------------------------- 全景图
     def build_overview(self, result: CombinedBacktestResult) -> StrategyOverview:
@@ -713,7 +689,6 @@ class PagesSiteData:
     overview: StrategyOverview
     summary: SummaryView
     trades: List[TradeView]              # 回测交易记录
-    real_trades: List[Dict[str, Any]] = field(default_factory=list)  # 真实交易（账本投影）
     result: Optional[CombinedBacktestResult] = None
     strategies: Dict[str, Any] = field(default_factory=dict)
 

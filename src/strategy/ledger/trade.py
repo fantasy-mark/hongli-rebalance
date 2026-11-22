@@ -71,6 +71,47 @@ class CashFlowType(Enum):
         return {CashFlowType.REAL: "真实资金", CashFlowType.GRID: "网格预算"}[self]
 
 
+class TradeAction(Enum):
+    """
+    交易类型（业务语义）
+
+    与 `TradeSide`（事实方向）区分：
+    - TradeSide   客观事实：买了 / 卖了
+    - TradeAction 业务语义：建仓 / 加仓 / 减仓 / 止盈
+
+    由录入方指定（他最清楚当时在做什么），
+    页面表格与录入表单使用同一套取值。
+    """
+
+    OPEN = "open"                # 建仓
+    ADD = "add"                  # 加仓
+    REDUCE = "reduce"            # 减仓
+    TAKE_PROFIT = "take_profit"  # 止盈
+
+    @property
+    def label(self) -> str:
+        return {
+            TradeAction.OPEN: "建仓",
+            TradeAction.ADD: "加仓",
+            TradeAction.REDUCE: "减仓",
+            TradeAction.TAKE_PROFIT: "止盈",
+        }[self]
+
+    @property
+    def side(self) -> TradeSide:
+        """该类型对应的客观方向"""
+        return (TradeSide.BUY if self in (TradeAction.OPEN, TradeAction.ADD)
+                else TradeSide.SELL)
+
+    @classmethod
+    def from_label(cls, label: str) -> 'TradeAction':
+        """按中文标签或英文值解析"""
+        for action in cls:
+            if action.value == label or action.label == label:
+                return action
+        raise ValueError(f"未知的交易类型: {label}")
+
+
 @dataclass(frozen=True)
 class TradeId:
     """
@@ -111,6 +152,10 @@ class Trade:
     - BUY  : amount = shares * price（成交金额，不含费用）
     - SELL : amount = shares * price
     - 其它 : amount 为现金变动额（入金/出金/分红）
+
+    交易类型:
+    `action` 记录业务语义（建仓/加仓/减仓/止盈），由录入方指定；
+    缺省时按重演推导（买入前无持仓=建仓，卖出后清零=止盈）。
     """
     id: TradeId
     on_date: date
@@ -121,6 +166,7 @@ class Trade:
     price: Decimal = Decimal("0")
     amount: Decimal = Decimal("0")
     fee: Decimal = Decimal("0")
+    action: Optional[str] = None   # 交易类型：open/add/reduce/take_profit
     note: str = ""
     recorded_at: Optional[datetime] = None
 
@@ -129,6 +175,14 @@ class Trade:
             raise ValueError(f"非法流水方向: {self.side}")
         if self.fee < 0:
             raise ValueError(f"费用不能为负: {self.fee}")
+
+        # 交易类型与方向必须一致（建仓/加仓=买入，减仓/止盈=卖出）
+        if self.action:
+            parsed = TradeAction.from_label(self.action)
+            if parsed.side is not self.side:
+                raise ValueError(
+                    f"交易类型 {parsed.label} 与方向 {self.side.label} 不一致")
+            object.__setattr__(self, 'action', parsed.value)
 
         if self.side.is_security:
             if not self.asset_code:
@@ -196,6 +250,8 @@ class Trade:
             'fee': float(self.fee),
             'note': self.note,
         }
+        if self.action:
+            data['action'] = self.action
         if self.side.is_security:
             data.update({
                 'code': self.asset_code,
@@ -222,6 +278,7 @@ class Trade:
             price=Decimal(str(data.get('price', 0))),
             amount=Decimal(str(data.get('amount', 0))),
             fee=Decimal(str(data.get('fee', 0))),
+            action=data.get('action'),
             note=data.get('note', ''),
             recorded_at=(datetime.fromisoformat(data['recorded_at'])
                          if data.get('recorded_at') else None),

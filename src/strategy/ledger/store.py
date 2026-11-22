@@ -2,8 +2,8 @@
 交易账本落盘（策略模块）
 
 设计要点:
-- **账本（trades）是唯一持久化的真相源**
-- 持仓文件（holdings）只是派生视图，由账本重演后写盘，便于人工查看
+- **账本（trades.json）是唯一持久化的真相源**
+- 持仓**不落盘**：由账本重演得出（`ledger.replay()`），需要时现算
 - 追加式：保存时整体写回（账本通常很小），不做逐条更新
 """
 
@@ -13,7 +13,6 @@ import json
 import logging
 
 from src.strategy.ledger.book import LedgerSnapshot, TradeLedger
-from src.strategy.ledger.trade import CashFlowType
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +35,14 @@ class JsonFileTradeLedgerRepository(TradeLedgerRepository):
 
     文件:
     - `trades.json`   账本（唯一真相源）
-    - `holdings.json` 持仓快照（派生视图，仅供人看，可随时重建）
+
+    持仓快照**不落盘**：用 `replay()` 现算，避免两份真相来源。
     """
 
     def __init__(self, storage_dir: str = "data"):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.trades_path = self.storage_dir / "trades.json"
-        self.holdings_path = self.storage_dir / "holdings.json"
 
     # ------------------------------------------------------------------
 
@@ -64,56 +63,21 @@ class JsonFileTradeLedgerRepository(TradeLedgerRepository):
         if errors:
             raise ValueError(f"账本不自洽，拒绝保存：{errors}")
 
+        # 写入前补全缺失的交易类型（建仓/加仓/减仓/止盈）
+        normalized = ledger.with_resolved_actions()
+
         with open(self.trades_path, "w", encoding="utf-8") as handle:
-            json.dump(ledger.to_dict(), handle, ensure_ascii=False, indent=2)
+            json.dump(normalized.to_dict(), handle, ensure_ascii=False, indent=2)
 
-        # 派生视图：持仓快照（由账本重演得出）
-        self._write_holdings(ledger.replay())
-
-        logger.info(f"已保存账本：{len(ledger)} 笔流水")
+        logger.info(f"已保存账本：{len(normalized)} 笔流水")
 
     # ------------------------------------------------------------------
+    # 派生视图（不落盘，现算）
 
-    def _write_holdings(self, snapshot: LedgerSnapshot) -> None:
-        """把重演结果写成持仓快照（派生数据，不参与计算）"""
-        data = {
-            "_schema": "holdings-v3",
-            "_comment": (
-                "派生视图：由 trades.json 重演生成，请勿手工编辑。"
-                "资金池 real=真实现金, grid=网格虚拟预算。"
-            ),
-            "pools": {
-                pool.value: {
-                    "cash": float(snapshot.portfolio(pool).cash),
-                    "positions": [
-                        {
-                            "code": code,
-                            "shares": float(position.shares),
-                            "cost_basis": float(position.cost_basis),
-                            "average_cost": float(position.average_cost),
-                            "realized_pnl": float(position.realized_pnl),
-                        }
-                        for code, position in snapshot.portfolio(pool).positions.items()
-                        if position.shares > 0
-                    ],
-                }
-                for pool in CashFlowType
-            },
-            "totals": {
-                "positions": {
-                    code: float(shares)
-                    for code, shares in snapshot.total_positions().items()
-                },
-            },
-        }
+    def replay(self, as_of=None) -> LedgerSnapshot:
+        """重演账本得到持仓快照（现算，不落盘）"""
+        return self.load().replay(as_of)
 
-        with open(self.holdings_path, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-
-    # ------------------------------------------------------------------
-
-    def rebuild_holdings(self) -> LedgerSnapshot:
-        """仅重建持仓快照（不修改账本）"""
-        snapshot = self.load().replay()
-        self._write_holdings(snapshot)
-        return snapshot
+    def holdings(self) -> LedgerSnapshot:
+        """当前持仓快照（便捷方法）"""
+        return self.replay()

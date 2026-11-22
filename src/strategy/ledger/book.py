@@ -273,6 +273,53 @@ class TradeLedger:
     # 序列化
     # ------------------------------------------------------------------
 
+    def with_resolved_actions(self) -> 'TradeLedger':
+        """
+        补全缺失的交易类型（返回新账本，不改原对象）
+
+        规则（与网格策略 GridState 的判定一致）：
+        - 买入：买入前无持仓 -> 建仓(open)；已有持仓 -> 加仓(add)
+        - 卖出：卖出后清零 -> 止盈(take_profit)；仍有持仓 -> 减仓(reduce)
+
+        录入方已指定的交易类型保持不变（他最清楚当时在做什么）。
+        """
+        from dataclasses import replace
+
+        holdings: Dict[CashFlowType, Dict[str, Decimal]] = {
+            pool: {} for pool in CashFlowType
+        }
+        resolved: List[Trade] = []
+
+        for trade in self._sorted_trades(None):
+            if not trade.side.is_security:
+                resolved.append(trade)
+                continue
+
+            code = trade.asset_code or ""
+            pool_holdings = holdings[trade.pool]
+            before = pool_holdings.get(code, Decimal("0"))
+
+            if trade.side is TradeSide.BUY:
+                pool_holdings[code] = before + trade.shares
+            else:
+                pool_holdings[code] = before - trade.shares
+            after = pool_holdings[code]
+
+            if trade.action:
+                resolved.append(trade)
+                continue
+
+            if trade.side is TradeSide.BUY:
+                action = "open" if before <= 0 else "add"
+            else:
+                action = "take_profit" if after <= 0 else "reduce"
+            resolved.append(replace(trade, action=action))
+
+        # 保持录入顺序（_sorted_trades 只是重演顺序，输出回原顺序）
+        order = {id(t): i for i, t in enumerate(self.trades)}
+        resolved.sort(key=lambda t: order[id(t)])
+        return TradeLedger(trades=resolved, allow_overdraft=self.allow_overdraft)
+
     def to_dict(self) -> Dict[str, Any]:
         """账本序列化（追加式，保持顺序）"""
         return {
