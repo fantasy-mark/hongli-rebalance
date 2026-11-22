@@ -100,6 +100,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     paths = repo.save_all(site)
 
+    # 获取并保存最新资产价格
+    print("\n获取最新资产价格...")
+    try:
+        from scripts.fetch_latest_prices import fetch_latest_prices
+        latest_prices = fetch_latest_prices(config.allocation.asset_codes)
+        if latest_prices:
+            prices_path = Path(args.pages_dir) / 'data' / 'site' / 'prices.json'
+            with open(prices_path, 'w', encoding='utf-8') as f:
+                import json
+                json.dump({'prices': latest_prices}, f, ensure_ascii=False, indent=2)
+            paths['prices'] = prices_path
+            print(f"最新价格已保存")
+        else:
+            print("未能获取最新价格")
+    except Exception as e:
+        print(f"获取最新价格失败: {e}")
+
     print("\n产物:")
     for name, path in paths.items():
         print(f"  {name:8s} {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}")

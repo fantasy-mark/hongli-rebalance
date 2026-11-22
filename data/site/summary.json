@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-21T00:52:17",
+  "generated_at": "2026-11-22T22:28:44",
   "window": {
     "start": "2020-11-05",
     "end": "2026-11-17"
@@ -316,5 +316,11 @@
         "src/strategy/allocation.py::AllocationPlan"
       ]
     }
+  },
+  "latest_prices": {
+    "515180": 1.761,
+    "159937": 7.881,
+    "511380": 12.047,
+    "513300": 2.523
   }
 }

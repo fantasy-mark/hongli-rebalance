@@ -23,7 +23,8 @@ class PagesSiteRepository:
 
     CHART_FILENAME = "grid_chart.png"
     SUMMARY_FILENAME = "summary.json"
-    TRADES_FILENAME = "trades.json"
+    BACKTEST_TRADES_FILENAME = "backtest_trades.json"  # 回测产生的交易记录
+    TRADES_FILENAME = "trades.json"  # 用户提交的真实交易记录
     DATA_SUBDIR = "site"   # 站点数据存放于 <pages_dir>/data/site/
 
     def __init__(
@@ -45,8 +46,21 @@ class PagesSiteRepository:
         return {
             "chart": self.save_chart(site.overview),
             "summary": self.save_summary(site.summary.to_dict()),
-            "trades": self.save_trades([t.to_dict() for t in site.trades]),
+            "backtest_trades": self.save_trades([t.to_dict() for t in site.trades]),
+            "trades": self.ensure_trades_file(),
         }
+
+    def ensure_trades_file(self) -> Path:
+        """
+        确保真实交易记录文件存在（**不覆盖已有内容**）
+
+        真实交易由用户在页面上手动录入，是用户的资产，
+        重建站点时不能被清空。
+        """
+        path = self.data_dir / self.TRADES_FILENAME
+        if not path.exists():
+            self._write_json(path, {"trades": []})
+        return path
 
     def save_chart(self, overview: StrategyOverview) -> Path:
         return self.renderer.render(overview, self.data_dir / self.CHART_FILENAME)
@@ -56,7 +70,7 @@ class PagesSiteRepository:
 
     def save_trades(self, trades: Iterable[Dict[str, Any]]) -> Path:
         payload = {"trades": list(trades)}
-        return self._write_json(self.data_dir / self.TRADES_FILENAME, payload)
+        return self._write_json(self.data_dir / self.BACKTEST_TRADES_FILENAME, payload)
 
     # ------------------------------------------------------------------ 内部
     @staticmethod

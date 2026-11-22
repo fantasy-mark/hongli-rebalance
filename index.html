@@ -93,6 +93,10 @@
         <form id="trade-form" class="trade-form">
           <div class="form-row">
             <div class="form-group">
+              <label for="trade-date">日期</label>
+              <input type="date" id="trade-date" required>
+            </div>
+            <div class="form-group">
               <label for="trade-strategy">策略</label>
               <select id="trade-strategy" required>
                 <option value="">选择策略</option>
@@ -111,10 +115,10 @@
               </select>
             </div>
             <div class="form-group">
-              <label for="trade-action">交易方向</label>
+              <label for="trade-action">交易类型</label>
               <select id="trade-action" required>
-                <option value="">选择方向</option>
-                <option value="open">开仓</option>
+                <option value="">选择类型</option>
+                <option value="open">建仓</option>
                 <option value="add">加仓</option>
                 <option value="reduce">减仓</option>
                 <option value="take_profit">止盈</option>

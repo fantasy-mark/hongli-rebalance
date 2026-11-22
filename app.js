@@ -28,7 +28,9 @@ const STRATEGY_LABELS = {
 
 const state = {
   summary: null,
-  trades: [],
+  backtestTrades: [],  // 回测产生的交易记录（用于②回测交易记录）
+  trades: [],          // 用户提交的真实交易记录（用于③真实持仓）
+  prices: {},          // 各资产最新价格 {code: price}
   strategyFilter: '',
   assetFilter: '',
   sideFilter: '',
@@ -65,16 +67,25 @@ document.addEventListener('DOMContentLoaded', init);
 async function init() {
   const badge = document.getElementById('status-badge');
   try {
-    const [summaryRes, tradesRes] = await Promise.all([
+    const [summaryRes, backtestTradesRes, tradesRes, pricesRes] = await Promise.all([
       fetch('data/site/summary.json'),
+      fetch('data/site/backtest_trades.json').catch(() => null),
       fetch('data/site/trades.json').catch(() => null),
+      fetch('data/site/prices.json').catch(() => null),
     ]);
 
     if (!summaryRes.ok) throw new Error(`summary.json HTTP ${summaryRes.status}`);
     state.summary = await summaryRes.json();
+    state.backtestTrades = backtestTradesRes && backtestTradesRes.ok
+      ? ((await backtestTradesRes.json()).trades || [])
+      : [];
     state.trades = tradesRes && tradesRes.ok
       ? ((await tradesRes.json()).trades || [])
       : [];
+    // 最新价格：prices.json 优先（含当日实时报价），其次回测的最后收盘价
+    state.prices = (pricesRes && pricesRes.ok)
+      ? ((await pricesRes.json()).prices || {})
+      : (state.summary.latest_prices || {});
 
     renderStatus(badge, state.summary);
     renderChartSummary(state.summary);
@@ -146,9 +157,9 @@ function setupTradeFilters() {
   const sideSel = document.getElementById('trade-side-filter');
 
   // 策略下拉：按出现顺序
-  const strategies = [...new Set(state.trades.map((t) => t.strategy))];
+  const strategies = [...new Set(state.backtestTrades.map((t) => t.strategy))];
   const strategyNameOf = {};
-  state.trades.forEach((t) => { strategyNameOf[t.strategy] = t.strategy_name; });
+  state.backtestTrades.forEach((t) => { strategyNameOf[t.strategy] = t.strategy_name; });
 
   strategies.forEach((key) => {
     const opt = document.createElement('option');
@@ -157,9 +168,9 @@ function setupTradeFilters() {
     strategySel.appendChild(opt);
   });
 
-  const codes = [...new Set(state.trades.map((t) => t.asset_code))].sort();
+  const codes = [...new Set(state.backtestTrades.map((t) => t.asset_code))].sort();
   const nameOf = {};
-  state.trades.forEach((t) => { nameOf[t.asset_code] = t.asset_name; });
+  state.backtestTrades.forEach((t) => { nameOf[t.asset_code] = t.asset_name; });
 
   codes.forEach((code) => {
     const opt = document.createElement('option');
@@ -183,7 +194,7 @@ function setupTradeFilters() {
 }
 
 function filteredTrades() {
-  return state.trades.filter((t) => {
+  return state.backtestTrades.filter((t) => {
     if (state.strategyFilter && t.strategy !== state.strategyFilter) return false;
     if (state.assetFilter && t.asset_code !== state.assetFilter) return false;
     if (state.sideFilter && t.side !== state.sideFilter) return false;
@@ -304,45 +315,173 @@ function renderTrades() {
 
 /* ------------------------------------------------------- ③ 真实持仓（交易记录） */
 function renderHoldings() {
-  const s = state.summary;
-
-  // 显示再平衡组合的交易记录
+  // 显示再平衡组合的交易记录（真实交易）
   const rebalanceTrades = state.trades.filter(t => t.strategy === 'rebalance');
   document.getElementById('rebalance-holdings').innerHTML = 
-    tradeHistoryTable(rebalanceTrades, '再平衡');
+    tradeHistoryTable(rebalanceTrades, '再平衡', false);
+  
+  // 计算再平衡组合统计信息
+  const rebalanceStats = calculateRebalanceStats(rebalanceTrades);
   document.getElementById('rebalance-stats').innerHTML =
-    statBlock(s.rebalance, [
-      ['初始资金', money(s.rebalance.initial_capital)],
-      ['总市值', money(s.rebalance.total_value)],
-      ['累计收益', pct(s.rebalance.total_return)],
-      ['年化收益', pct(s.rebalance.annualized_return)],
-      ['最大回撤', pct(s.rebalance.max_drawdown)],
-      ['夏普比率', Number(s.rebalance.sharpe_ratio).toFixed(2)],
-      ['波动率', plainPct(s.rebalance.volatility)],
-      ['成交笔数', s.rebalance.trade_count],
-    ]);
+    statBlock(rebalanceStats, rebalanceStats.pairs);
 
-  // 显示网格组合的交易记录
+  // 显示网格组合的交易记录（真实交易）
   const gridTrades = state.trades.filter(t => t.strategy === 'grid');
   document.getElementById('grid-holdings').innerHTML = 
-    tradeHistoryTable(gridTrades, '网格');
+    tradeHistoryTable(gridTrades, '网格', false);
   
-  const gridStats = [
-    ['初始资金', money(s.grid.initial_capital)],
-    ['总市值', money(s.grid.total_value)],
-    ['累计收益', pct(s.grid.total_return)],
-    ['年化收益', pct(s.grid.annualized_return)],
-    ['最大回撤', pct(s.grid.max_drawdown)],
-    ['夏普比率', Number(s.grid.sharpe_ratio).toFixed(2)],
-    ['波动率', plainPct(s.grid.volatility)],
-    ['成交笔数', s.grid.trade_count],
-    ['买入/卖出', `${s.grid.buy_count} / ${s.grid.sell_count}`],
-    ['完成轮次', `${s.grid.completed_rounds}/${s.grid.total_rounds}`],
-  ];
-  document.getElementById('grid-stats').innerHTML = statBlock(s.grid, gridStats);
+  // 计算网格组合统计信息
+  const gridStats = calculateGridStats(gridTrades);
+  document.getElementById('grid-stats').innerHTML = 
+    statBlock(gridStats, gridStats.pairs);
 
   // 初始化表单提交处理
   initTradeForm();
+}
+
+// 计算再平衡组合统计信息
+function calculateRebalanceStats(trades) {
+  if (trades.length === 0) {
+    return {
+      pairs: [
+        ['初始市值', money(0)],
+        ['总市值', money(0)],
+        ['累计收益', pct(0)],
+        ['成交笔数', 0],
+      ]
+    };
+  }
+
+  // 计算初始市值（开仓交易的市值之和）
+  const openingTrades = trades.filter(t => t.action === 'open' || t.action === 'buy');
+  const initialMarketValue = openingTrades.reduce((sum, t) => sum + t.amount, 0);
+
+  // 计算当前持仓
+  const positions = {};
+  trades.forEach(t => {
+    const asset = t.asset_code;
+    if (!positions[asset]) {
+      positions[asset] = { shares: 0, cost: 0 };
+    }
+    if (t.side === 'buy') {
+      positions[asset].shares += t.shares;
+      positions[asset].cost += t.amount;
+    } else if (t.side === 'sell') {
+      positions[asset].shares -= t.shares;
+      // 按比例减少成本
+      const avgCost = positions[asset].cost / (positions[asset].shares + t.shares);
+      positions[asset].cost -= avgCost * t.shares;
+    }
+  });
+
+  // 计算总市值（使用最新资产价格）
+  const latestPrices = state.prices || state.summary?.latest_prices || {};
+  let totalMarketValue = 0;
+  for (const asset in positions) {
+    if (positions[asset].shares > 0) {
+      // 优先使用最新价格
+      if (latestPrices[asset]) {
+        totalMarketValue += positions[asset].shares * latestPrices[asset];
+      } else {
+        // 如果没有最新价格，回退到使用最后交易价格
+        const assetTrades = trades.filter(t => t.asset_code === asset);
+        const latestTrade = assetTrades[assetTrades.length - 1];
+        totalMarketValue += positions[asset].shares * latestTrade.price;
+      }
+    }
+  }
+
+  // 计算累计收益
+  const totalReturn = initialMarketValue > 0 ? (totalMarketValue - initialMarketValue) / initialMarketValue : 0;
+
+  return {
+    initial_capital: initialMarketValue,
+    total_value: totalMarketValue,
+    total_return: totalReturn,
+    trade_count: trades.length,
+    pairs: [
+      ['初始市值', money(initialMarketValue)],
+      ['总市值', money(totalMarketValue)],
+      ['累计收益', pct(totalReturn)],
+      ['成交笔数', trades.length],
+    ]
+  };
+}
+
+// 计算网格组合统计信息
+function calculateGridStats(trades) {
+  if (trades.length === 0) {
+    return {
+      pairs: [
+        ['初始资金', money(0)],
+        ['总市值', money(0)],
+        ['累计收益', pct(0)],
+        ['成交笔数', 0],
+        ['买入/卖出', '0 / 0'],
+      ]
+    };
+  }
+
+  // 计算初始资金（所有买入交易的金额之和）
+  const buyTrades = trades.filter(t => t.side === 'buy');
+  const initialCapital = buyTrades.reduce((sum, t) => sum + t.amount, 0);
+
+  // 计算当前持仓
+  const positions = {};
+  trades.forEach(t => {
+    const asset = t.asset_code;
+    if (!positions[asset]) {
+      positions[asset] = { shares: 0, cost: 0 };
+    }
+    if (t.side === 'buy') {
+      positions[asset].shares += t.shares;
+      positions[asset].cost += t.amount;
+    } else if (t.side === 'sell') {
+      positions[asset].shares -= t.shares;
+      const avgCost = positions[asset].cost / (positions[asset].shares + t.shares);
+      positions[asset].cost -= avgCost * t.shares;
+    }
+  });
+
+  // 计算总市值（使用最新资产价格）
+  const latestPrices = state.prices || state.summary?.latest_prices || {};
+  let totalMarketValue = 0;
+  for (const asset in positions) {
+    if (positions[asset].shares > 0) {
+      // 优先使用最新价格
+      if (latestPrices[asset]) {
+        totalMarketValue += positions[asset].shares * latestPrices[asset];
+      } else {
+        // 如果没有最新价格，回退到使用最后交易价格
+        const assetTrades = trades.filter(t => t.asset_code === asset);
+        const latestTrade = assetTrades[assetTrades.length - 1];
+        totalMarketValue += positions[asset].shares * latestTrade.price;
+      }
+    }
+  }
+
+  // 计算累计收益
+  const totalReturn = initialCapital > 0 ? (totalMarketValue - initialCapital) / initialCapital : 0;
+
+  // 统计买入/卖出次数
+  const buyCount = trades.filter(t => t.side === 'buy').length;
+  const sellCount = trades.filter(t => t.side === 'sell').length;
+
+  return {
+    initial_capital: initialCapital,
+    total_value: totalMarketValue,
+    total_return: totalReturn,
+    trade_count: trades.length,
+    buy_count: buyCount,
+    sell_count: sellCount,
+    pairs: [
+      ['初始资金', money(initialCapital)],
+      ['总市值', money(totalMarketValue)],
+      ['累计收益', pct(totalReturn)],
+      ['成交笔数', trades.length],
+      ['买入/卖出', `${buyCount} / ${sellCount}`],
+    ]
+  };
 }
 
 /* ------------------------------------------------------- 交易表单处理 */
@@ -350,9 +489,17 @@ function initTradeForm() {
   const form = document.getElementById('trade-form');
   if (!form) return;
 
+  // 设置日期输入框默认值为今天
+  const dateInput = document.getElementById('trade-date');
+  if (dateInput) {
+    const today = new Date().toISOString().split('T')[0];
+    dateInput.value = today;
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     
+    const date = document.getElementById('trade-date').value;
     const strategy = document.getElementById('trade-strategy').value;
     const asset = document.getElementById('trade-asset').value;
     const action = document.getElementById('trade-action').value;
@@ -361,7 +508,7 @@ function initTradeForm() {
 
     // 构建交易记录
     const newTrade = {
-      date: new Date().toISOString().split('T')[0],
+      date: date,
       strategy: strategy,
       strategy_name: strategy === 'rebalance' ? '阈值再平衡' : '复合网格',
       asset_code: asset,
@@ -394,6 +541,9 @@ function initTradeForm() {
         state.trades.push(newTrade);
         renderHoldings();
         form.reset();
+        // 重新设置日期默认值
+        const today = new Date().toISOString().split('T')[0];
+        dateInput.value = today;
         alert('交易记录添加成功！');
       } else {
         alert('添加失败，请重试');
@@ -405,18 +555,62 @@ function initTradeForm() {
   });
 }
 
-function tradeHistoryTable(trades, scopeLabel) {
+function tradeHistoryTable(trades, scopeLabel, isBacktest = true) {
   // 按时间倒序显示
   const sortedTrades = [...trades].sort((a, b) => b.date.localeCompare(a.date));
   
   let rows = '';
   if (!sortedTrades.length) {
-    rows = `<tr><td colspan="6" class="empty-note">暂无交易记录</td></tr>`;
-  } else {
+    const colSpan = isBacktest ? 10 : 6;
+    rows = `<tr><td colspan="${colSpan}" class="empty-note">暂无交易记录</td></tr>`;
+  } else if (isBacktest) {
+    // 回测交易记录 - 显示完整信息
     rows = sortedTrades
       .map((t) => {
         const action = ACTION_LABELS[t.action] || t.action || '';
         const side = SIDE_LABELS[t.side] || t.side || '';
+        const sideCls = t.side === 'sell' ? 'side-sell' : 'side-buy';
+        const stratName = t.strategy_name || STRATEGY_LABELS[t.strategy] || t.strategy;
+        const stratCls = t.strategy === 'grid' ? 'strat-grid' : 'strat-rebalance';
+        // 步长：网格专有，显示绝对值 + 占价格百分比
+        let stepCell = '<td class="num muted">—</td>';
+        if (t.strategy === 'grid' && t.step !== null && t.step !== undefined) {
+          const stepPct = (t.step / t.price * 100).toFixed(2);
+          stepCell = `<td class="num">${Number(t.step).toFixed(4)}<br><span class="muted" style="font-size:0.85em">(${stepPct}%)</span></td>`;
+        }
+        // 轮次/深度：网格显示 轮次/深度，再平衡显示第几次再平衡
+        let roundCell = '<td class="num muted">—</td>';
+        if (t.strategy === 'rebalance' && t.rebalance_no) {
+          roundCell = `<td class="num">${t.rebalance_no}</td>`;
+        } else if (t.round_no) {
+          roundCell = t.depth
+            ? `<td class="num">${t.round_no}/${t.depth}</td>`
+            : `<td class="num">${t.round_no}</td>`;
+        }
+
+        return `
+          <tr>
+            <td>${esc(t.date)}</td>
+            <td><span class="strat-tag ${stratCls}">${esc(stratName)}</span></td>
+            <td>
+              <span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
+              ${esc(t.asset_name || t.asset_code)}
+            </td>
+            <td class="${sideCls}">${esc(side)}</td>
+            <td>${esc(action)}</td>
+            <td class="num">${Number(t.price).toFixed(4)}</td>
+            <td class="num">${shares(t.position_shares)}<br><span class="muted" style="font-size:0.85em">(${shares(t.shares)})</span></td>
+            <td class="num">${money(t.position_value, 2)}<br><span class="muted" style="font-size:0.85em">(${money(t.amount, 2)})</span></td>
+            ${stepCell}
+            ${roundCell}
+          </tr>`;
+      })
+      .join('');
+  } else {
+    // 真实交易记录 - 合并方向和类型为交易类型
+    rows = sortedTrades
+      .map((t) => {
+        const action = ACTION_LABELS[t.action] || t.action || '';
         const sideCls = t.side === 'sell' ? 'side-sell' : 'side-buy';
         return `
           <tr>
@@ -425,8 +619,7 @@ function tradeHistoryTable(trades, scopeLabel) {
               <span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
               ${esc(t.asset_name || t.asset_code)}
             </td>
-            <td class="${sideCls}">${esc(side)}</td>
-            <td>${esc(action)}</td>
+            <td class="${sideCls}">${esc(action)}</td>
             <td class="num">${shares(t.shares)}</td>
             <td class="num">${Number(t.price).toFixed(4)}</td>
           </tr>`;
@@ -434,23 +627,46 @@ function tradeHistoryTable(trades, scopeLabel) {
       .join('');
   }
 
-  return `
-    <table>
-      <thead>
-        <tr>
-          <th>日期</th>
-          <th>资产</th>
-          <th>方向</th>
-          <th>类型</th>
-          <th class="num">数量</th>
-          <th class="num">价格</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <p class="muted" style="font-size:0.9em; margin-top:0.5em;">
-      共 ${sortedTrades.length} 笔${scopeLabel}交易记录
-    </p>`;
+  if (isBacktest) {
+    return `
+      <table>
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>策略</th>
+            <th>资产</th>
+            <th>方向</th>
+            <th>类型</th>
+            <th class="num">价格</th>
+            <th class="num">总数量/本次数量</th>
+            <th class="num">市值/交易金额</th>
+            <th class="num">步长</th>
+            <th class="num">轮次/深度</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="muted" style="font-size:0.9em; margin-top:0.5em;">
+        共 ${sortedTrades.length} 笔${scopeLabel}交易记录
+      </p>`;
+  } else {
+    return `
+      <table>
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>资产</th>
+            <th>交易类型</th>
+            <th class="num">数量</th>
+            <th class="num">价格</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="muted" style="font-size:0.9em; margin-top:0.5em;">
+        共 ${sortedTrades.length} 笔${scopeLabel}交易记录
+      </p>`;
+  }
 }
 
 function statBlock(data, pairs) {

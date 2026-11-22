@@ -159,6 +159,7 @@ class SummaryView:
     rebalance: StrategyView
     grid: StrategyView
     strategies: Dict[str, Any] = field(default_factory=dict)
+    latest_prices: Dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -171,6 +172,7 @@ class SummaryView:
             "rebalance": self.rebalance.to_dict(),
             "grid": self.grid.to_dict(),
             "strategies": self.strategies,
+            "latest_prices": self.latest_prices,
         }
 
 
@@ -365,6 +367,17 @@ class BuildPagesSite:
         combined = self._build_combined_view(result, rebalance, grid)
 
         combined_dv = result.daily_values
+        
+        # 提取最新资产价格（从网格策略的每日价值表中获取最新收盘价）
+        latest_prices = {}
+        for col in result.grid_result.daily_values.columns:
+            if col.endswith('_close'):
+                asset_code = col.replace('_close', '')
+                try:
+                    latest_prices[asset_code] = float(result.grid_result.daily_values[col].iloc[-1])
+                except (IndexError, ValueError):
+                    pass
+        
         return SummaryView(
             generated_at=datetime.now().isoformat(timespec='seconds'),
             window_start=self._as_date(combined_dv.index[0]),
@@ -372,6 +385,7 @@ class BuildPagesSite:
             combined=combined,
             rebalance=rebalance,
             grid=grid,
+            latest_prices=latest_prices,
         )
 
     def _build_combined_view(
