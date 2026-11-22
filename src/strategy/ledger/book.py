@@ -13,7 +13,7 @@
    保证账本自洽（不依赖外部核对）。
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
