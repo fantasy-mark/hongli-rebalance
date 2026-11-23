@@ -217,6 +217,70 @@ print(combined.summary())
 
 ---
 
+## 本地启动
+
+本项目是**纯静态前端 + 一个轻量 Python 服务**（无 Node、无构建步骤）。
+
+### 1. 生成站点数据（首次或数据更新后）
+
+```bash
+python scripts/build_pages.py
+```
+
+产出（均在 `data/site/`）：
+
+| 文件 | 内容 |
+|---|---|
+| `summary.json` | 策略汇总（组合 / 再平衡 / 网格）+ 最新价 + 资产名称 |
+| `backtest_trades.json` | 回测交易记录 |
+| `prices.json` | 各资产最新价及其日期（`price_dates`） |
+| `grid_chart.png` | 策略全景图 |
+
+> ⚠️ 不会改写 `data/trades.json`（真实交易账本）。
+
+### 2. 启动服务
+
+```bash
+python scripts/local_serve_with_api.py
+```
+
+浏览器打开 **http://localhost:8000**
+
+- 前端：纯静态页面，由同一个服务托管
+- 后端：`POST /api/trades`，把交易表单的记录追加到 `data/trades.json`
+- 超额建仓（现金不足）等校验不通过时返回 HTTP 400，**账本不落盘**
+
+只预览静态页面（不需要录入交易）可用：
+
+```bash
+python scripts/local_serve.py
+```
+
+### 3. 停止服务
+
+前台运行时按 `Ctrl+C`；后台运行时：
+
+```bash
+# Windows
+powershell -Command "Stop-Process -Name python -Force"
+# Linux / macOS
+pkill -f local_serve_with_api.py
+```
+
+### 端口被占用
+
+`OSError: [WinError 10048]` 表示 8000 端口被占（常见于旧进程没退干净）：
+
+```bash
+powershell -Command "Stop-Process -Name python -Force"   # 清掉旧进程后重启
+```
+
+### 端口可配吗？
+
+目前固定 `PORT = 8000`（`scripts/local_serve_with_api.py` 顶部），需要改端口时改这一行。
+
+---
+
 ## 运行测试
 
 ```bash
@@ -227,9 +291,18 @@ python -m pytest tests/ -v
 - ✅ 价格模型、收益率与技术指标
 - ✅ 缓存规划 / 增量合并 / 接缝校验
 - ✅ 数据源选择 / 复权口径对齐 / 主备降级
+- ✅ **最新价必须是最近交易日**（冲突换源 / 口径对齐 / 实时报价补齐）
 - ✅ 网格规则与回测（离线）
 - ✅ 交易账本与持仓不变量
+- ✅ **账本保护**（构建流程不得改写 `data/trades.json`）
 - ✅ 站点视图模型与全景图渲染
+
+校验脚本（不依赖 pytest）：
+
+```bash
+python scripts/verify_ledger_stats.py   # Python 与前端统计口径一致
+node scripts/verify_page_render.js      # 页面渲染结果与账本一致
+```
 
 ---
 
