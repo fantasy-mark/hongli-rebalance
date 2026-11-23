@@ -103,12 +103,20 @@ def main(argv: list[str] | None = None) -> int:
     print("\n获取最新资产价格...")
     latest_prices: dict[str, float] = {}
     price_dates: dict[str, str] = {}
+    raw_prices: dict[str, float] = {}
+    raw_price_dates: dict[str, str] = {}
     try:
-        from scripts.fetch_latest_prices import fetch_latest_prices_with_date
+        from scripts.fetch_latest_prices import (
+            fetch_latest_prices_with_date,
+            fetch_raw_prices_with_date,
+        )
         results = fetch_latest_prices_with_date(config.allocation.asset_codes)
+        raw_results = fetch_raw_prices_with_date(config.allocation.asset_codes)
         if results:
             latest_prices = {code: value for code, (value, _) in results.items()}
             price_dates = {code: date for code, (_, date) in results.items()}
+            raw_prices = {code: value for code, (value, _) in raw_results.items()}
+            raw_price_dates = {code: date for code, (_, date) in raw_results.items()}
             prices_path = Path(args.pages_dir) / 'data' / 'site' / 'prices.json'
             with open(prices_path, 'w', encoding='utf-8') as f:
                 import json
@@ -116,13 +124,17 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         'prices': latest_prices,
                         'price_dates': price_dates,
+                        'raw_prices': raw_prices,
+                        'raw_price_dates': raw_price_dates,
                         'as_of': max(price_dates.values()) if price_dates else None,
                     },
                     f, ensure_ascii=False, indent=2,
                 )
             print(f"最新价格已保存（{max(price_dates.values())}）")
             for code, (value, date) in results.items():
-                print(f"  {code}: {value:.4f}  ({date})")
+                raw = raw_results.get(code)
+                raw_text = f" | 实际 {raw[0]:.4f} @ {raw[1]}" if raw else " | 实际价缺失"
+                print(f"  {code}: 后复权 {value:.4f}  {date}{raw_text}")
         else:
             print("未能获取最新价格")
     except Exception as e:

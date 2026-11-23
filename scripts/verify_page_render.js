@@ -79,8 +79,9 @@ vm.runInContext(
 /* ---------------------------------------------------------- 准备数据 */
 const ledger = JSON.parse(
   fs.readFileSync(path.join(ROOT, 'data', 'trades.json'), 'utf8'));
-const prices = JSON.parse(
-  fs.readFileSync(path.join(ROOT, 'data', 'site', 'prices.json'), 'utf8')).prices;
+const pricePayload = JSON.parse(
+  fs.readFileSync(path.join(ROOT, 'data', 'site', 'prices.json'), 'utf8'));
+const prices = pricePayload.prices;
 const summaryData = JSON.parse(
   fs.readFileSync(path.join(ROOT, 'data', 'site', 'summary.json'), 'utf8'));
 
@@ -90,6 +91,8 @@ app.state.summary = summaryData;
 app.state.assetNames = summaryData.asset_names || {};
 app.state.priceDates = summaryData.latest_price_dates || {};
 app.state.prices = prices;
+app.state.rawPrices = pricePayload.raw_prices || null;
+app.state.rawPriceDates = pricePayload.raw_price_dates || null;
 app.state.trades = app.normalizeLedgerTrades(ledger.trades || []);
 
 app.renderHoldings();
@@ -131,9 +134,10 @@ Object.entries(grid).forEach(([k, v]) => console.log(`    ${k} = ${v}`));
 console.log('\n[校验]');
 
 /* 期望值由账本 + 行情现场推导（不写死数字，价格每天会变） */
+/* 真实持仓按**实际成交价**（不复权）估值，与页面口径一致 */
 const expected = sandbox.__app.LedgerStats.computePoolStats(
   'real', app.state.trades.filter(t => t.strategy === 'rebalance'),
-  prices, app.initialCapitalOf('real'));
+  app.state.rawPrices || prices, app.initialCapitalOf('real'));
 const money0 = (v) => '¥' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 0 });
 const pct0 = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
 

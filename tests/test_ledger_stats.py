@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import json
 import unittest
 from datetime import date
 from decimal import Decimal
@@ -378,6 +379,69 @@ class TestCapitalSingleSource(unittest.TestCase):
             "app.js 不该再硬编码初始资金")
         self.assertIn("real_initial_capital", app_js,
                       "app.js 应从 summary.json 读初始资金")
+
+
+class TestRealHoldingsUseRawPrices(unittest.TestCase):
+    """
+    真实持仓的市值必须用**实际成交价**（不复权）
+
+    账本里记的是实际成交价、持仓是真实份额。
+    若用后复权价算市值，会把**买入之前**的分红也算进持仓市值：
+    红利ETF 515180 于 2026-10-16 除权（后复权倍率 1.2889），
+    32,000 份后复权市值 ¥55,968，实际只有 ¥43,424，虚增 ¥12,544。
+    """
+
+    def test_market_value_uses_given_price(self):
+        """市值 = 份额 × 给定价（调用方给实际价）"""
+        from src.strategy.ledger.stats import compute_pool_stats
+        from src.strategy.ledger.trade import Trade, TradeId, TradeSide
+
+        trade = Trade(
+            id=TradeId.build(date(2026, 10, 19), TradeSide.BUY, 1),
+            on_date=date(2026, 10, 19),
+            side=TradeSide.BUY,
+            pool=CashFlowType.REAL,
+            asset_code="515180",
+            shares=Decimal("32000"),
+            price=Decimal("1.396"),
+            amount=Decimal("44672"),
+        )
+
+        raw = compute_pool_stats(
+            CashFlowType.REAL, [trade], {"515180": Decimal("1.357")},
+            Decimal("200000"))
+        hfq = compute_pool_stats(
+            CashFlowType.REAL, [trade], {"515180": Decimal("1.749")},
+            Decimal("200000"))
+
+        # 实际价：32,000 × 1.357 = 43,424
+        self.assertEqual(raw.market_value, Decimal("43424"))
+        # 后复权价会把买入前的分红算进来，虚增 12,544
+        self.assertEqual(hfq.market_value, Decimal("55968"))
+        self.assertEqual(hfq.market_value - raw.market_value, Decimal("12544"))
+
+    def test_prices_file_publishes_both_bases(self):
+        """prices.json 同时给出两种口径，页面按用途取用"""
+        prices_path = (Path(__file__).parent.parent
+                       / "data" / "site" / "prices.json")
+        if not prices_path.exists():
+            self.skipTest("尚未构建站点数据")
+        payload = json.loads(prices_path.read_text(encoding="utf-8"))
+        self.assertIn("prices", payload)
+        self.assertIn("raw_prices", payload)
+        self.assertIn("price_dates", payload)
+        self.assertIn("raw_price_dates", payload)
+        for code in payload["raw_prices"]:
+            self.assertIn(code, payload["raw_price_dates"])
+
+    def test_frontend_uses_raw_prices_for_real_holdings(self):
+        """前端真实持仓用实际价，不用后复权价"""
+        app_js = (Path(__file__).parent.parent / "app.js").read_text(
+            encoding="utf-8")
+        self.assertIn("raw_prices", app_js,
+                      "app.js 应读取 raw_prices")
+        self.assertIn("state.rawPrices || state.prices", app_js,
+                      "真实持仓应优先用实际成交价")
 
 
 if __name__ == '__main__':

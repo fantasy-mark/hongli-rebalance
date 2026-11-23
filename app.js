@@ -87,8 +87,13 @@ function assetLabel(code) {
     : `${esc(name)}<br><span class="muted" style="font-size:0.85em">(${esc(code)})</span>`;
 }
 
-/* 价格对应的日期（最新价是哪天的） */
+/* 价格对应的日期（最新价是哪天的）
+ *
+ * 真实持仓用实际成交价的日期（与估值口径一致）
+ */
 function priceDateOf(code) {
+  const raw = (state && state.rawPriceDates) || null;
+  if (raw) return raw[code] || '';
   const dates = (state && state.priceDates) || {};
   return dates[code] || '';
 }
@@ -182,6 +187,14 @@ async function init() {
     // 价格对应的日期（最新价到底是哪天的）
     state.priceDates = pricePayload.price_dates
       || (state.summary.latest_price_dates || {});
+    /* 真实持仓用**实际成交价**（不复权）
+     *
+     * 账本里记的是实际成交价，持仓也是真实份额，
+     * 市值必须按实际价算；后复权价会把买入之前的分红也算进市值。
+     * （后复权价只在回测里用，衡量含分红再投资的总收益）
+     */
+    state.rawPrices = pricePayload.raw_prices || null;
+    state.rawPriceDates = pricePayload.raw_price_dates || null;
     // 资产名称（名称 + 代码展示用）
     state.assetNames = state.summary.asset_names || {};
 
@@ -413,7 +426,13 @@ function renderTrades() {
 
 /* ------------------------------------------------------- ③ 真实持仓（交易记录） */
 function renderHoldings() {
-  const prices = state.prices || {};
+  /* 真实持仓的估值用**实际成交价**（不复权）
+   *
+   * 账本记的是实际成交价、持仓是真实份额，所以市值 = 份额 × 实际价。
+   * 若用后复权价，会把买入之前的分红也算进市值（红利ETF 虚增 28.9%）。
+   * 实际价缺失时退回后复权价，并提示口径差异。
+   */
+  const prices = state.rawPrices || state.prices || {};
 
   // 最新价对应的日期（让"价格过时"一眼可见，而不是默默拿旧价算）
   renderPriceAsOf();
@@ -450,7 +469,8 @@ function renderHoldings() {
 function renderPriceAsOf() {
   const el = document.getElementById('price-as-of');
   if (!el) return;
-  const dates = state.priceDates || {};
+  const raw = state.rawPriceDates || null;
+  const dates = raw || state.priceDates || {};
   const values = Object.values(dates).filter(Boolean);
   if (!values.length) {
     el.textContent = '';
@@ -459,8 +479,11 @@ function renderPriceAsOf() {
   const latest = values.slice().sort().reverse()[0];
   const oldest = values.slice().sort()[0];
   const same = latest === oldest;
+  const basis = raw
+    ? '实际成交价（不复权），最近交易日收盘'
+    : '收盘价（后复权）';
   el.innerHTML = same
-    ? `最新价日期：<b>${esc(latest)}</b>（最近交易日收盘价）`
+    ? `最新价日期：<b>${esc(latest)}</b>（${basis}）`
     : `最新价日期：<b>${esc(latest)}</b>（部分资产停留在 ${esc(oldest)}）`;
 }
 

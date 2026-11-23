@@ -173,6 +173,86 @@ class PriceQueryService:
             'change_pct': change_pct,
             'source': series.source.value,
         }
+
+    def get_latest_raw_price(self, code: str) -> Dict:
+        """
+        获取最新**实际成交价**（不复权口径）
+
+        真实持仓的市值必须用这个：
+        - 账本里记的是**实际成交价**（你在券商看到的那个价）
+        - 持仓也是真实份额
+        所以市值 = 份额 × 实际价。
+
+        若用后复权价算市值，会把**买入之前**的分红也算进持仓市值：
+        例：红利ETF 515180 于 2026-10-16 除权，后复权倍率 1.2889，
+        32,000 份的后复权市值 ¥55,968，实际只有 ¥43,424，虚增 ¥12,544。
+
+        后复权价用于**回测**（衡量含分红再投资的总收益），两者用途不同。
+
+        Returns:
+            {'code': str, 'date': date, 'close': Decimal}
+        """
+        # 1) 实时报价（不复权；休市时返回的是上一个交易日）
+        bar = self._fetch_realtime_close(code)
+        if bar is not None:
+            day, close = bar
+            return {'code': code, 'date': day, 'close': close}
+
+        # 2) 退而求其次：新浪（不复权）历史的最后收盘
+        raw = self._fetch_raw_close(code)
+        if raw is not None:
+            day, close = raw
+            return {'code': code, 'date': day, 'close': close}
+
+        raise ValueError(f"{code} 无法获取不复权最新价")
+
+    def _fetch_realtime_close(self, code: str):
+        """实时报价的收盘价（不复权）；不可用时返回 None"""
+        fetch_today = getattr(self.price_provider, 'fetch_today_bar', None)
+        if not callable(fetch_today):
+            return None
+        try:
+            frame, _prev_close = fetch_today(code)
+        except Exception as error:      # noqa: BLE001
+            logger.info(f"{code} 实时报价不可用: {error}")
+            return None
+        if frame is None or frame.empty:
+            return None
+        index = frame.index[-1]
+        day = index.date() if hasattr(index, 'date') else index
+        close = Decimal(str(frame['close'].iloc[-1]))
+        if close <= 0:
+            return None
+        return day, close
+
+    def _fetch_raw_close(self, code: str):
+        """
+        不复权源（新浪）的最后收盘价；不可用时返回 None
+
+        注意：新浪的 ETF 接口常滞后一个交易日，仅作为实时报价不可用时的兜底。
+        """
+        provider = self.price_provider
+        sources = getattr(provider, 'sources', None) or []
+        raw_source = next(
+            (s for s in sources
+             if getattr(s, 'adjustment', None) is PriceAdjustment.NONE),
+            None,
+        )
+        if raw_source is None:
+            return None
+        try:
+            frame = raw_source.fetch(code)
+        except Exception as error:      # noqa: BLE001
+            logger.info(f"{code} 不复权历史不可用: {error}")
+            return None
+        if frame is None or frame.empty:
+            return None
+        index = frame.index[-1]
+        day = index.date() if hasattr(index, 'date') else index
+        close = Decimal(str(frame['close'].iloc[-1]))
+        if close <= 0:
+            return None
+        return day, close
     
     def compare_assets(self,
                        codes: List[str],

@@ -68,7 +68,10 @@ def main() -> int:
     prices = {}
     if PRICES_FILE.exists():
         with open(PRICES_FILE, encoding="utf-8") as handle:
-            prices = json.load(handle).get("prices", {})
+            payload = json.load(handle)
+        # 真实持仓按**实际成交价**（不复权）估值：
+        # 账本记的是实际成交价、持仓是真实份额，用后复权价会虚增市值
+        prices = payload.get("raw_prices") or payload.get("prices", {})
 
     ledger = TradeLedger.from_dict({"trades": raw_trades})
     ledger.initial_capitals = dict(DEFAULT_INITIAL_CAPITALS)
