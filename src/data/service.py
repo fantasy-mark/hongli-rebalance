@@ -9,7 +9,7 @@
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 import logging
 
 import pandas as pd
@@ -34,6 +34,15 @@ from src.data.fallback import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _SourceConflict(Exception):
+    """
+    数据源与缓存不兼容（内部信号）
+
+    含义：本次取数无法安全地并入缓存（口径冲突、数据异常、长度倒退等），
+    调用方应**换下一个数据源**重试，而不是放弃更新。
+    """
 
 
 class PriceQueryService:
@@ -301,123 +310,98 @@ class PriceQueryService:
         else:
             fetch_start = None
 
-        try:
-            fetched: FetchedPrices = self.price_provider.fetch(
-                key, start_date=fetch_start, end_date=end_date
-            )
-            df_raw = fetched.frame
-        except Exception as e:
-            if cached is not None and cached.count > 0:
-                logger.warning(f"{key} 主备源均失败，沿用缓存: {e}")
-                return cached
-            logger.error(f"获取 {key} 价格数据失败: {e}")
-            raise
-
-        self._last_checked_at[key] = datetime.now()
-
-        # ---- 数据源无新数据：保留缓存 ----
-        if df_raw is None or df_raw.empty:
-            if cached is not None and cached.count > 0:
-                logger.info(f"{key} 数据源暂无新数据，沿用缓存")
-                return cached
-            raise ValueError(f"无法获取 {key} 的价格数据")
-
-        update = AdjustedPriceSeries.from_dataframe(
-            asset_code=asset_code,
-            df=df_raw.drop(columns=['source'], errors='ignore'),
-            source=self._infer_source(df_raw),
-        )
-
-        # ---- 口径对齐（不同源可能复权口径不同）----
         cached_basis = self._cached_adjustment(asset_code, cached)
 
-        if cached is None or cached.count == 0:
-            # 空缓存：直接采用当前源的口径，并记录下来
-            if fetched.adjustment is not self.cache_adjustment:
-                logger.warning(
-                    f"{key} 缓存将以 {fetched.adjustment.label} 口径建立"
-                    f"（源 {fetched.source_id}）——非规范口径"
-                    f"（{self.cache_adjustment.label}），"
-                    f"分红收益可能被低估；主源恢复后会自动重建"
-                )
-            self._remember_adjustment(asset_code, fetched.adjustment)
-            cached_basis = fetched.adjustment
+        # ---- 逐源尝试 ----------------
+        # 某个源的数据与缓存冲突（如腾讯对个别 ETF 的后复权价存在缩放错误）时，
+        # 换下一个源重试，而不是"冲突就放弃"——否则最新价会被卡在旧日期。
+        series = None
+        failures: List[str] = []
+        raw_factor: Optional[Decimal] = None
+        try:
+            for fetched in self._iter_provider_fetches(
+                key, fetch_start, end_date
+            ):
+                self._last_checked_at[key] = datetime.now()
+                try:
+                    series, raw_factor = self._merge_from_source(
+                        asset_code, key, fetched, cached, plan,
+                        start_date, end_date, cached_basis,
+                    )
+                except _SourceConflict as conflict:
+                    logger.warning(
+                        f"{key} {fetched.source_id} 数据不可用（{conflict}），换下一个源"
+                    )
+                    failures.append(f"{fetched.source_id}: {conflict}")
+                    continue
+                except Exception as error:      # noqa: BLE001
+                    logger.warning(f"{key} {fetched.source_id} 同步失败: {error}")
+                    failures.append(f"{fetched.source_id}: {error}")
+                    continue
+                break
+        except Exception as error:      # noqa: BLE001
+            # 所有候选源都取数失败（网络/限流/全不可用）
+            failures.append(str(error))
 
-        elif fetched.adjustment != cached_basis:
-            if self._is_primary_source(fetched.source_id):
-                # 主源口径为规范口径：直接全量重建，不做近似换算
-                logger.info(
-                    f"{key} 用主源重建缓存：{cached_basis.label} -> "
-                    f"{fetched.adjustment.label}"
-                )
-                self._remember_adjustment(asset_code, fetched.adjustment)
-                self.repository.save(update)
-                return update
-
-            alignment = PriceBasisAligner.align(
-                cached, update, cached_basis, fetched.adjustment
-            )
-            if alignment.incompatible:
+        if series is None:
+            # ---- 兜底：全量重建 ----
+            # 所有源都与缓存冲突（口径真的变了）时，尝试全量重建一次；
+            # 重建结果不得比原缓存短，否则保留原缓存（宁可旧也不能缺历史）
+            if (cached is not None and cached.count > 0
+                    and plan.mode is RefreshMode.INCREMENTAL):
                 logger.warning(
-                    f"{key} 数据源口径 {fetched.adjustment.label} 与缓存口径 "
-                    f"{cached_basis.label} 本质不可换算（除权阶梯关系），"
-                    f"本次不更新缓存，等待主源恢复"
+                    f"{key} 各数据源均与缓存冲突，尝试全量重建"
+                    + (f"（{'; '.join(failures)}）" if failures else "")
                 )
-                return cached
-            if not alignment.applied or alignment.factor <= 0:
-                logger.warning(
-                    f"{key} 数据源口径为 {fetched.adjustment.label}，"
-                    f"与缓存口径 {cached_basis.label} 不同且无重叠可对齐，"
-                    f"本次不更新缓存（等待主源恢复）"
+                rebuilt = self._fetch_full(
+                    asset_code, key, start_date, end_date,
+                    preferred_adjustment=cached_basis,
                 )
-                return cached
-            logger.info(
-                f"{key} 数据源口径 {fetched.adjustment.label} -> "
-                f"缓存口径 {cached_basis.label}，倍率 {float(alignment.factor):.6f}"
-                f"（重叠 {alignment.overlaps} 点，"
-                f"对齐后偏差 {float(alignment.max_deviation):.4%}）"
-            )
-            update = alignment.series
-
-        # ---- 合并 ----
-        if plan.mode is RefreshMode.INCREMENTAL and cached is not None:
-            result = PriceSeriesMerger.merge(cached, update, self.cache_policy)
-            if result.conflict:
-                logger.warning(
-                    f"{key} 检测到后复权口径变化"
-                    f"（重叠{result.overlap_points}点，"
-                    f"最大偏差{float(result.max_deviation):.4%}），改为全量重建"
-                )
-                rebuilt = self._fetch_full(asset_code, key, start_date, end_date,
-                                          preferred_adjustment=cached_basis)
-                if rebuilt is None or rebuilt.count < cached.count:
-                    # 重建失败或重建结果比原缓存更短：
-                    # 保留原缓存，绝不用残缺窗口覆盖（否则历史会被静默截断）
+                if rebuilt is not None and rebuilt.count >= cached.count:
+                    # 非权威源重建时，结果必须与原缓存口径一致（重叠区偏差在容差内），
+                    # 否则价格会整体偏移，市值/收益跟着错
+                    overlaps, deviation = cached.overlap_close_deviation(rebuilt)
+                    tolerance = self.cache_policy.seam_tolerance
+                    if (not self._is_authoritative_rebuild()
+                            and deviation is not None
+                            and deviation > tolerance
+                            and overlaps > 0):
+                        logger.warning(
+                            f"{key} 全量重建结果与原缓存口径不一致"
+                            f"（重叠{overlaps}点，最大偏差{float(deviation):.4%}），"
+                            f"保留原缓存"
+                        )
+                    else:
+                        series = rebuilt
+                        self._remember_adjustment(asset_code, cached_basis)
+                else:
                     logger.warning(
                         f"{key} 全量重建未获得更完整的数据，保留原缓存"
                         f"（原 {cached.count} 条）"
                     )
-                    return cached
-                series = rebuilt
+
+        if series is None:
+            if cached is not None and cached.count > 0:
+                logger.warning(
+                    f"{key} 所有数据源均无法更新缓存，沿用缓存"
+                    + (f"（{'; '.join(failures)}）" if failures else "")
+                )
+                # 沿用缓存，但仍尝试用实时报价补齐最近交易日
+                # （历史接口不可用时，报价往往是唯一能拿到最新价的地方）
+                series = cached
             else:
-                series = result.series
-        else:
-            series = update
+                raise ValueError(
+                    f"无法获取 {key} 的价格数据"
+                    + (f"（{'; '.join(failures)}）" if failures else "")
+                )
 
         errors = series.validate()
         if errors:
             logger.warning(f"{key} 数据验证警告: {errors[:3]}")
 
-        # ---- 安全网：合并结果不得比原缓存更短（防止历史被静默截断）----
-        if cached is not None and cached.count > 0 and series.count < cached.count:
-            logger.warning(
-                f"{key} 合并结果({series.count}条)少于原缓存({cached.count}条)，"
-                f"保留原缓存"
-            )
-            return cached
-
-        # ---- 补齐当日行情（历史接口盘中通常不含当天）----
-        series = self._fill_today_bar(asset_code, key, series, cached_basis)
+        # ---- 补齐最新交易日（历史接口常常不含当天/最近交易日）----
+        series = self._fill_latest_bar(
+            asset_code, key, series, cached_basis, raw_factor)
 
         self.repository.save(series)
 
@@ -434,48 +418,207 @@ class PriceQueryService:
 
         return series
 
-    def _fill_today_bar(self, asset_code: AssetCode, key: str,
-                        series: AdjustedPriceSeries,
-                        cache_basis: PriceAdjustment) -> AdjustedPriceSeries:
+    def _iter_provider_fetches(self, key: str, fetch_start: Optional[str],
+                                end_date: Optional[str]):
         """
-        用实时报价补齐"当日"这根 K 线
+        依次产出各候选源的取数结果
+
+        优先用 provider 的 `iter_fetches`（可逐源重试）；
+        provider 只实现 `fetch` 时降级为单次取数。
+        """
+        iter_fetches = getattr(self.price_provider, 'iter_fetches', None)
+        if callable(iter_fetches):
+            yield from iter_fetches(key, start_date=fetch_start,
+                                    end_date=end_date)
+            return
+        yield self.price_provider.fetch(key, start_date=fetch_start,
+                                        end_date=end_date)
+
+    # ------------------------------------------------------------------
+    # 单个数据源的合并（供多源回退调用）
+    # ------------------------------------------------------------------
+
+    def _merge_from_source(self,
+                            asset_code: AssetCode,
+                            key: str,
+                            fetched: FetchedPrices,
+                            cached,
+                            plan,
+                            start_date: Optional[str],
+                            end_date: Optional[str],
+                            cached_basis: PriceAdjustment
+                            ) -> Tuple[AdjustedPriceSeries, Optional[Decimal]]:
+        """
+        把某个源的取数结果并入缓存
+
+        Returns:
+            (合并后的序列, 已知的后复权/不复权倍率)
+            倍率来自"不复权源对齐到后复权缓存"的实测值，用于校验实时报价
+
+        Raises:
+            _SourceConflict: 该源的数据无法安全并入缓存（调用方应换源重试）
+        """
+        df_raw = fetched.frame
+        if df_raw is None or df_raw.empty:
+            raise _SourceConflict("数据源返回空数据")
+
+        update = AdjustedPriceSeries.from_dataframe(
+            asset_code=asset_code,
+            df=df_raw.drop(columns=['source'], errors='ignore'),
+            source=self._infer_source(df_raw),
+        )
+
+        # ---- 空缓存：直接采用当前源的口径 ----
+        raw_factor: Optional[Decimal] = None
+
+        if cached is None or cached.count == 0:
+            if fetched.adjustment is not self.cache_adjustment:
+                logger.warning(
+                    f"{key} 缓存将以 {fetched.adjustment.label} 口径建立"
+                    f"（源 {fetched.source_id}）——非规范口径"
+                    f"（{self.cache_adjustment.label}），"
+                    f"分红收益可能被低估；主源恢复后会自动重建"
+                )
+            self._remember_adjustment(asset_code, fetched.adjustment)
+            return update, None
+
+        # ---- 口径对齐（不同源可能复权口径不同）----
+        if fetched.adjustment != cached_basis:
+            if self._is_primary_source(fetched.source_id):
+                # 主源口径为规范口径：直接全量重建，不做近似换算
+                logger.info(
+                    f"{key} 用主源重建缓存：{cached_basis.label} -> "
+                    f"{fetched.adjustment.label}"
+                )
+                rebuilt = self._fetch_full(
+                    asset_code, key, start_date, end_date,
+                    preferred_adjustment=fetched.adjustment,
+                )
+                if rebuilt is None:
+                    raise _SourceConflict("主源全量重建失败")
+                if rebuilt.count < cached.count:
+                    raise _SourceConflict(
+                        f"全量重建结果({rebuilt.count}条)少于原缓存({cached.count}条)"
+                    )
+                self._remember_adjustment(asset_code, fetched.adjustment)
+                return rebuilt, None
+
+            alignment = PriceBasisAligner.align(
+                cached, update, cached_basis, fetched.adjustment,
+                allow_unadjusted=True,
+            )
+            if alignment.incompatible:
+                raise _SourceConflict(
+                    f"口径 {fetched.adjustment.label} 与缓存 {cached_basis.label} "
+                    f"不可换算"
+                )
+            if not alignment.applied or alignment.factor <= 0:
+                raise _SourceConflict(
+                    f"口径 {fetched.adjustment.label} 无重叠可对齐"
+                )
+            logger.info(
+                f"{key} 数据源口径 {fetched.adjustment.label} -> "
+                f"缓存口径 {cached_basis.label}，倍率 {float(alignment.factor):.6f}"
+                f"（重叠 {alignment.overlaps} 点，"
+                f"对齐后偏差 {float(alignment.max_deviation):.4%}）"
+            )
+            update = alignment.series
+            # 不复权源对齐到后复权缓存时，实测倍率就是"后复权/不复权"的换算系数，
+            # 后面用它校验实时报价能否安全补齐
+            raw_factor = alignment.factor
+
+        # ---- 合并 ----
+        if plan.mode is RefreshMode.INCREMENTAL:
+            result = PriceSeriesMerger.merge(cached, update, self.cache_policy)
+            if result.conflict:
+                raise _SourceConflict(
+                    f"口径变化（重叠{result.overlap_points}点，"
+                    f"最大偏差{float(result.max_deviation):.4%}）"
+                )
+            series = result.series
+        else:
+            series = update
+
+        # ---- 安全网：合并结果不得比原缓存更短（防止历史被静默截断）----
+        if series.count < cached.count:
+            raise _SourceConflict(
+                f"合并结果({series.count}条)少于原缓存({cached.count}条)"
+            )
+
+        return series, raw_factor
+
+    def _fill_latest_bar(self, asset_code: AssetCode, key: str,
+                        series: AdjustedPriceSeries,
+                        cache_basis: PriceAdjustment,
+                        raw_factor: Optional[Decimal] = None) -> AdjustedPriceSeries:
+        """
+        用实时报价补齐"最近交易日"这根 K 线
+
+        背景:
+        历史 K 线接口（东财/腾讯/新浪）在当天收盘后往往还没有当天那根 bar，
+        新浪的 ETF 接口更是常滞后一个交易日。结果是缓存落后于市场，
+        页面上的"最新价"就成了旧日期的价——后面的市值、收益全错。
 
         处理要点:
         - 实时报价是**不复权**口径，需换算到缓存口径
         - 换算倍率 = 缓存最后交易日收盘价 / 报价昨收
-          （仅在"缓存末日 = 今日的前一交易日"时成立，跨除权日不保证）
-        - 历史接口已包含当日时不重复追加
+          （仅在"缓存末日 = 报价日的前一交易日"时成立，跨除权日不保证）
+        - 报价自带日期（休市时是上一个交易日），不必强行等于"今天"
+        - 历史接口已包含该交易日时不重复追加
         """
-        today = date.today()
         fetch_today = getattr(self.price_provider, 'fetch_today_bar', None)
         if not callable(fetch_today):
             return series
-
-        if series.end_date is not None and series.end_date >= today:
-            return series                      # 已有当日数据
 
         bar, prev_close = fetch_today(key)
         if bar is None or bar.empty:
             return series
 
         bar_date = bar.index[-1].date() if hasattr(bar.index[-1], 'date') else bar.index[-1]
-        if bar_date != today:
-            return series                      # 报价日期不是今天（非交易日/休市）
+
+        # 缓存已覆盖报价日（或更新）时无需补齐
+        if series.end_date is not None and series.end_date >= bar_date:
+            return series
 
         # ---- 换算到缓存口径 ----
         close = Decimal(str(bar['close'].iloc[-1]))
         factor = Decimal('1')
         if cache_basis is not PriceAdjustment.NONE:
             last_close = series.latest_close if series.count else None
-            gap_ok = (series.end_date is not None
-                      and 0 < (today - series.end_date).days <= 5)
-            if last_close is None or prev_close is None or prev_close <= 0 or not gap_ok:
+            if last_close is None or prev_close is None or prev_close <= 0:
                 logger.info(
-                    f'{key} 当日 bar 未补齐：无法确定口径倍率'
+                    f'{key} 最近交易日 bar 未补齐：无法确定口径倍率'
                     f'（缓存末日 {series.end_date}，报价昨收 {prev_close}）'
                 )
                 return series
             factor = last_close / prev_close
+            # 缓存末日必须是报价日的前一交易日，否则"昨收"对不上，
+            # 算出的倍率会把价格写错（宁可不补，也不能写错）。
+            # 校验方式：用已知的"后复权/不复权"倍率反推核对。
+            if raw_factor is not None:
+                if abs(factor / raw_factor - Decimal('1')) > Decimal('0.005'):
+                    logger.info(
+                        f'{key} 最近交易日 bar 未补齐：缓存末日 {series.end_date} '
+                        f'与报价日 {bar_date} 不相邻（倍率 {float(factor):.6f} '
+                        f'≠ 已知倍率 {float(raw_factor):.6f}），放弃补齐'
+                    )
+                    return series
+                factor = raw_factor
+            else:
+                # 没有已知倍率可核对：退而求其次，要求缓存末日与报价日
+                # 足够接近，且倍率在合理范围内（排除 0.1 / 10 倍这类量级错误）
+                if not self._is_adjacent_trading_day(series.end_date, bar_date):
+                    logger.info(
+                        f'{key} 最近交易日 bar 未补齐：缓存末日 {series.end_date} '
+                        f'与报价日 {bar_date} 之间不连续，倍率不可信'
+                    )
+                    return series
+                if not (Decimal('0.5') <= factor <= Decimal('2.0')):
+                    logger.info(
+                        f'{key} 最近交易日 bar 未补齐：口径倍率 {float(factor):.6f} '
+                        f'不合理，放弃补齐'
+                    )
+                    return series
             close = close * factor
 
         # ---- 组装并追加 ----
@@ -491,10 +634,6 @@ class PriceQueryService:
             amount=Decimal(str(bar['amount'].iloc[-1])),
         )
 
-        if series.end_date is not None and series.end_date == bar_date:
-            logger.info(f'{key} 当日 bar 已存在，跳过补齐')
-            return series
-
         merged = series.merged_with(
             AdjustedPriceSeries(
                 asset_code=asset_code,
@@ -504,10 +643,24 @@ class PriceQueryService:
             )
         )
         logger.info(
-            f'{key} 已用实时报价补齐当日 bar {bar_date}'
+            f'{key} 已用实时报价补齐最近交易日 bar {bar_date}'
             f'（口径 {cache_basis.label}，倍率 {float(factor):.6f}）'
         )
         return merged
+
+    @staticmethod
+    def _is_adjacent_trading_day(last_cached: Optional[date],
+                                  quote_date: date) -> bool:
+        """
+        缓存末日是否为报价日的前一个交易日
+
+        判定：日历日差不超过 4 天（跨一个周末），
+        且不为同一天。超出则无法保证"报价昨收"就是缓存末日那个交易日的收盘价。
+        """
+        if last_cached is None:
+            return False
+        gap = (quote_date - last_cached).days
+        return 0 < gap <= 4
 
     def _fetch_full(self,
                     asset_code: AssetCode,
@@ -533,6 +686,19 @@ class PriceQueryService:
             logger.error(f"{key} 全量重建失败: {e}")
             return None
 
+    def _is_authoritative_rebuild(self) -> bool:
+        """
+        全量重建的结果是否可信（无需再校验口径）
+
+        只有一个数据源时（或它就是主源），重建结果就是最新真相；
+        多源场景下备用源的口径可能与缓存不同，需要重叠区实测校验。
+        """
+        provider = self.price_provider
+        sources = getattr(provider, 'sources', None)
+        if not sources:
+            return True
+        return len(sources) == 1
+
     def _cached_adjustment(self, asset_code: AssetCode,
                            cached) -> PriceAdjustment:
         """读取缓存口径（未记录时按后复权处理，与历史缓存一致）"""
@@ -553,11 +719,16 @@ class PriceQueryService:
             setter(asset_code, adjustment.value)
 
     def _is_primary_source(self, source_id: str) -> bool:
-        """是否为最高优先级（主）数据源"""
+        """
+        是否为权威源
+
+        - 声明了多个源时：第一个（优先级最高）为主源，其口径最可信
+        - 只声明了一个源（即只有这一个数据源）：它就是权威源
+        """
         provider = self.price_provider
         sources = getattr(provider, 'sources', None)
         if not sources:
-            return False
+            return True
         first = sources[0]
         return getattr(first, 'source_id', None) == source_id
 

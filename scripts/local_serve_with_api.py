@@ -45,6 +45,7 @@ from src.strategy.ledger.trade import (  # noqa: E402
     TradeId,
     TradeSide,
 )
+from src.strategy.ledger.capital import DEFAULT_INITIAL_CAPITALS  # noqa: E402
 from src.strategy.ledger.store import JsonFileTradeLedgerRepository  # noqa: E402
 
 PORT = 8000
@@ -87,6 +88,15 @@ class TradeAPIHandler(http.server.SimpleHTTPRequestHandler):
                 "id": trade.id.value,
                 "trades": len(ledger),
             }).encode("utf-8"))
+        except ValueError as error:
+            # 账本不自洽（如建仓超过总金额）—— 明确告知，不写盘
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": False,
+                "error": str(error),
+            }, ensure_ascii=False).encode("utf-8"))
         except Exception as exc:  # noqa: BLE001
             self.send_error(500, str(exc))
 

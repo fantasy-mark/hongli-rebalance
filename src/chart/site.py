@@ -25,6 +25,11 @@ from src.strategy.combined import (
     CombinedConfig,
 )
 from src.strategy.allocation import AllocationPlan
+from src.strategy.ledger.capital import (
+    GRID_INITIAL_CAPITAL,
+    REAL_INITIAL_CAPITAL,
+)
+from src.strategy.ledger.trade import CashFlowType
 from src.chart.overview import (
     CapitalOccupation,
     CurveRole,
@@ -160,6 +165,14 @@ class SummaryView:
     grid: StrategyView
     strategies: Dict[str, Any] = field(default_factory=dict)
     latest_prices: Dict[str, float] = field(default_factory=dict)
+    # 最新价对应的日期（YYYY-MM-DD）：让页面能标出"最新价是哪天的"，
+    # 价格过期时一眼可见，而不是拿旧价当最新价用
+    latest_price_dates: Dict[str, str] = field(default_factory=dict)
+    # 资产名称（代码 -> 名称）：页面展示"名称 + 代码"，避免前端各写一份
+    asset_names: Dict[str, str] = field(default_factory=dict)
+    # 真实账户（账本）的初始资金：页面算真实持仓时用这个，
+    # 避免前端再写一份 200000（与后端账本口径一致）
+    real_initial_capital: Dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -173,6 +186,9 @@ class SummaryView:
             "grid": self.grid.to_dict(),
             "strategies": self.strategies,
             "latest_prices": self.latest_prices,
+            "latest_price_dates": self.latest_price_dates,
+            "asset_names": self.asset_names,
+            "real_initial_capital": self.real_initial_capital,
         }
 
 
@@ -393,6 +409,11 @@ class BuildPagesSite:
             rebalance=rebalance,
             grid=grid,
             latest_prices=latest_prices,
+            # 真实账户各池的初始资金（与后端账本口径同一来源）
+            real_initial_capital={
+                CashFlowType.REAL.value: float(REAL_INITIAL_CAPITAL),
+                CashFlowType.GRID.value: float(GRID_INITIAL_CAPITAL),
+            },
         )
 
     def _build_combined_view(
@@ -707,13 +728,13 @@ def default_config(
             ("513300", "纳斯达克ETF"),
         ]
     )
-    rebalance_initial_capital = Decimal("200000")
+    rebalance_initial_capital = REAL_INITIAL_CAPITAL
     return CombinedConfig(
         allocation=plan,
         threshold_pp=Decimal("3"),
         rebalance_initial_capital=rebalance_initial_capital,
         rebalance_transaction_cost_bps=Decimal("5"),
-        grid_initial_capital=Decimal("200000"),
+        grid_initial_capital=GRID_INITIAL_CAPITAL,
         grid_trigger=GridTrigger(
             lookback_days=120,
             atr_period=120,

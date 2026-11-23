@@ -1,54 +1,54 @@
 {
-  "generated_at": "2026-11-22T23:25:43",
+  "generated_at": "2026-11-23T17:40:22",
   "window": {
     "start": "2020-11-05",
-    "end": "2026-11-17"
+    "end": "2026-11-23"
   },
   "combined": {
     "key": "combined",
     "label": "组合合计",
     "initial_capital": 400000.0,
-    "total_value": 566233.781176154,
-    "cash": 155975.08117615402,
-    "market_value": 410258.7,
-    "total_return": 0.4159373684267707,
-    "annualized_return": 0.05935762052311544,
-    "max_drawdown": -0.07601055049077368,
-    "sharpe_ratio": 0.47377933287759816,
-    "volatility": 0.061964755500848415,
-    "trade_count": 88,
+    "total_value": 554327.7278134858,
+    "cash": 128120.92781348582,
+    "market_value": 426206.8,
+    "total_return": 0.3861648143561393,
+    "annualized_return": 0.055476493681964945,
+    "max_drawdown": -0.09735106448312009,
+    "sharpe_ratio": 0.40819901097511463,
+    "volatility": 0.06241194367694852,
+    "trade_count": 95,
     "positions": [
       {
         "code": "159937",
         "name": "黄金ETF",
-        "shares": 11000.0,
-        "price": 7.881,
-        "market_value": 86691.0,
-        "weight": 0.153101073941455
+        "shares": 14700.0,
+        "price": 7.36,
+        "market_value": 108192.0,
+        "weight": 0.195176958631958
       },
       {
         "code": "511380",
         "name": "可转债ETF",
-        "shares": 11100.0,
-        "price": 12.047,
-        "market_value": 133721.7,
-        "weight": 0.2361598767954812
+        "shares": 12100.0,
+        "price": 11.908,
+        "market_value": 144086.8,
+        "weight": 0.2599307102467022
       },
       {
         "code": "513300",
         "name": "纳斯达克ETF",
-        "shares": 34700.0,
-        "price": 2.606,
-        "market_value": 90428.2,
-        "weight": 0.1597011746847156
+        "shares": 34800.0,
+        "price": 2.485,
+        "market_value": 86478.0,
+        "weight": 0.15600518549037326
       },
       {
         "code": "515180",
         "name": "红利ETF",
-        "shares": 56200.0,
-        "price": 1.769,
-        "market_value": 99417.8,
-        "weight": 0.17557730270612618
+        "shares": 50000.0,
+        "price": 1.749,
+        "market_value": 87450.0,
+        "weight": 0.15775866082857076
       }
     ]
   },
@@ -56,47 +56,47 @@
     "key": "rebalance",
     "label": "再平衡组合",
     "initial_capital": 200000.0,
-    "total_value": 365434.471,
-    "cash": 954.371,
-    "market_value": 364480.1,
-    "total_return": 0.8280836368691639,
-    "annualized_return": 0.10519285077026508,
-    "max_drawdown": -0.11356150343576128,
-    "sharpe_ratio": 0.7191173234927323,
-    "volatility": 0.10456270251571127,
-    "trade_count": 63,
+    "total_value": 353598.6333,
+    "cash": 1304.6333,
+    "market_value": 352294.0,
+    "total_return": 0.7688749334077731,
+    "annualized_return": 0.09889401026886246,
+    "max_drawdown": -0.13854440768961185,
+    "sharpe_ratio": 0.655965847560122,
+    "volatility": 0.10502682498656767,
+    "trade_count": 67,
     "positions": [
       {
         "code": "159937",
         "name": "黄金ETF",
-        "shares": 11000.0,
-        "price": 7.881,
-        "market_value": 86691.0,
-        "weight": 0.23722721001872865
+        "shares": 12100.0,
+        "price": 7.36,
+        "market_value": 89056.0,
+        "weight": 0.25185617706967534
       },
       {
         "code": "511380",
         "name": "可转债ETF",
-        "shares": 7300.0,
-        "price": 12.047,
-        "market_value": 87943.1,
-        "weight": 0.24065354250612006
+        "shares": 7500.0,
+        "price": 11.908,
+        "market_value": 89310.0,
+        "weight": 0.2525745056379436
       },
       {
         "code": "513300",
         "name": "纳斯达克ETF",
-        "shares": 34700.0,
-        "price": 2.606,
-        "market_value": 90428.2,
-        "weight": 0.24745394092830394
+        "shares": 34800.0,
+        "price": 2.485,
+        "market_value": 86478.0,
+        "weight": 0.2445654249082755
       },
       {
         "code": "515180",
         "name": "红利ETF",
-        "shares": 56200.0,
-        "price": 1.769,
-        "market_value": 99417.8,
-        "weight": 0.27205370015572505
+        "shares": 50000.0,
+        "price": 1.749,
+        "market_value": 87450.0,
+        "weight": 0.2473143043112548
       }
     ]
   },
@@ -104,26 +104,34 @@
     "key": "grid",
     "label": "网格组合",
     "initial_capital": 200000.0,
-    "total_value": 200799.31017615402,
-    "cash": 155020.710176154,
-    "market_value": 45778.6,
-    "total_return": 0.003996550880770072,
-    "annualized_return": 0.000660612938608196,
-    "max_drawdown": -0.011833970953138045,
-    "sharpe_ratio": -5.432993347584196,
-    "volatility": 0.005400225103245836,
-    "trade_count": 25,
+    "total_value": 200729.09451348582,
+    "cash": 126816.29451348582,
+    "market_value": 73912.8,
+    "total_return": 0.0036454725674290567,
+    "annualized_return": 0.0006018504590081797,
+    "max_drawdown": -0.019970436611602135,
+    "sharpe_ratio": -4.2437495426720515,
+    "volatility": 0.006927399754718194,
+    "trade_count": 28,
     "positions": [
+      {
+        "code": "159937",
+        "name": "黄金ETF",
+        "shares": 2600.0,
+        "price": 7.36,
+        "market_value": 19136.0,
+        "weight": 0.09533246810274613
+      },
       {
         "code": "511380",
         "name": "可转债ETF",
-        "shares": 3800.0,
-        "price": 12.047,
-        "market_value": 45778.6,
-        "weight": 0.22798185890100958
+        "shares": 4600.0,
+        "price": 11.908,
+        "market_value": 54776.8,
+        "weight": 0.2728891899441108
       }
     ],
-    "buy_count": 16,
+    "buy_count": 19,
     "sell_count": 9,
     "completed_rounds": 9,
     "total_rounds": 13
@@ -318,9 +326,25 @@
     }
   },
   "latest_prices": {
-    "515180": 1.761,
-    "159937": 7.881,
-    "511380": 12.047,
-    "513300": 2.523
+    "515180": 1.749,
+    "159937": 7.36,
+    "511380": 11.908,
+    "513300": 2.485
+  },
+  "latest_price_dates": {
+    "515180": "2026-11-23",
+    "159937": "2026-11-23",
+    "511380": "2026-11-23",
+    "513300": "2026-11-23"
+  },
+  "asset_names": {
+    "515180": "红利ETF",
+    "159937": "黄金ETF",
+    "511380": "可转债ETF",
+    "513300": "纳斯达克ETF"
+  },
+  "real_initial_capital": {
+    "real": 200000.0,
+    "grid": 200000.0
   }
 }

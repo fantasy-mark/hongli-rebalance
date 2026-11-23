@@ -15,7 +15,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, Iterator, List, Optional, Sequence
 
 import logging
 
@@ -35,6 +35,10 @@ from src.data.providers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _EmptyWindow(Exception):
+    """数据源在请求窗口内无数据（源本身可能正常，不标记为不健康）"""
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,27 @@ class FallbackPriceProvider:
         Raises:
             ValueError: 所有源均不可用
         """
+        for fetched in self.iter_fetches(code, start_date, end_date,
+                                         preferred_adjustment):
+            return fetched
+
+        raise ValueError(
+            f'{code} 取数失败：所有数据源均不可用'
+        )
+
+    def iter_fetches(self,
+                     code: str,
+                     start_date: Optional[str] = None,
+                     end_date: Optional[str] = None,
+                     preferred_adjustment: Optional[PriceAdjustment] = None
+                     ) -> Iterator[FetchedPrices]:
+        """
+        依次尝试各候选源，产出每个**成功**的取数结果
+
+        与 `fetch` 的区别：不会在第一个成功时就停下。
+        调用方（如价格同步服务）在发现数据与缓存冲突时，
+        可以继续取下一个源重试——避免"一个源数据异常就把缓存卡在旧日期"。
+        """
         probes = self.probe(code)
         # 全历史请求（start_date 为空）必须选能提供全历史的源，
         # 否则缓存会被静默截断（如腾讯仅 ~640 根）
@@ -140,18 +165,23 @@ class FallbackPriceProvider:
             try:
                 frame = source.fetch(code, start_date, end_date)
                 if frame is None or frame.empty:
-                    raise ValueError(f'{source_id} 返回空数据')
+                    # 窗口内无数据 ≠ 源不可用（例：新浪 ETF 接口滞后于窗口起点），
+                    # 不标记为不健康，只跳过该源
+                    raise _EmptyWindow(f'{source_id} 在请求窗口内无数据')
 
                 logger.info(
                     f'{code} 取数成功：{source_id}'
                     f'（{self._adjustment_label(source.adjustment)}，{len(frame)} 行）'
                 )
-                return FetchedPrices(
+                yield FetchedPrices(
                     frame=frame,
                     source_id=source_id,
                     adjustment=source.adjustment,
                     probes=probes,
                 )
+            except _EmptyWindow as empty:
+                logger.info(f'{code} {empty}')
+                continue
             except Exception as error:
                 last_error = error
                 logger.warning(f'{code} 从 {source_id} 取数失败：{error}')

@@ -65,7 +65,13 @@
     <!-- ③ 真实持仓 —— 显示实际交易记录 -->
     <section id="section-holdings">
       <h2>③ 真实持仓</h2>
-      <p class="muted">显示实际交易记录，包括策略、交易方向、数量、价格和历史交易</p>
+      <p class="muted">
+        显示实际交易记录，包括策略、交易方向、数量、价格和历史交易；<br>
+        初始资金 20 万是<b>总金额</b>，建仓不得超过剩余现金；
+        现金余额 = 初始资金 − 买入支出 + 卖出收入；<br>
+        累计收益 = (总资产 − 初始资金) / 初始资金，总资产 = 现金余额 + 持仓市值
+      </p>
+      <p class="muted" id="price-as-of"></p>
 
       <div class="strategy-grid-two">
         <article class="strategy-card" id="card-rebalance">
@@ -74,6 +80,7 @@
             <span class="strategy-tag">3pp 阈值</span>
           </header>
           <div id="rebalance-holdings" class="holdings-scroll"></div>
+          <div id="rebalance-assets" class="asset-detail"></div>
           <div id="rebalance-stats" class="stat-block"></div>
         </article>
 
@@ -83,6 +90,7 @@
             <span class="strategy-tag">复合网格</span>
           </header>
           <div id="grid-holdings" class="holdings-scroll"></div>
+          <div id="grid-assets" class="asset-detail"></div>
           <div id="grid-stats" class="stat-block"></div>
         </article>
       </div>
@@ -158,6 +166,7 @@
     </p>
   </footer>
 
+  <script src="ledger-stats.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

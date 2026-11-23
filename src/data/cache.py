@@ -225,9 +225,12 @@ class PriceCachePlanner:
                     and target_end == today          # 仅当请求区间到"今天"
                     and cached.end_date == today     # 且缓存末条就是今天
                     and is_trading_day(today)):
+                # 窗口要留出 overlap_days：部分源（如新浪 ETF）比交易所慢，
+                # 只拉"今天"这一天会拿到空数据，导致无法对齐口径
+                fetch_start = cached.end_date - timedelta(days=policy.overlap_days)
                 return RefreshPlan(
                     RefreshMode.INCREMENTAL,
-                    cached.end_date,        # 必须包含该日
+                    fetch_start,
                     f"刷新当日 bar（{cached.end_date} 可能为盘中价）",
                 )
             return RefreshPlan(

@@ -60,6 +60,23 @@ class PriceAdjustment(Enum):
         adjusted = {PriceAdjustment.HFQ, PriceAdjustment.QFQ}
         return self is other or (self in adjusted and other in adjusted)
 
+    def can_align_by_verified_factor(self, other: 'PriceAdjustment') -> bool:
+        """
+        是否允许"实测验证后"的常数倍率换算
+
+        在 `can_align_by_factor` 之外，额外允许 **不复权 <-> 复权**，
+        但前提是：只用重叠交易日实测倍率、换算后再实测偏差，
+        且**只取缓存末端之后的尾巴**参与合并（见 `PriceBasisAligner`）。
+
+        背景：不复权与复权在短期内（未跨除权日）也是常数倍关系，
+        实测偏差足够小即可安全用于增量尾巴；跨除权日的长时间区间不可用。
+        """
+        if self.can_align_by_factor(other):
+            return True
+        adjusted = {PriceAdjustment.HFQ, PriceAdjustment.QFQ}
+        return (self in adjusted and other is PriceAdjustment.NONE) or \
+               (self is PriceAdjustment.NONE and other in adjusted)
+
 
 @dataclass(frozen=True)
 class SourceHealth:
@@ -257,7 +274,10 @@ class PriceBasisAligner:
               incoming: AdjustedPriceSeries,
               cached_adjustment: PriceAdjustment,
               incoming_adjustment: PriceAdjustment,
-              factor: Optional[Decimal] = None) -> BasisAlignment:
+              factor: Optional[Decimal] = None,
+              allow_unadjusted: bool = False,
+              tolerance: Decimal = Decimal("0.005"),
+              min_overlaps: int = 3) -> BasisAlignment:
         """
         把 incoming 对齐到 cached 的口径
 
@@ -267,19 +287,29 @@ class PriceBasisAligner:
             cached_adjustment: 缓存口径
             incoming_adjustment: 新数据口径
             factor: 已知倍率（可选）；None 时从重叠区间估算
+            allow_unadjusted: 是否允许"不复权 <-> 复权"的实测换算
+                （默认 False：复权与不复权之间是阶梯关系，常数倍率只在
+                  短期内成立，必须实测验证且只取缓存末端的尾巴）
+            tolerance: 实测换算后可接受的最大相对偏差
+            min_overlaps: 实测换算所需的最少重叠交易日数
 
         Returns:
             BasisAlignment（applied=False 表示口径一致、未做换算）
         """
-        # 口径本质上不可换算（复权 <-> 不复权）：拒绝"对齐"
+        # 口径本质上不可换算（复权 <-> 不复权）：默认拒绝"对齐"
         if not cached_adjustment.can_align_by_factor(incoming_adjustment):
-            return BasisAlignment(
-                series=incoming,
-                factor=Decimal("0"),
-                overlaps=0,
-                max_deviation=Decimal("0"),
-                applied=False,
-                incompatible=True,
+            if not allow_unadjusted:
+                return BasisAlignment(
+                    series=incoming,
+                    factor=Decimal("0"),
+                    overlaps=0,
+                    max_deviation=Decimal("0"),
+                    applied=False,
+                    incompatible=True,
+                )
+            # 实测换算路径：只在重叠区实测倍率，且只取缓存末端的尾巴
+            return PriceBasisAligner._align_verified(
+                cached, incoming, factor, tolerance, min_overlaps
             )
 
         # 同口径：无需换算
@@ -314,6 +344,80 @@ class PriceBasisAligner:
             overlaps=overlaps,
             max_deviation=deviation if deviation is not None else Decimal("0"),
             applied=True,
+        )
+
+    @staticmethod
+    def _align_verified(cached: AdjustedPriceSeries,
+                         incoming: AdjustedPriceSeries,
+                         factor: Optional[Decimal],
+                         tolerance: Decimal,
+                         min_overlaps: int) -> BasisAlignment:
+        """
+        "不复权 <-> 复权"的实测换算（仅用于增量尾巴）
+
+        步骤:
+        1. 在重叠区实测倍率 k = cached_close / incoming_close
+        2. 换算后复测偏差，偏差过大说明两个源本身不一致（不可用）
+        3. **只保留缓存末端之后的尾巴**参与合并：
+           不复权与复权在跨除权日之后是阶梯关系，历史部分不可换算
+        """
+        estimated, overlaps = (factor, 0) if factor is not None \
+            else PriceBasisAligner.estimate_factor(cached, incoming)
+
+        if estimated is None or estimated <= 0:
+            return BasisAlignment(
+                series=incoming, factor=Decimal("0"), overlaps=overlaps,
+                max_deviation=Decimal("0"), applied=False, incompatible=True)
+
+        if overlaps < min_overlaps:
+            return BasisAlignment(
+                series=incoming, factor=Decimal("0"), overlaps=overlaps,
+                max_deviation=Decimal("0"), applied=False, incompatible=True)
+
+        scaled = PriceBasisAligner.rescale(incoming, estimated)
+        _, deviation = cached.overlap_close_deviation(scaled)
+
+        if deviation is not None and deviation > tolerance:
+            return BasisAlignment(
+                series=incoming, factor=Decimal("0"), overlaps=overlaps,
+                max_deviation=deviation, applied=False, incompatible=True)
+
+        # 只取缓存末端的尾巴（重叠区仅用于验证，不参与覆盖）
+        tail = PriceBasisAligner._tail_after(cached, scaled)
+        if tail.count == 0:
+            return BasisAlignment(
+                series=tail, factor=estimated, overlaps=overlaps,
+                max_deviation=deviation if deviation is not None else Decimal("0"),
+                applied=True)
+
+        return BasisAlignment(
+            series=tail,
+            factor=estimated,
+            overlaps=overlaps,
+            max_deviation=deviation if deviation is not None else Decimal("0"),
+            applied=True,
+        )
+
+    @staticmethod
+    def _tail_after(cached: AdjustedPriceSeries,
+                    series: AdjustedPriceSeries) -> AdjustedPriceSeries:
+        """只保留缓存末端的尾巴（日期严格大于缓存末日）"""
+        if cached.count == 0:
+            return series
+        last = cached.end_date
+        points = [p for p in series.prices if last is None or p.date > last]
+        if not points:
+            return AdjustedPriceSeries(
+                asset_code=series.asset_code,
+                asset_type=series.asset_type,
+                prices=[],
+                source=series.source,
+            )
+        return AdjustedPriceSeries(
+            asset_code=series.asset_code,
+            asset_type=series.asset_type,
+            prices=points,
+            source=series.source,
         )
 
     @staticmethod

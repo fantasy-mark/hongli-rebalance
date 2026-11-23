@@ -1,1 +1,53 @@
-{"trades":[]}
+{
+  "schema": "trade-ledger-v1",
+  "trades": [
+    {
+      "id": "2026-10-19-buy-001",
+      "date": "2026-10-19",
+      "side": "buy",
+      "pool": "real",
+      "fee": 0.0,
+      "note": "",
+      "action": "open",
+      "code": "515180",
+      "shares": 32000.0,
+      "price": 1.396
+    },
+    {
+      "id": "2026-10-19-buy-002",
+      "date": "2026-10-19",
+      "side": "buy",
+      "pool": "real",
+      "fee": 0.0,
+      "note": "",
+      "action": "open",
+      "code": "511380",
+      "shares": 3500.0,
+      "price": 13.073
+    },
+    {
+      "id": "2026-10-19-buy-003",
+      "date": "2026-10-19",
+      "side": "buy",
+      "pool": "real",
+      "fee": 0.0,
+      "note": "",
+      "action": "open",
+      "code": "159937",
+      "shares": 5200.0,
+      "price": 8.57
+    },
+    {
+      "id": "2026-10-20-buy-001",
+      "date": "2026-10-20",
+      "side": "buy",
+      "pool": "real",
+      "fee": 0.0,
+      "note": "",
+      "action": "open",
+      "code": "513300",
+      "shares": 16100.0,
+      "price": 2.729
+    }
+  ]
+}

@@ -9,10 +9,14 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from decimal import Decimal
+from typing import Dict, Optional
 import json
 import logging
 
 from src.strategy.ledger.book import LedgerSnapshot, TradeLedger
+from src.strategy.ledger.capital import DEFAULT_INITIAL_CAPITALS
+from src.strategy.ledger.trade import CashFlowType
 
 logger = logging.getLogger(__name__)
 
@@ -39,21 +43,28 @@ class JsonFileTradeLedgerRepository(TradeLedgerRepository):
     持仓快照**不落盘**：用 `replay()` 现算，避免两份真相来源。
     """
 
-    def __init__(self, storage_dir: str = "data"):
+    def __init__(self, storage_dir: str = "data",
+                 initial_capitals: Optional[Dict[CashFlowType, Decimal]] = None):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.trades_path = self.storage_dir / "trades.json"
+        # 各池初始资金（真实现金 / 网格虚拟预算），决定“建仓不得超过总金额”
+        self.initial_capitals = dict(
+            initial_capitals if initial_capitals is not None
+            else DEFAULT_INITIAL_CAPITALS
+        )
 
     # ------------------------------------------------------------------
 
     def load(self) -> TradeLedger:
         if not self.trades_path.exists():
-            return TradeLedger()
+            return TradeLedger(initial_capitals=dict(self.initial_capitals))
 
         with open(self.trades_path, encoding="utf-8") as handle:
             data = json.load(handle)
 
         ledger = TradeLedger.from_dict(data)
+        ledger.initial_capitals = dict(self.initial_capitals)
         logger.info(f"已加载账本：{len(ledger)} 笔流水，"
                     f"截至 {ledger.last_date()}")
         return ledger

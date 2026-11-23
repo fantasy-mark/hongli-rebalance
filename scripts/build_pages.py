@@ -97,28 +97,52 @@ def main(argv: list[str] | None = None) -> int:
         StrategyOverviewRenderer,
     )
 
+    # ---- 获取并保存最新资产价格 ----
+    # 先取价再落盘：最新价必须来自**最近交易日**（不是回测窗口末日），
+    # 拿到后回填 summary，前端展示的"最新价"才是当下的价
+    print("\n获取最新资产价格...")
+    latest_prices: dict[str, float] = {}
+    price_dates: dict[str, str] = {}
+    try:
+        from scripts.fetch_latest_prices import fetch_latest_prices_with_date
+        results = fetch_latest_prices_with_date(config.allocation.asset_codes)
+        if results:
+            latest_prices = {code: value for code, (value, _) in results.items()}
+            price_dates = {code: date for code, (_, date) in results.items()}
+            prices_path = Path(args.pages_dir) / 'data' / 'site' / 'prices.json'
+            with open(prices_path, 'w', encoding='utf-8') as f:
+                import json
+                json.dump(
+                    {
+                        'prices': latest_prices,
+                        'price_dates': price_dates,
+                        'as_of': max(price_dates.values()) if price_dates else None,
+                    },
+                    f, ensure_ascii=False, indent=2,
+                )
+            print(f"最新价格已保存（{max(price_dates.values())}）")
+            for code, (value, date) in results.items():
+                print(f"  {code}: {value:.4f}  ({date})")
+        else:
+            print("未能获取最新价格")
+    except Exception as e:
+        print(f"获取最新价格失败: {e}")
+
+    # 回填 summary：最新价 + 资产名称（前端展示用，避免前端各写一份）
+    if latest_prices:
+        from dataclasses import replace
+        site.summary = replace(
+            site.summary,
+            latest_prices=latest_prices,
+            latest_price_dates=price_dates,
+            asset_names={a.code: a.name for a in config.allocation.allocations},
+        )
+
     repo = PagesSiteRepository(
         args.pages_dir,
         renderer=StrategyOverviewRenderer(dpi=args.dpi),
     )
     paths = repo.save_all(site)
-
-    # 获取并保存最新资产价格
-    print("\n获取最新资产价格...")
-    try:
-        from scripts.fetch_latest_prices import fetch_latest_prices
-        latest_prices = fetch_latest_prices(config.allocation.asset_codes)
-        if latest_prices:
-            prices_path = Path(args.pages_dir) / 'data' / 'site' / 'prices.json'
-            with open(prices_path, 'w', encoding='utf-8') as f:
-                import json
-                json.dump({'prices': latest_prices}, f, ensure_ascii=False, indent=2)
-            paths['prices'] = prices_path
-            print(f"最新价格已保存")
-        else:
-            print("未能获取最新价格")
-    except Exception as e:
-        print(f"获取最新价格失败: {e}")
 
     print("\n产物:")
     for name, path in paths.items():

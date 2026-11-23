@@ -165,6 +165,64 @@ td.neg { color: #c0392b; }
   background: #fafcfe;
 }
 
+/* 各资产最新市值 / 权重明细表 */
+.asset-detail {
+  margin-top: 0.8em;
+}
+
+.asset-detail .empty-note {
+  margin: 0;
+}
+
+.asset-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88em;
+  background: #fcfdfe;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+}
+
+.asset-table th,
+.asset-table td {
+  padding: 0.35em 0.5em;
+  border-bottom: 1px solid #f0f2f4;
+}
+
+.asset-table thead th {
+  background: #f5f6f7;
+  color: #7b8794;
+  font-weight: 600;
+  text-align: left;
+}
+
+.asset-table th.num,
+.asset-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* 资产代码（跟在名称后面的灰色小字） */
+.asset-code {
+  color: #95a5a6;
+  font-size: 0.85em;
+  margin-left: 0.35em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 最新价对应的日期（标明这价是哪天的） */
+.price-date {
+  display: inline-block;
+  margin-left: 0.4em;
+  color: #95a5a6;
+  font-size: 0.82em;
+  font-weight: normal;
+}
+
 /* 交易表单区域 */
 .trade-form-section {
   margin-top: 2em;

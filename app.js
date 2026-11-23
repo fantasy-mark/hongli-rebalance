@@ -61,6 +61,33 @@ const esc = (s) =>
 
 const colorOf = (code) => ASSET_COLORS[code] || '#8E44AD';
 
+/* 资产名称：summary.json 带过来的（后端配置唯一来源） */
+const ASSET_NAMES_FALLBACK = {
+  '515180': '红利ETF',
+  '159937': '黄金ETF',
+  '511380': '可转债ETF',
+  '513300': '纳斯达克ETF',
+};
+
+function assetNameOf(code) {
+  if (!code) return '';
+  const names = (state && state.assetNames) || {};
+  return names[code] || ASSET_NAMES_FALLBACK[code] || code;
+}
+
+/* 资产展示：名称 + 代码（如「红利ETF 515180」） */
+function assetLabel(code) {
+  if (!code) return '';
+  const name = assetNameOf(code);
+  return name === code ? esc(code) : `${esc(name)} <span class="asset-code">${esc(code)}</span>`;
+}
+
+/* 价格对应的日期（最新价是哪天的） */
+function priceDateOf(code) {
+  const dates = (state && state.priceDates) || {};
+  return dates[code] || '';
+}
+
 const signClass = (v) => (v >= 0 ? 'up' : 'down');
 
 /* ------------------------------------------------------------------ 启动 */
@@ -105,12 +132,13 @@ function normalizeLedgerTrades(rawTrades) {
       strategy,
       strategy_name: strategyName,
       asset_code: t.code || '',
-      asset_name: t.code || '',
+      asset_name: t.code ? assetNameOf(t.code) : '',
       action: t.action || (isCash ? (t.side === 'deposit' ? 'deposit' : 'withdraw') : ''),
       side: t.side,
       price: t.price || 0,
       shares: t.shares || 0,
-      amount: t.amount || 0,
+      // 成交金额：账本 JSON 对证券流水只存 数量/价格，金额现场推导
+      amount: LedgerStats.tradeAmount(t),
       fee: t.fee || 0,
       note: t.note || '',
       position_shares: positionShares,
@@ -141,10 +169,16 @@ async function init() {
     state.trades = tradesRes && tradesRes.ok
       ? normalizeLedgerTrades((await tradesRes.json()).trades || [])
       : [];
-    // 最新价格：prices.json 优先（含当日实时报价），其次回测的最后收盘价
-    state.prices = (pricesRes && pricesRes.ok)
-      ? ((await pricesRes.json()).prices || {})
-      : (state.summary.latest_prices || {});
+    // 最新价格：prices.json 优先（含最近交易日行情），其次回测的最后收盘价
+    const pricePayload = (pricesRes && pricesRes.ok)
+      ? await pricesRes.json()
+      : {};
+    state.prices = pricePayload.prices || (state.summary.latest_prices || {});
+    // 价格对应的日期（最新价到底是哪天的）
+    state.priceDates = pricePayload.price_dates
+      || (state.summary.latest_price_dates || {});
+    // 资产名称（名称 + 代码展示用）
+    state.assetNames = state.summary.asset_names || {};
 
     renderStatus(badge, state.summary);
     renderChartSummary(state.summary);
@@ -374,171 +408,122 @@ function renderTrades() {
 
 /* ------------------------------------------------------- ③ 真实持仓（交易记录） */
 function renderHoldings() {
-  // 显示再平衡组合的交易记录（真实交易）
-  const rebalanceTrades = state.trades.filter(t => t.strategy === 'rebalance');
-  document.getElementById('rebalance-holdings').innerHTML = 
-    tradeHistoryTable(rebalanceTrades, '再平衡', false);
-  
-  // 计算再平衡组合统计信息
-  const rebalanceStats = calculateRebalanceStats(rebalanceTrades);
-  document.getElementById('rebalance-stats').innerHTML =
-    statBlock(rebalanceStats, rebalanceStats.pairs);
+  const prices = state.prices || {};
 
-  // 显示网格组合的交易记录（真实交易）
+  // 最新价对应的日期（让"价格过时"一眼可见，而不是默默拿旧价算）
+  renderPriceAsOf();
+
+  // 再平衡组合（真实现金池）
+  const rebalanceTrades = state.trades.filter(t => t.strategy === 'rebalance');
+  document.getElementById('rebalance-holdings').innerHTML =
+    tradeHistoryTable(rebalanceTrades, '再平衡', false);
+
+  const rebalanceStats = LedgerStats.computePoolStats(
+    'real', rebalanceTrades, prices, initialCapitalOf('real'));
+  document.getElementById('rebalance-stats').innerHTML =
+    statBlock(rebalanceStats, poolStatPairs(rebalanceStats, '初始资金'));
+  document.getElementById('rebalance-assets').innerHTML =
+    assetDetailTable(rebalanceStats);
+
+  // 网格组合（网格虚拟预算池）
   const gridTrades = state.trades.filter(t => t.strategy === 'grid');
-  document.getElementById('grid-holdings').innerHTML = 
+  document.getElementById('grid-holdings').innerHTML =
     tradeHistoryTable(gridTrades, '网格', false);
-  
-  // 计算网格组合统计信息
-  const gridStats = calculateGridStats(gridTrades);
-  document.getElementById('grid-stats').innerHTML = 
-    statBlock(gridStats, gridStats.pairs);
+
+  const gridStats = LedgerStats.computePoolStats(
+    'grid', gridTrades, prices, initialCapitalOf('grid'));
+  document.getElementById('grid-stats').innerHTML =
+    statBlock(gridStats, poolStatPairs(gridStats, '网格预算'));
+  document.getElementById('grid-assets').innerHTML =
+    assetDetailTable(gridStats);
 
   // 初始化表单提交处理
   initTradeForm();
 }
 
-// 固定初始资金（20万）
-const INITIAL_CAPITAL = 200000;
-
-// 计算再平衡组合统计信息
-function calculateRebalanceStats(trades) {
-  if (trades.length === 0) {
-    return {
-      pairs: [
-        ['初始资金', money(INITIAL_CAPITAL)],
-        ['总市值', money(0)],
-        ['累计收益', pct(0)],
-        ['成交笔数', 0],
-      ]
-    };
+/* 最新价日期提示：标明价格是哪天的 */
+function renderPriceAsOf() {
+  const el = document.getElementById('price-as-of');
+  if (!el) return;
+  const dates = state.priceDates || {};
+  const values = Object.values(dates).filter(Boolean);
+  if (!values.length) {
+    el.textContent = '';
+    return;
   }
+  const latest = values.slice().sort().reverse()[0];
+  const oldest = values.slice().sort()[0];
+  const same = latest === oldest;
+  el.innerHTML = same
+    ? `最新价日期：<b>${esc(latest)}</b>（最近交易日收盘价）`
+    : `最新价日期：<b>${esc(latest)}</b>（部分资产停留在 ${esc(oldest)}）`;
+}
 
-  // 计算当前持仓
-  const positions = {};
-  trades.forEach(t => {
-    const asset = t.asset_code;
-    if (!positions[asset]) {
-      positions[asset] = { shares: 0, cost: 0 };
-    }
-    if (t.side === 'buy') {
-      positions[asset].shares += t.shares;
-      positions[asset].cost += t.amount;
-    } else if (t.side === 'sell') {
-      positions[asset].shares -= t.shares;
-      // 按比例减少成本
-      const avgCost = positions[asset].cost / (positions[asset].shares + t.shares);
-      positions[asset].cost -= avgCost * t.shares;
-    }
-  });
+/* 池统计的展示项 */
+function poolStatPairs(stats, capitalLabel) {  return [
+    [capitalLabel, money(stats.initial_capital)],
+    ['现金余额', money(stats.cash)],
+    ['持仓市值', money(stats.market_value)],
+    ['总资产', money(stats.total_value)],
+    ['累计收益', pct(stats.total_return)],
+    ['成交笔数', stats.trade_count],
+  ];
+}
 
-  // 计算总市值（使用最新资产价格）
-  const latestPrices = state.prices || state.summary?.latest_prices || {};
-  let totalMarketValue = 0;
-  for (const asset in positions) {
-    if (positions[asset].shares > 0) {
-      // 优先使用最新价格
-      if (latestPrices[asset]) {
-        totalMarketValue += positions[asset].shares * latestPrices[asset];
-      } else {
-        // 如果没有最新价格，回退到使用最后交易价格
-        const assetTrades = trades.filter(t => t.asset_code === asset);
-        const latestTrade = assetTrades[assetTrades.length - 1];
-        totalMarketValue += positions[asset].shares * latestTrade.price;
-      }
-    }
+/* 各资产最新市值 + 占最新总市值的权重 */
+function assetDetailTable(stats) {
+  if (!stats.positions.length) {
+    return '<p class="empty-note">暂无持仓</p>';
   }
+  const rows = stats.positions.map((p) => {
+    const date = priceDateOf(p.code);
+    return `
+    <tr>
+      <td>
+        <span class="asset-dot" style="background:${colorOf(p.code)}"></span>
+        ${assetLabel(p.code)}
+      </td>
+      <td class="num">${shares(p.shares)}</td>
+      <td class="num">${Number(p.price).toFixed(4)}${date ? `<span class="price-date">${esc(date)}</span>` : ''}</td>
+      <td class="num">${money(p.market_value, 2)}</td>
+      <td class="num">${plainPct(p.weight)}</td>
+    </tr>`;
+  }).join('');
 
-  // 计算累计收益
-  const totalReturn = (totalMarketValue - INITIAL_CAPITAL) / INITIAL_CAPITAL;
+  return `
+    <table class="asset-table">
+      <thead>
+        <tr>
+          <th>资产</th>
+          <th class="num">数量</th>
+          <th class="num">最新价</th>
+          <th class="num">最新市值</th>
+          <th class="num">占总市值</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
 
-  return {
-    initial_capital: INITIAL_CAPITAL,
-    total_value: totalMarketValue,
-    total_return: totalReturn,
-    trade_count: trades.length,
-    pairs: [
-      ['初始资金', money(INITIAL_CAPITAL)],
-      ['总市值', money(totalMarketValue)],
-      ['累计收益', pct(totalReturn)],
-      ['成交笔数', trades.length],
-    ]
-  };
+/* 各池初始资金（总金额）
+ *
+ * 真实现金池 / 网格虚拟预算池各自的初始资金。
+ * 数字来自 summary.json（由后端写入，与账本同一个配置源），
+ * 前端不再自己写一份 200000。
+ */
+function initialCapitalOf(pool) {
+  const capitals = (state.summary && state.summary.real_initial_capital) || {};
+  const value = capitals[pool];
+  return value != null ? Number(value) : 200000;
 }
 
 // 计算网格组合统计信息
-function calculateGridStats(trades) {
-  // 固定初始资金
-  const initialCapital = INITIAL_CAPITAL;
-
-  if (trades.length === 0) {
-    return {
-      pairs: [
-        ['初始资金', money(INITIAL_CAPITAL)],
-        ['总市值', money(0)],
-        ['累计收益', pct(0)],
-        ['成交笔数', 0],
-        ['买入/卖出', '0 / 0'],
-      ]
-    };
-  }
-
-  // 计算当前持仓
-  const positions = {};
-  trades.forEach(t => {
-    const asset = t.asset_code;
-    if (!positions[asset]) {
-      positions[asset] = { shares: 0, cost: 0 };
-    }
-    if (t.side === 'buy') {
-      positions[asset].shares += t.shares;
-      positions[asset].cost += t.amount;
-    } else if (t.side === 'sell') {
-      positions[asset].shares -= t.shares;
-      const avgCost = positions[asset].cost / (positions[asset].shares + t.shares);
-      positions[asset].cost -= avgCost * t.shares;
-    }
-  });
-
-  // 计算总市值（使用最新资产价格）
-  const latestPrices = state.prices || state.summary?.latest_prices || {};
-  let totalMarketValue = 0;
-  for (const asset in positions) {
-    if (positions[asset].shares > 0) {
-      // 优先使用最新价格
-      if (latestPrices[asset]) {
-        totalMarketValue += positions[asset].shares * latestPrices[asset];
-      } else {
-        // 如果没有最新价格，回退到使用最后交易价格
-        const assetTrades = trades.filter(t => t.asset_code === asset);
-        const latestTrade = assetTrades[assetTrades.length - 1];
-        totalMarketValue += positions[asset].shares * latestTrade.price;
-      }
-    }
-  }
-
-  // 计算累计收益
-  const totalReturn = initialCapital > 0 ? (totalMarketValue - initialCapital) / initialCapital : 0;
-
-  // 统计买入/卖出次数
-  const buyCount = trades.filter(t => t.side === 'buy').length;
-  const sellCount = trades.filter(t => t.side === 'sell').length;
-
-  return {
-    initial_capital: initialCapital,
-    total_value: totalMarketValue,
-    total_return: totalReturn,
-    trade_count: trades.length,
-    buy_count: buyCount,
-    sell_count: sellCount,
-    pairs: [
-      ['初始资金', money(initialCapital)],
-      ['总市值', money(totalMarketValue)],
-      ['累计收益', pct(totalReturn)],
-      ['成交笔数', trades.length],
-      ['买入/卖出', `${buyCount} / ${sellCount}`],
-    ]
-  };
+/* 重新读取账本（data/trades.json）——唯一真相源 */
+async function reloadTrades() {
+  const res = await fetch('data/trades.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  state.trades = normalizeLedgerTrades(data.trades || []);
 }
 
 /* ------------------------------------------------------- 交易表单处理 */
@@ -594,8 +579,8 @@ function initTradeForm() {
       });
 
       if (response.ok) {
-        // 添加到本地状态并重新渲染
-        state.trades.push(newTrade);
+        // 账本是唯一真相源：写入后重新读回来重算，不用本地拼装
+        await reloadTrades();
         renderHoldings();
         form.reset();
         // 重新设置日期默认值
@@ -603,7 +588,9 @@ function initTradeForm() {
         dateInput.value = today;
         alert('交易记录添加成功！');
       } else {
-        alert('添加失败，请重试');
+        // 后端拒绝（如建仓超过总金额）——展示具体原因
+        const body = await response.json().catch(() => ({}));
+        alert(body.error ? '添加失败：' + body.error : '添加失败，请重试');
       }
     } catch (error) {
       console.error('Error:', error);
@@ -651,7 +638,7 @@ function tradeHistoryTable(trades, scopeLabel, isBacktest = true) {
             <td><span class="strat-tag ${stratCls}">${esc(stratName)}</span></td>
             <td>
               <span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
-              ${esc(t.asset_name || t.asset_code)}
+              ${t.asset_name ? esc(t.asset_name) + ' <span class="asset-code">' + esc(t.asset_code) + '</span>' : assetLabel(t.asset_code)}
             </td>
             <td class="${sideCls}">${esc(side)}</td>
             <td>${esc(action)}</td>
@@ -671,7 +658,7 @@ function tradeHistoryTable(trades, scopeLabel, isBacktest = true) {
         const sideCls = t.side === 'sell' ? 'side-sell' : 'side-buy';
         const assetCell = t.asset_code
           ? `<span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
-             ${esc(t.asset_name || t.asset_code)}`
+             ${assetLabel(t.asset_code)}`
           : '<span class="muted">(现金)</span>';
         const qtyCell = t.asset_code
           ? `<td class="num">${shares(t.shares)}</td>

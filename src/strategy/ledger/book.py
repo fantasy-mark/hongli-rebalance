@@ -115,6 +115,8 @@ class TradeLedger:
     trades: List[Trade] = field(default_factory=list)
     # 允许现金为负（费用造成的微小透支）；False 时重演会拒绝
     allow_overdraft: bool = True
+    # 各池初始资金（由组合配置注入；为空 = 纯流水账本，现金只来自出入金）
+    initial_capitals: Dict[CashFlowType, Decimal] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # 追加流水
@@ -176,8 +178,13 @@ class TradeLedger:
             LedgerViolation: 出现卖出超持仓等不自洽情况
         """
         portfolios: Dict[CashFlowType, Portfolio] = {
-            pool: Portfolio(portfolio_id=pool.value, name=pool.label,
-                            allow_overdraft=self.allow_overdraft)
+            pool: Portfolio(
+                portfolio_id=pool.value,
+                name=pool.label,
+                # 池的初始资金 = 该池的预算上限（真实现金 / 网格虚拟预算）
+                cash=self.initial_capitals.get(pool, Decimal("0")),
+                allow_overdraft=self.allow_overdraft,
+            )
             for pool in CashFlowType
         }
         stats: Dict[CashFlowType, Dict[str, Decimal]] = {
@@ -318,7 +325,9 @@ class TradeLedger:
         # 保持录入顺序（_sorted_trades 只是重演顺序，输出回原顺序）
         order = {id(t): i for i, t in enumerate(self.trades)}
         resolved.sort(key=lambda t: order[id(t)])
-        return TradeLedger(trades=resolved, allow_overdraft=self.allow_overdraft)
+        return TradeLedger(trades=resolved,
+                           allow_overdraft=self.allow_overdraft,
+                           initial_capitals=dict(self.initial_capitals))
 
     def to_dict(self) -> Dict[str, Any]:
         """账本序列化（追加式，保持顺序）"""
@@ -366,6 +375,19 @@ class TradeLedger:
             self.replay()
         except LedgerViolation as error:
             errors.append(str(error))
+
+        # 现金不得为负：建仓 / 加仓不能超过池的初始资金
+        try:
+            snapshot = self.replay()
+        except LedgerViolation:
+            snapshot = None
+        if snapshot is not None:
+            for pool, balance in snapshot.balances.items():
+                if balance.cash < 0:
+                    errors.append(
+                        f"{pool.label}现金不足：余额 {balance.cash}，"
+                        f"超出初始资金 {self.initial_capitals.get(pool, Decimal('0'))}"
+                    )
 
         return errors
 
