@@ -75,11 +75,16 @@ function assetNameOf(code) {
   return names[code] || ASSET_NAMES_FALLBACK[code] || code;
 }
 
-/* 资产展示：名称 + 代码（如「红利ETF 515180」） */
+/* 资产展示：名称 + 代码（如「红利ETF (515180)」）
+ *
+ * 样式与页面其他地方一致：主值一行，括号的次要值另起一行（灰色小字）
+ */
 function assetLabel(code) {
   if (!code) return '';
   const name = assetNameOf(code);
-  return name === code ? esc(code) : `${esc(name)} <span class="asset-code">${esc(code)}</span>`;
+  return name === code
+    ? esc(code)
+    : `${esc(name)}<br><span class="muted" style="font-size:0.85em">(${esc(code)})</span>`;
 }
 
 /* 价格对应的日期（最新价是哪天的） */
@@ -484,7 +489,7 @@ function assetDetailTable(stats) {
         ${assetLabel(p.code)}
       </td>
       <td class="num">${shares(p.shares)}</td>
-      <td class="num">${Number(p.price).toFixed(4)}${date ? `<span class="price-date">${esc(date)}</span>` : ''}</td>
+      <td class="num">${Number(p.price).toFixed(4)}${date ? `<br><span class="muted" style="font-size:0.85em">(${esc(date)})</span>` : ''}</td>
       <td class="num">${money(p.market_value, 2)}</td>
       <td class="num">${plainPct(p.weight)}</td>
     </tr>`;
@@ -638,7 +643,7 @@ function tradeHistoryTable(trades, scopeLabel, isBacktest = true) {
             <td><span class="strat-tag ${stratCls}">${esc(stratName)}</span></td>
             <td>
               <span class="asset-dot" style="background:${colorOf(t.asset_code)}"></span>
-              ${t.asset_name ? esc(t.asset_name) + ' <span class="asset-code">' + esc(t.asset_code) + '</span>' : assetLabel(t.asset_code)}
+              ${assetLabel(t.asset_code)}
             </td>
             <td class="${sideCls}">${esc(side)}</td>
             <td>${esc(action)}</td>

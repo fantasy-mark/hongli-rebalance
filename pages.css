@@ -206,23 +206,6 @@ td.neg { color: #c0392b; }
   border-bottom: none;
 }
 
-/* 资产代码（跟在名称后面的灰色小字） */
-.asset-code {
-  color: #95a5a6;
-  font-size: 0.85em;
-  margin-left: 0.35em;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 最新价对应的日期（标明这价是哪天的） */
-.price-date {
-  display: inline-block;
-  margin-left: 0.4em;
-  color: #95a5a6;
-  font-size: 0.82em;
-  font-weight: normal;
-}
-
 /* 交易表单区域 */
 .trade-form-section {
   margin-top: 2em;
