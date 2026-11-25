@@ -138,7 +138,74 @@ def _next_sequence(on_date: date, side: TradeSide) -> int:
     return len(same_day) + 1
 
 
+def refresh_prices():
+    """刷新最新资产价格（不跑回测）"""
+    import logging
+    from src.data.service import PriceQueryService
+    
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s|%(message)s')
+    
+    # 默认监控的资产
+    ASSETS = ['515180', '159937', '511380', '513300']
+    prices_path = ROOT / 'data' / 'site' / 'prices.json'
+    
+    service = PriceQueryService()
+    prices = {}
+    price_dates = {}
+    raw_prices = {}
+    raw_price_dates = {}
+    
+    for code in ASSETS:
+        try:
+            # 后复权价（回测用）
+            hfq_info = service.get_latest_price(code)
+            prices[code] = float(hfq_info['close'])
+            price_dates[code] = hfq_info['date'].isoformat() if hasattr(hfq_info['date'], 'isoformat') else str(hfq_info['date'])
+            
+            # 不复权实际价（真实持仓用）
+            raw_info = service.get_latest_raw_price(code)
+            raw_prices[code] = float(raw_info['close'])
+            raw_price_dates[code] = raw_info['date'].isoformat() if hasattr(raw_info['date'], 'isoformat') else str(raw_info['date'])
+        except Exception as e:
+            print(f"警告: 获取 {code} 价格失败: {e}")
+    
+    if not prices:
+        print("错误: 未能获取任何资产价格")
+        return False
+    
+    # 读取现有 prices.json（保留其他字段）
+    existing = {}
+    if prices_path.exists():
+        try:
+            with open(prices_path, encoding='utf-8') as f:
+                existing = json.load(f)
+        except Exception:
+            pass
+    
+    # 更新价格相关字段
+    existing.update({
+        'prices': prices,
+        'price_dates': price_dates,
+        'raw_prices': raw_prices,
+        'raw_price_dates': raw_price_dates,
+    })
+    
+    # 写入
+    prices_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(prices_path, 'w', encoding='utf-8') as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+    
+    print(f"已更新 {prices_path.relative_to(ROOT)}")
+    return True
+
+
 if __name__ == "__main__":
+    # 启动前自动刷新价格（确保显示最新价）
+    print("正在刷新资产价格...")
+    if not refresh_prices():
+        print("价格刷新失败，但服务仍会启动（使用缓存价格）")
+    print()
+    
     with socketserver.TCPServer(("", PORT), TradeAPIHandler) as httpd:
         print(f"本地站点已启动: http://localhost:{PORT}")
         print("真实交易 API: POST /api/trades  ->  data/trades.json (账本)")
