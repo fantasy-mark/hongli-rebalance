@@ -48,6 +48,42 @@
       "code": "513300",
       "shares": 16100.0,
       "price": 2.729
+    },
+    {
+      "id": "2026-11-28-buy-001",
+      "date": "2026-11-28",
+      "side": "buy",
+      "pool": "grid",
+      "fee": 0.0,
+      "note": "",
+      "action": "open",
+      "code": "159937",
+      "shares": 1100.0,
+      "price": 8.141
+    },
+    {
+      "id": "2026-11-28-buy-002",
+      "date": "2026-11-28",
+      "side": "buy",
+      "pool": "grid",
+      "fee": 0.0,
+      "note": "",
+      "action": "add",
+      "code": "159937",
+      "shares": 1100.0,
+      "price": 7.735
+    },
+    {
+      "id": "2026-11-28-buy-003",
+      "date": "2026-11-28",
+      "side": "buy",
+      "pool": "grid",
+      "fee": 0.0,
+      "note": "",
+      "action": "add",
+      "code": "159937",
+      "shares": 1100.0,
+      "price": 7.285
     }
   ]
 }
