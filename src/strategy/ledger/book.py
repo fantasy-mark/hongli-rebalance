@@ -130,10 +130,14 @@ class TradeLedger:
             trade: 交易流水
 
         Raises:
-            ValueError: 流水号重复
+            ValueError: 流水号重复或 action 与持仓状态不一致
+            LedgerViolation: 卖出超过持仓等账本自洽性被破坏
         """
         if any(existing.id.value == trade.id.value for existing in self.trades):
             raise ValueError(f"流水号已存在: {trade.id}")
+
+        # 校验 action 与持仓状态的一致性（防御性校验）
+        self._validate_action_consistency(trade)
 
         self.trades.append(trade)
 
@@ -252,6 +256,61 @@ class TradeLedger:
         selected = [t for t in self.trades
                     if as_of is None or t.on_date <= as_of]
         return sorted(selected, key=lambda t: t.on_date)
+
+    def _validate_action_consistency(self, trade: Trade) -> None:
+        """
+        校验 action 与持仓状态的一致性
+
+        规则：
+        - open（建仓）：当前无持仓才允许
+        - add（加仓）：当前有持仓才允许
+        - reduce（减仓）：当前有持仓才允许
+        - take_profit（止盈）：当前有持仓才允许
+
+        Args:
+            trade: 待校验的交易流水
+
+        Raises:
+            LedgerViolation: action 与持仓状态不一致
+        """
+        if not trade.action:
+            # action 为空，不校验（可能是历史数据或系统自动推导）
+            return
+
+        # 重演账本获取当前状态（排除待校验的这笔交易）
+        snapshot = self.replay(as_of=trade.on_date)
+        portfolio = snapshot.portfolio(trade.pool)
+        
+        # 获取该资产的当前持仓（在该交易之前的状态）
+        # 注意：replay 会包含 trade.on_date 及之前的所有交易，
+        # 但我们要校验的是"这笔交易之前"的持仓状态，
+        # 所以需要减去同一天同一资产的交易
+        current_position = Decimal("0")
+        for t in self.trades:
+            if (t.pool == trade.pool and 
+                t.asset_code == trade.asset_code and
+                t.on_date <= trade.on_date and
+                t.id.value != trade.id.value):
+                # 这笔交易是在待校验交易之前（或同日但不同流水号）
+                if t.side is TradeSide.BUY:
+                    current_position += t.shares
+                elif t.side is TradeSide.SELL:
+                    current_position -= t.shares
+
+        # 校验 action 与持仓状态
+        from src.strategy.ledger.trade import TradeAction
+        action = TradeAction.from_label(trade.action)
+        
+        if action is TradeAction.OPEN:
+            if current_position > 0:
+                raise LedgerViolation(
+                    f"{trade.id} 建仓失败：{trade.asset_code} 在 {trade.pool.label} 池已有持仓 {current_position} 份"
+                )
+        elif action in (TradeAction.ADD, TradeAction.REDUCE, TradeAction.TAKE_PROFIT):
+            if current_position <= 0:
+                raise LedgerViolation(
+                    f"{trade.id} {action.label}失败：{trade.asset_code} 在 {trade.pool.label} 池无持仓"
+                )
 
     @staticmethod
     def _apply_buy(portfolio: Portfolio, trade: Trade) -> None:

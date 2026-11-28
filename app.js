@@ -204,6 +204,7 @@ async function init() {
     renderTrades();
     renderHoldings();
     renderStrategySpecs(state.summary);
+    initTradeForm();  // 初始化表单（只调用一次）
   } catch (err) {
     console.error(err);
     badge.className = 'err';
@@ -461,8 +462,10 @@ function renderHoldings() {
   document.getElementById('grid-assets').innerHTML =
     assetDetailTable(gridStats);
 
-  // 初始化表单提交处理
-  initTradeForm();
+  // 持仓更新后重新验证交易类型选项
+  if (window.updateActionOptions) {
+    window.updateActionOptions();
+  }
 }
 
 /* 最新价日期提示：标明价格是哪天的 */
@@ -556,6 +559,9 @@ async function reloadTrades() {
 
 /* ------------------------------------------------------- 交易表单处理 */
 function initTradeForm() {
+  if (initTradeForm._initialized) return;
+  initTradeForm._initialized = true;
+  
   const form = document.getElementById('trade-form');
   if (!form) return;
 
@@ -566,6 +572,63 @@ function initTradeForm() {
     dateInput.value = today;
   }
 
+  // 动态过滤交易类型选项（根据持仓状态）
+  const strategySelect = document.getElementById('trade-strategy');
+  const assetSelect = document.getElementById('trade-asset');
+  const actionSelect = document.getElementById('trade-action');
+
+  // 暴露为全局函数，供 renderHoldings 调用
+  window.updateActionOptions = function() {
+    const strategy = strategySelect.value;
+    const asset = assetSelect.value;
+
+    if (!strategy || !asset) {
+      // 重置为默认选项
+      actionSelect.innerHTML = `
+        <option value="">选择类型</option>
+        <option value="open">建仓</option>
+        <option value="add">加仓</option>
+        <option value="reduce">减仓</option>
+        <option value="take_profit">止盈</option>
+      `;
+      return;
+    }
+
+    // 计算当前策略+资产的持仓
+    const pool = strategy === 'rebalance' ? 'real' : 'grid';
+    const position = state.trades
+      .filter(t => t.strategy === strategy && t.asset_code === asset)
+      .reduce((sum, t) => {
+        if (t.side === 'buy') return sum + t.shares;
+        if (t.side === 'sell') return sum - t.shares;
+        return sum;
+      }, 0);
+
+    // 根据持仓状态过滤选项
+    if (position <= 0) {
+      // 无持仓：只能建仓
+      actionSelect.innerHTML = `
+        <option value="">选择类型</option>
+        <option value="open">建仓</option>
+      `;
+    } else {
+      // 有持仓：可以加仓/减仓/止盈
+      actionSelect.innerHTML = `
+        <option value="">选择类型</option>
+        <option value="add">加仓</option>
+        <option value="reduce">减仓</option>
+        <option value="take_profit">止盈</option>
+      `;
+    }
+  }
+
+  // 监听策略和资产选择变化
+  strategySelect.addEventListener('change', window.updateActionOptions);
+  assetSelect.addEventListener('change', window.updateActionOptions);
+
+  // 初始化时调用一次，确保交易类型选项正确
+  window.updateActionOptions();
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     
@@ -575,6 +638,25 @@ function initTradeForm() {
     const action = document.getElementById('trade-action').value;
     const shares = parseFloat(document.getElementById('trade-shares').value);
     const price = parseFloat(document.getElementById('trade-price').value);
+
+    // 前端防御性校验：验证 action 与持仓状态一致性
+    const pool = strategy === 'rebalance' ? 'real' : 'grid';
+    const currentPosition = state.trades
+      .filter(t => t.strategy === strategy && t.asset_code === asset)
+      .reduce((sum, t) => {
+        if (t.side === 'buy') return sum + t.shares;
+        if (t.side === 'sell') return sum - t.shares;
+        return sum;
+      }, 0);
+
+    if (action === 'open' && currentPosition > 0) {
+      alert(`错误：${asset} 在${strategy === 'rebalance' ? '再平衡组合' : '网格组合'}中已有持仓 ${currentPosition} 份，不能再执行建仓操作`);
+      return;
+    }
+    if (['add', 'reduce', 'take_profit'].includes(action) && currentPosition <= 0) {
+      alert(`错误：${asset} 在${strategy === 'rebalance' ? '再平衡组合' : '网格组合'}中无持仓，无法执行${ACTION_LABELS[action]}操作`);
+      return;
+    }
 
     // 构建交易记录
     const newTrade = {
@@ -615,6 +697,7 @@ function initTradeForm() {
         const today = new Date().toISOString().split('T')[0];
         dateInput.value = today;
         alert('交易记录添加成功！');
+        window.updateActionOptions();  // 重新验证交易类型选项
       } else {
         // 后端拒绝（如建仓超过总金额）——展示具体原因
         const body = await response.json().catch(() => ({}));
